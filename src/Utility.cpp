@@ -1,0 +1,1 @@
+inline bool isValid( float x ) { return isfinite( x ); }

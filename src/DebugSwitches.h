@@ -1,0 +1,1 @@
+#define GAME_RENDER_DEBUG_OUTPUT 1

@@ -1,0 +1,51 @@
+{
+	"folders":
+	[
+		{
+			"path": "./"
+		},
+		{
+			"path": "../lib"
+		}
+	],
+	"build_systems": [
+		{
+			"name": "build x64",
+			"cmd": "build_sublime.bat x64",
+			"shell": false,
+			"file_regex": "(.*)\\(([0-9]+)\\): (error|note|warning)",
+			"selector": "source.cpp",
+			"working_dir": "${project_path}",
+			"encoding": "cp850",
+
+			"variants": [
+				{
+					"name": "build clang",
+					"shell_cmd": "build_clang_sublime.bat",
+					"file_regex": "^(.*?):([0-9]+): (error|warning|note)",
+					"working_dir": "${project_path}",
+					"shell": false,
+					"encoding": "cp850",
+				},
+				{
+					"name": "Compile Dll only",
+					"cmd": "build_sublime.bat x64 dll",
+					"shell": false,
+					"file_regex": "(.*)\\(([0-9]+)\\): (error|note|warning)",
+					"selector": "source.cpp",
+					"working_dir": "${project_path}",
+					"encoding": "cp850",
+				},
+				{
+					"name": "Compile Exe only",
+					"cmd": "build_sublime.bat x64 exe",
+					"shell": false,
+					"file_regex": "(.*)\\(([0-9]+)\\): (error|note|warning)",
+					"selector": "source.cpp",
+					"working_dir": "${project_path}",
+					"encoding": "cp850",
+				},
+			]
+		}
+	]
+}

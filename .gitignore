@@ -10,6 +10,8 @@
 # User-specific files (MonoDevelop/Xamarin Studio)
 *.userprefs
 
+*.sublime-workspace
+
 # Build results
 [Dd]ebug/
 [Dd]ebugPublic/
@@ -21,6 +23,10 @@ bld/
 [Bb]in/
 [Oo]bj/
 [Ll]og/
+[Bb]uilds/
+
+# game data 
+src/Data/
 
 # Visual Studio 2015 cache/options directory
 .vs/
@@ -250,3 +256,6 @@ paket-files/
 # JetBrains Rider
 .idea/
 *.sln.iml
+
+# misc
+src/startup_dev_pc.lnk
