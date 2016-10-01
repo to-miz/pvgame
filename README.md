@@ -11,4 +11,4 @@ To get the source code + assets or precompiled binaries, visit my [itch.io](http
 #### License
 See LICENSE file either in the src or lib directories.  
 Files in lib have each their own license, refer to lib/LICENSE.  
-Files in src are copyright Tolga Mizrak 2016. You can use them for your non-commercial, private educational projects.
+Files in src are copyright Tolga Mizrak 2016. You can use them for your non-commercial, private projects for educational purposes.
