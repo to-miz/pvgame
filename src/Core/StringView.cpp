@@ -253,8 +253,8 @@ StringViewPos findLast( StringView str, StringView findStr, int32 start = String
 	// check whether there is room for a match
 	if( start > 0 && str.size() >= findStr.size() ) {
 		size_t strSize = (size_t)str.size();
-		if( start < strSize ) {
-			strSize = start;
+		if( (size_t)start < strSize ) {
+			strSize = (size_t)start;
 		}
 		const char* current;
 		size_t findStrCount = (size_t)findStr.size();

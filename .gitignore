@@ -259,3 +259,6 @@ paket-files/
 
 # misc
 src/startup_dev_pc.lnk
+commit_message.txt
+compress_tool.bat
+end_of_day.bat

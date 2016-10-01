@@ -353,9 +353,9 @@ static bool win32BindOpenGlFunctions()
 	return true;
 }
 
-static void win32OpenGlDebugCallback( GLenum source, GLenum type, GLuint id, GLenum severity,
-									  GLsizei length, const GLchar* message,
-									  const void* userParam );
+static void APIENTRY win32OpenGlDebugCallback( GLenum source, GLenum type, GLuint id,
+                                               GLenum severity, GLsizei length,
+                                               const GLchar* message, const void* userParam );
 
 enum OpenGlAttributeLocations {
 	AL_position,
@@ -1287,8 +1287,9 @@ static bool win32InitOpenGL( OpenGlContext* context, float width, float height )
 	return true;
 }
 
-static void win32OpenGlDebugCallback( GLenum source, GLenum type, GLuint id, GLenum severity,
-                                      GLsizei length, const GLchar* message, const void* userParam )
+static void APIENTRY win32OpenGlDebugCallback( GLenum source, GLenum type, GLuint id,
+                                               GLenum severity, GLsizei length,
+                                               const GLchar* message, const void* userParam )
 {
 	OutputDebugStringA( message );
 }

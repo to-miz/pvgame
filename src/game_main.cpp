@@ -72,13 +72,70 @@ constexpr float WalljumpWindowDuration = 10;
 constexpr float WalljumpMoveThreshold  = WalljumpMaxDuration - WalljumpFixDuration;
 }
 
+#define getVar( tagged, name ) \
+	( assert( ( tagged )->type == typeof( *( tagged ) )::type_##name ), ( tagged )->name )
+#define queryVar( tagged, name )                                                        \
+	( ( ( tagged )->type == typeof( *( tagged ) )::type_##name ) ? ( ( tagged )->name ) \
+	                                                             : ( nullptr ) )
+
+// PolymorphicAllocator
+struct PolymorphicAllocator {
+	enum { type_stack } type;
+	union {
+		StackAllocator* stack;
+	};
+};
+
+#define doPolymorphicCommandVoid( poly, command, name ) \
+	{                                                   \
+		auto _allocator_ = ( poly ).name;               \
+		command;                                        \
+		break;                                          \
+	}
+#define visitPolymorphicAllocatorVoid( poly, command )      \
+	do {                                                    \
+		switch( ( poly ).type ) {                           \
+			case PolymorphicAllocator::type_stack:          \
+				doPolymorphicCommandVoid( command, stack ); \
+				InvalidDefaultCase;                         \
+		}                                                   \
+	} while( false )
+
+#define doPolymorphicCommand( poly, result, command, name ) \
+	{                                                       \
+		auto _allocator_ = ( poly ).name;                   \
+		result           = command;                         \
+		break;                                              \
+	}
+#define visitPolymorphicAllocator( poly, result, command )                \
+	do {                                                                  \
+		switch( ( poly ).type ) {                                         \
+			case PolymorphicAllocator::type_stack:                        \
+				doPolymorphicCommand( ( poly ), result, command, stack ); \
+			InvalidDefaultCase;                                           \
+		}                                                                 \
+	} while( false )
+
+struct ThreadContext {
+	PolymorphicAllocator allocator;
+};
+
 // globals
 global TextureMap* GlobalTextureMap = nullptr;
 global IngameLog* GlobalIngameLog   = nullptr;
 global ImmediateModeGui* ImGui      = nullptr;
+global ThreadContext* appContext    = nullptr;
 
 global MeshStream* debug_MeshStream = nullptr;
 global bool debug_FillMeshStream    = true;
+
+ThreadContext* getThreadContext()
+{
+	// TODO: pull appContext from thread local storage
+	return appContext;
+}
+PolymorphicAllocator getAllocator() { return getThreadContext()->allocator; }
+
 void debug_Clear()
 {
 	debug_MeshStream->color = 0xFF00FFFF;
@@ -218,7 +275,7 @@ enum VoxelFaceValues : uint32 {
 
 	VF_Count,
 };
-inline CONSTEXPR vec2i getTexelPlaneByFace( intmax face )
+inline vec2i getTexelPlaneByFace( int32 face )
 {
 	constexpr vec2i texelPlaneByFace[] = {
 		{VectorComponent_X, VectorComponent_Y},
@@ -228,24 +285,24 @@ inline CONSTEXPR vec2i getTexelPlaneByFace( intmax face )
 		{VectorComponent_X, VectorComponent_Z},
 		{VectorComponent_X, VectorComponent_Z},
 	};
-	const_assert( face >= 0 && face < countof( texelPlaneByFace ) );
+	assert( face >= 0 && face < countof( texelPlaneByFace ) );
 	return texelPlaneByFace[face];
 }
 
-intmax getVoxelFaceTexture( VoxelCell cell, VoxelFaceValues face )
+uint32 getVoxelFaceTexture( VoxelCell cell, VoxelFaceValues face )
 {
 	auto value = valueof( face );
 	auto textureIndex = ( ( cell >> ( value * 4 ) ) & 0xFu ) - 1;
-	return (intmax)textureIndex;
+	return textureIndex;
 }
-VoxelCell setVoxelFaceTexture( VoxelCell cell, VoxelFaceValues face, intmax index )
+VoxelCell setVoxelFaceTexture( VoxelCell cell, VoxelFaceValues face, int32 index )
 {
 	uint32 shiftAmount = ( valueof( face ) * 4 );
 	VoxelCell masked   = ( ( VoxelCell )( ( index + 1 ) & 0xFu ) ) << shiftAmount;
 	return ( ( cell & ~( 0xFu << shiftAmount ) ) | masked );
 }
 
-bool isPointInsideVoxelBounds( VoxelGrid* grid, intmax x, intmax y, intmax z )
+bool isPointInsideVoxelBounds( VoxelGrid* grid, int32 x, int32 y, int32 z )
 {
 	return ( x >= 0 && x < grid->width ) && ( y >= 0 && y < grid->height )
 	       && ( z >= 0 && z < grid->depth );
@@ -256,29 +313,16 @@ bool isPointInsideVoxelBounds( VoxelGrid* grid, vec3iarg position )
 	       && ( position.y >= 0 && position.y < grid->height )
 	       && ( position.z >= 0 && position.z < grid->depth );
 }
-bool isPointInsideVoxelBounds( VoxelGrid* grid, vec3imarg position )
-{
-	return ( position.x >= 0 && position.x < grid->width )
-	       && ( position.y >= 0 && position.y < grid->height )
-	       && ( position.z >= 0 && position.z < grid->depth );
-}
-VoxelCell& getCell( VoxelGrid* grid, intmax x, intmax y, intmax z )
+VoxelCell& getCell( VoxelGrid* grid, int32 x, int32 y, int32 z )
 {
 	assert( isPointInsideVoxelBounds( grid, x, y, z ) );
-	intmax index = x + y * grid->width + z * grid->width * grid->height;
+	int32 index = x + y * grid->width + z * grid->width * grid->height;
 	return grid->data[index];
 }
 VoxelCell& getCell( VoxelGrid* grid, vec3iarg position )
 {
 	assert( isPointInsideVoxelBounds( grid, position ) );
-	intmax index =
-	    position.x + position.y * grid->width + position.z * grid->width * grid->height;
-	return grid->data[index];
-}
-VoxelCell& getCell( VoxelGrid* grid, vec3imarg position )
-{
-	assert( isPointInsideVoxelBounds( grid, position ) );
-	intmax index =
+	int32 index =
 	    position.x + position.y * grid->width + position.z * grid->width * grid->height;
 	return grid->data[index];
 }
@@ -326,6 +370,10 @@ struct VoxelGuiState {
 
 	bool lightingChecked;
 	bool noLightingChecked;
+
+	bool fileExpanded;
+	bool sizesExpanded;
+	bool texturesExpanded;
 };
 struct VoxelGridTextureMap {
 	TextureId texture;
@@ -725,7 +773,7 @@ void generateMeshFromVoxelGrid( MeshStream* stream, VoxelGrid* grid, VoxelGridTe
 
 	struct FindFirstQuadResult {
 		bool found;
-		vec3im position;
+		vec3i position;
 	};
 	struct PlaneDescriptor {
 		vec3 hAxis;
@@ -748,16 +796,16 @@ void generateMeshFromVoxelGrid( MeshStream* stream, VoxelGrid* grid, VoxelGridTe
 		VoxelFaceValues face;
 	};
 	auto findFirstUnprocessedQuad = []( VoxelGrid* grid, uint8* map, PlaneDescriptor* plane,
-	                                    intmax layer ) -> FindFirstQuadResult {
+	                                    int32 layer ) -> FindFirstQuadResult {
 		// assume we are searching on the xy plane
-		for( intmax y = 0; y < plane->vCellCount; ++y ) {
-			for( intmax x = 0; x < plane->hCellCount; ++x ) {
+		for( int32 y = 0; y < plane->vCellCount; ++y ) {
+			for( int32 x = 0; x < plane->hCellCount; ++x ) {
 				auto mapIndex = x + y * plane->hCellCount;
-				vec3im currentCell;
+				vec3i currentCell;
 				currentCell.elements[plane->hComponent] = x;
 				currentCell.elements[plane->vComponent] = y;
 				currentCell.elements[plane->zComponent] = layer;
-				vec3im frontCell                        = currentCell;
+				vec3i frontCell                         = currentCell;
 				frontCell.elements[plane->zComponent] += plane->frontOffset;
 
 				if( getCell( grid, currentCell ) != EmptyCell && map[mapIndex] == 0 ) {
@@ -777,14 +825,14 @@ void generateMeshFromVoxelGrid( MeshStream* stream, VoxelGrid* grid, VoxelGridTe
 		return {false};
 	};
 
-	auto isGeneratingQuad = []( VoxelGrid* grid, PlaneDescriptor* plane, uint8* map, intmax x,
-	                            intmax y, intmax z, intmax textureIndex ) {
+	auto isGeneratingQuad = []( VoxelGrid* grid, PlaneDescriptor* plane, uint8* map, int32 x,
+	                            int32 y, int32 z, uint32 textureIndex ) {
 		auto mapIndex = x + y * plane->hCellCount;
-		vec3im currentCell;
+		vec3i currentCell;
 		currentCell.elements[plane->hComponent] = x;
 		currentCell.elements[plane->vComponent] = y;
 		currentCell.elements[plane->zComponent] = z;
-		vec3im frontCell                        = currentCell;
+		vec3i frontCell                         = currentCell;
 		frontCell.elements[plane->zComponent] += plane->frontOffset;
 
 		return getCell( grid, currentCell ) != EmptyCell
@@ -797,7 +845,7 @@ void generateMeshFromVoxelGrid( MeshStream* stream, VoxelGrid* grid, VoxelGridTe
 	    MeshStream* stream, VoxelGrid* grid, VoxelGridTextureMap* textures, PlaneDescriptor* plane,
 	    uint8* map, size_t mapSize ) {
 
-		for( intmax z = 0; z < plane->zCount; ++z ) {
+		for( int32 z = 0; z < plane->zCount; ++z ) {
 			memset( map, 0, mapSize * sizeof( uint8 ) );
 			for( ;; ) {
 				auto first = findFirstUnprocessedQuad( grid, map, plane, z );
@@ -806,7 +854,7 @@ void generateMeshFromVoxelGrid( MeshStream* stream, VoxelGrid* grid, VoxelGridTe
 					                         plane->zComponent );
 					auto dim = swizzle( grid->dim, plane->hComponent, plane->vComponent,
 					                    plane->zComponent );
-					intmax textureIndex =
+					auto textureIndex =
 					    getVoxelFaceTexture( getCell( grid, first.position ), plane->face );
 					map[position.x + position.y * plane->hCellCount] = 1;
 
@@ -814,7 +862,7 @@ void generateMeshFromVoxelGrid( MeshStream* stream, VoxelGrid* grid, VoxelGridTe
 					                   + plane->vAxis * ( plane->vSize * position.y )
 					                   + plane->zAxis * ( plane->zSize * position.z )
 					                   + plane->origin;
-					assert( textureIndex >= 0 && textureIndex < countof( textures->entries ) );
+					assert( textureIndex < (uint32)countof( textures->entries ) );
 					auto textureEntry = &textures->entries[textureIndex];
 					auto texelPlane   = getTexelPlaneByFace( textureIndex );
 					auto tw           = getAxisAlignedWidth( textureEntry->texCoords );
@@ -844,9 +892,9 @@ void generateMeshFromVoxelGrid( MeshStream* stream, VoxelGrid* grid, VoxelGridTe
 					} else {
 						// texture coordinates depends on our current position in the plane
 						// we greedily adjust the quad and texture coordinates as we move
-						intmax y    = position.y;
-						intmax xEnd = position.x + 1;
-						for( intmax x = position.x + 1; x < plane->hCellCount; ++x ) {
+						int32 y    = position.y;
+						int32 xEnd = position.x + 1;
+						for( int32 x = position.x + 1; x < plane->hCellCount; ++x ) {
 							if( isGeneratingQuad( grid, plane, map, x, y, z, textureIndex ) ) {
 								quad[1].position += plane->hAxis * plane->hSize;
 								quad[1].texCoords.x += texelWidth;
@@ -863,14 +911,14 @@ void generateMeshFromVoxelGrid( MeshStream* stream, VoxelGrid* grid, VoxelGridTe
 						++y;
 						for( ; y < plane->vCellCount; ++y ) {
 							bool generating = true;
-							for( intmax x = position.x; x < xEnd; ++x ) {
+							for( int32 x = position.x; x < xEnd; ++x ) {
 								if( !isGeneratingQuad( grid, plane, map, x, y, z, textureIndex ) ) {
 									generating = false;
 									break;
 								}
 							}
 							if( generating ) {
-								for( intmax x = position.x; x < xEnd; ++x ) {
+								for( int32 x = position.x; x < xEnd; ++x ) {
 									map[x + y * plane->hCellCount] = 1;
 								}
 								quad[2].position += plane->vAxis * plane->vSize;
@@ -1167,10 +1215,14 @@ RayCastResult raycastIntoVoxelGrid( VoxelGrid* grid, vec3arg rayOrigin, vec3 ray
 	RayCastResult result = {};
 
 	// find first grid intersection point
-	aabb gridBoundingBox = {
-	    0, 0, 0, grid->width * EDITOR_CELL_WIDTH, grid->height * EDITOR_CELL_HEIGHT, grid->depth * EDITOR_CELL_DEPTH};
+	aabb gridBoundingBox = {0,
+	                        0,
+	                        0,
+	                        grid->width * EDITOR_CELL_WIDTH,
+	                        grid->height * EDITOR_CELL_HEIGHT,
+	                        grid->depth * EDITOR_CELL_DEPTH};
 
-	auto originalDir       = rayDir;
+	auto originalDir = rayDir;
 	TestRayVsAabbResult rayIntersection;
 	if( !testRayVsAabb( rayOrigin, rayDir, gridBoundingBox, &rayIntersection ) ) {
 		return result;
@@ -1197,9 +1249,9 @@ RayCastResult raycastIntoVoxelGrid( VoxelGrid* grid, vec3arg rayOrigin, vec3 ray
 	int32 stepY = ( rayDir.y >= 0 ) ? ( 1 ) : ( -1 );
 	int32 stepZ = ( rayDir.z >= 0 ) ? ( 1 ) : ( -1 );
 
-	intmax x = (intmax)floor( start.x * CELL_ONE_OVER_WIDTH );
-	intmax y = (intmax)floor( start.y * CELL_ONE_OVER_HEIGHT );
-	intmax z = (intmax)floor( start.z * CELL_ONE_OVER_DEPTH );
+	int32 x = (int32)floor( start.x * CELL_ONE_OVER_WIDTH );
+	int32 y = (int32)floor( start.y * CELL_ONE_OVER_HEIGHT );
+	int32 z = (int32)floor( start.z * CELL_ONE_OVER_DEPTH );
 
 	float nextVoxelX = ( x + stepX ) * EDITOR_CELL_WIDTH;
 	float nextVoxelY = ( y + stepY ) * EDITOR_CELL_HEIGHT;
@@ -1228,7 +1280,7 @@ RayCastResult raycastIntoVoxelGrid( VoxelGrid* grid, vec3arg rayOrigin, vec3 ray
 
 	result.intersection = rayOrigin + originalDir * rayIntersectionT;
 	if( getCell( grid, x, y, z ) != EmptyCell ) {
-		result.position = {(int32)x, (int32)y, (int32)z};
+		result.position = {x, y, z};
 		result.found    = true;
 		// TODO: normal
 	} else {
@@ -1396,9 +1448,9 @@ static void processSelectMode( AppData* app, GameInputs* inputs, bool focus, flo
 			if( isKeyUp( inputs, KC_RButton ) ) {
 				voxel->dragAction = DragAction::None;
 				auto selection    = getSelection( voxel );
-				for( intmax z = selection.min.z; z < selection.max.z; ++z ) {
-					for( intmax y = selection.min.y; y < selection.max.y; ++y ) {
-						for( intmax x = selection.min.x; x < selection.max.x; ++x ) {
+				for( int32 z = selection.min.z; z < selection.max.z; ++z ) {
+					for( int32 y = selection.min.y; y < selection.max.y; ++y ) {
+						for( int32 x = selection.min.x; x < selection.max.x; ++x ) {
 							auto& cell     = getCell( &voxel->voxels, x, y, z );
 							auto& selected = getCell( &voxel->voxelsMoving, x - selection.min.x,
 							                          y - selection.min.y, z - selection.min.z );
@@ -1506,9 +1558,9 @@ static void processSelectMode( AppData* app, GameInputs* inputs, bool focus, flo
 				if( startedDragging ) {
 					auto duplicate = isKeyDown( inputs, KC_Shift );
 					auto selection = getSelection( voxel );
-					for( intmax z = selection.min.z; z < selection.max.z; ++z ) {
-						for( intmax y = selection.min.y; y < selection.max.y; ++y ) {
-							for( intmax x = selection.min.x; x < selection.max.x; ++x ) {
+					for( int32 z = selection.min.z; z < selection.max.z; ++z ) {
+						for( int32 y = selection.min.y; y < selection.max.y; ++y ) {
+							for( int32 x = selection.min.x; x < selection.max.x; ++x ) {
 								auto& cell = getCell( &voxel->voxels, x, y, z );
 								auto& selected =
 								    getCell( &voxel->voxelsMoving, x - selection.min.x,
@@ -1546,9 +1598,9 @@ static void processSelectMode( AppData* app, GameInputs* inputs, bool focus, flo
 	if( isKeyPressed( inputs, KC_Delete ) ) {
 		generateVoxelMesh = true;
 		auto selection    = getSelection( voxel );
-		for( intmax z = selection.min.z; z < selection.max.z; ++z ) {
-			for( intmax y = selection.min.y; y < selection.max.y; ++y ) {
-				for( intmax x = selection.min.x; x < selection.max.x; ++x ) {
+		for( int32 z = selection.min.z; z < selection.max.z; ++z ) {
+			for( int32 y = selection.min.y; y < selection.max.y; ++y ) {
+				for( int32 x = selection.min.x; x < selection.max.x; ++x ) {
 					getCell( &voxel->voxels, x, y, z ) = EmptyCell;
 				}
 			}
@@ -1558,9 +1610,9 @@ static void processSelectMode( AppData* app, GameInputs* inputs, bool focus, flo
 	if( generateVoxelMesh ) {
 		auto selection = getSelection( voxel );
 		voxel->voxelsCombined = voxel->voxels;
-		for( intmax z = selection.min.z; z < selection.max.z; ++z ) {
-			for( intmax y = selection.min.y; y < selection.max.y; ++y ) {
-				for( intmax x = selection.min.x; x < selection.max.x; ++x ) {
+		for( int32 z = selection.min.z; z < selection.max.z; ++z ) {
+			for( int32 y = selection.min.y; y < selection.max.y; ++y ) {
+				for( int32 x = selection.min.x; x < selection.max.x; ++x ) {
 					auto src = getCell( &voxel->voxelsMoving, x - selection.min.x,
 					                    y - selection.min.y, z - selection.min.z );
 					auto& dest = getCell( &voxel->voxelsCombined, x, y, z );
@@ -1622,7 +1674,7 @@ VoxelGrid getVoxelGridFromTextureMap( VoxelGridTextureMap* map, Color colorkey )
 	result.height = (int32)round( th * info->image.height );
 	result.depth  = (int32)round( td * info->image.width );
 
-	auto isEmpty = [info, map, &colorkey, &result]( vec3imarg index, intmax face ) {
+	auto isEmpty = [info, map, &colorkey, &result]( vec3iarg index, uint32 face ) {
 		auto plane     = getTexelPlaneByFace( face );
 		auto texCoords = &map->entries[face].texCoords;
 		float tx       = index.elements[plane.x] / (float)result.dim[plane.x];
@@ -1635,16 +1687,16 @@ VoxelGrid getVoxelGridFromTextureMap( VoxelGridTextureMap* map, Color colorkey )
 		return ( getAlpha( pixel ) == 0 || pixel == colorkey );
 	};
 
-	intmax strideY = result.width;
-	intmax strideZ = result.width * result.height;
-	for( vec3im pos = {}; pos.z < result.depth; ++pos.z ) {
+	int32 strideY = result.width;
+	int32 strideZ = result.width * result.height;
+	for( vec3i pos = {}; pos.z < result.depth; ++pos.z ) {
 		for( pos.y = 0; pos.y < result.height; ++pos.y ) {
 			for( pos.x = 0; pos.x < result.width; ++pos.x ) {
-				intmax index = pos.x + pos.y * strideY + pos.z * strideZ;
+				int32 index = pos.x + pos.y * strideY + pos.z * strideZ;
 				auto& cell   = result.data[index];
 				cell         = DefaultCell;
 
-				for( intmax face = 0; face < VF_Count; ++face ) {
+				for( uint32 face = 0; face < VF_Count; ++face ) {
 					if( isEmpty( pos, face ) ) {
 						cell = EmptyCell;
 						break;
@@ -1676,15 +1728,16 @@ static void doVoxelGui( AppData* app, GameInputs* inputs, bool focus, float dt )
 	gui->fadeProgress = clamp( gui->fadeProgress + fadeSpeed * ( ( focus ) ? ( 1 ) : ( -1 ) ) );
 
 	if( !gui->initialized ) {
-		gui->editMode          = imguiGenerateGroup();
-		gui->rendering         = imguiGenerateGroup( {ImGui->style.groupWidth} );
-		gui->textureIndex      = imguiGenerateGroup( {ImGui->style.groupWidth, 200} );
+		gui->editMode          = imguiGenerateContainer();
+		gui->rendering         = imguiGenerateContainer( {ImGui->style.containerWidth} );
+		gui->textureIndex      = imguiGenerateContainer( {ImGui->style.containerWidth, 200} );
 		gui->noLightingChecked = true;
 		gui->initialized       = true;
 	}
 	if( isKeyPressed( inputs, KC_Key_K ) ) {
-		imguiGetGroup( gui->editMode )->hidden  = false;
-		imguiGetGroup( gui->rendering )->hidden = false;
+		imguiGetContainer( gui->editMode )->hidden     = false;
+		imguiGetContainer( gui->rendering )->hidden    = false;
+		imguiGetContainer( gui->textureIndex )->hidden = false;
 	}
 
 	setProjection( renderer, ProjectionType::Orthogonal );
@@ -1698,13 +1751,14 @@ static void doVoxelGui( AppData* app, GameInputs* inputs, bool focus, float dt )
 
 	rectf guiBounds = {0, 0, app->width, app->height};
 	imguiBind( &app->guiState, renderer, font, inputs, app->stackAllocator.ptr, guiBounds );
-	if( imguiGroup( "EditMode", gui->editMode ) ) {
+	if( imguiDialog( "EditMode", gui->editMode ) ) {
 		char buffer[200];
 		string_builder builder( buffer, 200 );
 		builder.print( "Current: {}", EditModeStrings[valueof( voxel->editMode )] );
 		imguiText( asStringView( builder ) );
+		imguiSameLine( 3 );
 		for( intmax i = 0; i < valueof( EditMode::Count ); ++i ) {
-			if( imguiButton( EditModeStrings[i] ) ) {
+			if( imguiButton( EditModeStrings[i], 16, 16 ) ) {
 				voxel->editMode = (EditMode)i;
 			}
 		}
@@ -1715,64 +1769,72 @@ static void doVoxelGui( AppData* app, GameInputs* inputs, bool focus, float dt )
 			generateVoxelMesh = true;
 		}
 
-		if( imguiEditbox( "Width", &voxel->voxels.width ) ) {
-			voxel->voxels.width = clamp( voxel->voxels.width, 0, CELL_MAX_X );
-			generateVoxelMesh = true;
-		}
-		if( imguiEditbox( "Height", &voxel->voxels.height ) ) {
-			voxel->voxels.height = clamp( voxel->voxels.height, 0, CELL_MAX_X );
-			generateVoxelMesh = true;
-		}
-		if( imguiEditbox( "Depth", &voxel->voxels.depth ) ) {
-			voxel->voxels.depth = clamp( voxel->voxels.depth, 0, CELL_MAX_X );
-			generateVoxelMesh   = true;
-		}
-
-		imguiSameLine( 2 );
-		if( imguiButton( "Load Texture" ) ) {
-			char filenameBuffer[260];
-			auto filenameSize = app->platform.getOpenFilename(
-			    "All\0*.*\0", nullptr, false, filenameBuffer, countof( filenameBuffer ) );
-			if( filenameSize ) {
-				voxel->textureMap.texture =
-				    app->platform.loadTexture( {filenameBuffer, filenameSize} );
-			}
-		}
-		if( imguiButton( "Generate Grid" ) ) {
-			voxel->voxels     = getVoxelGridFromTextureMapTopLeftColorKey( &voxel->textureMap );
-			generateVoxelMesh = true;
-		}
-
-		imguiSameLine( 2 );
-		if( imguiButton( "Save" ) ) {
-			char filenameBuffer[260];
-			auto filenameSize = app->platform.getSaveFilename(
-			    "All\0*.*\0", nullptr, filenameBuffer, countof( filenameBuffer ) );
-			if( filenameSize ) {
-				saveVoxelGridToFile( &app->platform, {filenameBuffer, filenameSize},
-				                     &voxel->voxels );
-			}
-		}
-
-		if( imguiButton( "Load" ) ) {
-			char filenameBuffer[260];
-			auto filenameSize = app->platform.getOpenFilename(
-			    "All\0*.*\0", nullptr, false, filenameBuffer, countof( filenameBuffer ) );
-			if( filenameSize ) {
-				loadVoxelGridFromFile( &app->platform, {filenameBuffer, filenameSize},
-				                       &voxel->voxels );
+		if( imguiBeginDropGroup( "Sizes", &gui->sizesExpanded ) ) {
+			if( imguiEditbox( "Width", &voxel->voxels.width ) ) {
+				voxel->voxels.width = clamp( voxel->voxels.width, 0, CELL_MAX_X );
 				generateVoxelMesh = true;
 			}
+			if( imguiEditbox( "Height", &voxel->voxels.height ) ) {
+				voxel->voxels.height = clamp( voxel->voxels.height, 0, CELL_MAX_X );
+				generateVoxelMesh = true;
+			}
+			if( imguiEditbox( "Depth", &voxel->voxels.depth ) ) {
+				voxel->voxels.depth = clamp( voxel->voxels.depth, 0, CELL_MAX_X );
+				generateVoxelMesh   = true;
+			}
+			imguiEndDropGroup();
 		}
 
-		imguiSameLine( 2 );
-		if( imguiButton( "Hero Mapping" ) ) {
-			voxel->textureMap = makeHeroVoxelGridTextureMap( voxel->textureMap.texture );
-			generateVoxelMesh = true;
+		if( imguiBeginDropGroup( "Textures & Mapping", &gui->texturesExpanded ) ) {
+			imguiSameLine( 2 );
+			if( imguiButton( "Load Texture" ) ) {
+				char filenameBuffer[260];
+				auto filenameSize = app->platform.getOpenFilename(
+				    "All\0*.*\0", nullptr, false, filenameBuffer, countof( filenameBuffer ) );
+				if( filenameSize ) {
+					voxel->textureMap.texture =
+					    app->platform.loadTexture( {filenameBuffer, filenameSize} );
+				}
+			}
+			if( imguiButton( "Generate Grid" ) ) {
+				voxel->voxels     = getVoxelGridFromTextureMapTopLeftColorKey( &voxel->textureMap );
+				generateVoxelMesh = true;
+			}
+			imguiSameLine( 2 );
+			if( imguiButton( "Hero Mapping" ) ) {
+				voxel->textureMap = makeHeroVoxelGridTextureMap( voxel->textureMap.texture );
+				generateVoxelMesh = true;
+			}
+			if( imguiButton( "Tile Mapping" ) ) {
+				voxel->textureMap = makeDefaultVoxelGridTextureMap( voxel->textureMap.texture );
+				generateVoxelMesh = true;
+			}
+			imguiEndDropGroup();
 		}
-		if( imguiButton( "Tile Mapping" ) ) {
-			voxel->textureMap = makeDefaultVoxelGridTextureMap( voxel->textureMap.texture );
-			generateVoxelMesh = true;
+
+		if( imguiBeginDropGroup( "Save & Load", &gui->fileExpanded ) ) {
+			imguiSameLine( 2 );
+			if( imguiButton( "Save" ) ) {
+				char filenameBuffer[260];
+				auto filenameSize = app->platform.getSaveFilename(
+				    "All\0*.*\0", nullptr, filenameBuffer, countof( filenameBuffer ) );
+				if( filenameSize ) {
+					saveVoxelGridToFile( &app->platform, {filenameBuffer, filenameSize},
+					                     &voxel->voxels );
+				}
+			}
+
+			if( imguiButton( "Load" ) ) {
+				char filenameBuffer[260];
+				auto filenameSize = app->platform.getOpenFilename(
+				    "All\0*.*\0", nullptr, false, filenameBuffer, countof( filenameBuffer ) );
+				if( filenameSize ) {
+					loadVoxelGridFromFile( &app->platform, {filenameBuffer, filenameSize},
+					                       &voxel->voxels );
+					generateVoxelMesh = true;
+				}
+			}
+			imguiEndDropGroup();
 		}
 
 		if( generateVoxelMesh ) {
@@ -1786,7 +1848,7 @@ static void doVoxelGui( AppData* app, GameInputs* inputs, bool focus, float dt )
 		}
 	}
 
-	if( imguiGroup( "Rendering Settings", gui->rendering ) ) {
+	if( imguiDialog( "Rendering Settings", gui->rendering ) ) {
 		if( imguiRadiobox( "Lighting", &gui->lightingChecked ) ) {
 			voxel->lighting = gui->lightingChecked;
 		}
@@ -1798,7 +1860,7 @@ static void doVoxelGui( AppData* app, GameInputs* inputs, bool focus, float dt )
 	auto doButtons = [voxel]( StringView faceLabel, VoxelFaceValues face ) {
 		imguiSameLine( 7 );
 		imguiText( faceLabel, 35, 16 );
-		intmax index = -1;
+		int32 index = -1;
 		if( imguiButton( "front", 16, 16 ) ) {
 			index = 0;
 		}
@@ -1821,7 +1883,7 @@ static void doVoxelGui( AppData* app, GameInputs* inputs, bool focus, float dt )
 			voxel->placingCell = setVoxelFaceTexture( voxel->placingCell, face, index );
 		}
 	};
-	if( imguiGroup( "Voxel Texture Index", gui->textureIndex ) ) {
+	if( imguiDialog( "Voxel Texture Index", gui->textureIndex ) ) {
 		doButtons( "front", VF_Front );
 		doButtons( "left", VF_Left );
 		doButtons( "back", VF_Back );
@@ -2102,7 +2164,8 @@ static void doCollisionDetection( AppData* app, CollidableSystem* system, GameIn
 
 	auto game = &app->gameState;
 	// TODO: air movement should be accelerated instead of instant
-	
+	vec2 rightBottom = {0, 0};
+	auto rect = Rect( -1, 1, 1.0f, 0 );
 
 	for( auto& entry : system->entries ) {
 		entry.walljumpWindow      = processCountdownTimer( entry.walljumpWindow, dt );

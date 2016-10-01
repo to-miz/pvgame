@@ -73,17 +73,23 @@ typedef trectarg< int32 > rectiarg;
 typedef tregionarg< float > regionfarg;
 typedef tregionarg< int32 > regioniarg;
 
-template< class T > trect< T > Rect( T left, T top, T right, T bottom );
-template< class T > trect< T > Rect( T left, T top, tvec2< T > rightBottom );
+template< class A, class B, class C, class D, class F >
+trect< F > Rect( A left, B top, C right, D bottom );
+template< class T, class U, class V, class D >
+trect< T > Rect( U left, V top, tvec2< T > rightBottom );
 template< class T > trect< T > Rect( tvec2< T > leftTop, tvec2< T > rightBottom );
-template< class T > trect< T > Rect( tvec2< T > leftTop, T right, T bottom );
+template< class T, class U, class V, class D >
+trect< T > Rect( tvec2< T > leftTop, U right, V bottom );
 template< class T > trect< T > Rect( tregionarg< T > region );
 // converts region to rectf by considering possibility of negative dim
 template< class T > trect< T > RectCorrected( tregionarg< T > region );
-template< class T > trect< T > RectWH( T left, T top, T width, T height );
-template< class T > trect< T > RectWH( tvec2< T > leftTop, T width, T height );
+template< class A, class B, class C, class D, class F >
+trect< F > RectWH( A left, B top, C width, D height );
+template< class T, class U, class V, class D >
+trect< T > RectWH( tvec2< T > leftTop, U width, V height );
 template< class T > trect< T > RectWH( tvec2< T > leftTop, tvec2< T > dim );
-template< class T > trect< T > RectWH( T left, T top, tvec2< T > dim );
+template< class T, class U, class V, class D >
+trect< T > RectWH( U left, V top, tvec2< T > dim );
 template< class T > trect< T > RectHalfSize( T centerX, T centerY, T halfWidth, T halfHeight );
 template< class T > trect< T > RectHalfSize( tvec2< T > center, T halfWidth, T halfHeight );
 template< class T > trect< T > RectHalfSize( tvec2< T > center, tvec2< T > halfSize );
@@ -103,12 +109,12 @@ template< class T > trect< T > RectMirroredDiagonal( trectarg< T > a, T originX,
 template< class T > trect< T > RectMirroredHorizontal( trectarg< T > a );
 template< class T > trect< T > RectMirroredVertical( trectarg< T > a );
 template< class T > trect< T > RectMirroredDiagonal( trectarg< T > a );
-template< class T > trect< T > RectSetLeft( trectarg< T > a, T left );
-template< class T > trect< T > RectSetTop( trectarg< T > a, T top );
-template< class T > trect< T > RectSetRight( trectarg< T > a, T right );
-template< class T > trect< T > RectSetBottom( trectarg< T > a, T bottom );
-template< class T > trect< T > RectSetWidth( trectarg< T > a, T width );
-template< class T > trect< T > RectSetHeight( trectarg< T > a, T height );
+template< class T, class U > trect< T > RectSetLeft( trectarg< T > a, U left );
+template< class T, class U > trect< T > RectSetTop( trectarg< T > a, U top );
+template< class T, class U > trect< T > RectSetRight( trectarg< T > a, U right );
+template< class T, class U > trect< T > RectSetBottom( trectarg< T > a, U bottom );
+template< class T, class U > trect< T > RectSetWidth( trectarg< T > a, U width );
+template< class T, class U > trect< T > RectSetHeight( trectarg< T > a, U height );
 template< class T > T width( trectarg< T > r );
 template< class T > T height( trectarg< T > r );
 template< class T > tvec2< T > center( trectarg< T > r );
@@ -165,21 +171,27 @@ recti RectTiledIndex( rectfarg rect, float tileWidth, float tileHeight )
 }
 
 // template impl
-template< class T > trect< T > Rect( T left, T top, T right, T bottom )
+template < class A, class B, class C, class D,
+           class F = typename std::common_type< A, B, C, D >::type >
+trect< F > Rect( A left, B top, C right, D bottom )
 {
-	return {left, top, right, bottom};
+	return {(F)left, (F)top, (F)right, (F)bottom};
 }
-template< class T > trect< T > Rect( T left, T top, tvec2< T > rightBottom )
+template< class T, class U, class V, class D = typename std::common_type< T, U, V >::type >
+trect< T > Rect( U left, V top, tvec2< T > rightBottom )
 {
-	return {left, top, rightBottom.x, rightBottom.y};
+	static_assert( std::is_same< D, T >::value, "Values not implicitly convertible" );
+	return {(T)left, (T)top, rightBottom.x, rightBottom.y};
 }
 template< class T > trect< T > Rect( tvec2< T > leftTop, tvec2< T > rightBottom )
 {
 	return {leftTop.x, leftTop.y, rightBottom.x, rightBottom.y};
 }
-template< class T > trect< T > Rect( tvec2< T > leftTop, T right, T bottom )
+template< class T, class U, class V, class D = typename std::common_type< T, U, V >::type >
+trect< T > Rect( tvec2< T > leftTop, U right, V bottom )
 {
-	return {leftTop.x, leftTop.y, right, bottom};
+	static_assert( std::is_same< D, T >::value, "Values not implicitly convertible" );
+	return {leftTop.x, leftTop.y, (T)right, (T)bottom};
 
 }
 template< class T > trect< T > Rect( tregionarg< T > region )
@@ -206,21 +218,27 @@ template< class T > trect< T > RectCorrected( tregionarg< T > region )
 	}
 	return result;
 }
-template< class T > trect< T > RectWH( T left, T top, T width, T height )
+template < class A, class B, class C, class D,
+           class F = typename std::common_type< A, B, C, D >::type >
+trect< F > RectWH( A left, B top, C width, D height )
 {
-	return {left, top, left + width, top + height};
+	return {(F)left, (F)top, (F)left + (F)width, (F)top + (F)height};
 }
-template< class T > trect< T > RectWH( tvec2< T > leftTop, T width, T height )
+template< class T, class U, class V, class D = typename std::common_type< T, U, V >::type >
+trect< T > RectWH( tvec2< T > leftTop, U width, V height )
 {
-	return {leftTop.x, leftTop.y, leftTop.x + width, leftTop.y + height};
+	static_assert( std::is_same< D, T >::value, "Values not implicitly convertible" );
+	return {leftTop.x, leftTop.y, leftTop.x + (T)width, leftTop.y + (T)height};
 }
 template< class T > trect< T > RectWH( tvec2< T > leftTop, tvec2< T > dim )
 {
 	return {leftTop.x, leftTop.y, leftTop.x + dim.x, leftTop.y + dim.y};
 }
-template< class T > trect< T > RectWH( T left, T top, tvec2< T > dim )
+template< class T, class U, class V, class D = typename std::common_type< T, U, V >::type >
+trect< T > RectWH( U left, V top, tvec2< T > dim )
 {
-	return {left, top, left + dim.x, top + dim.y};
+	static_assert( std::is_same< D, T >::value, "Values not implicitly convertible" );
+	return {(T)left, (T)top, (T)left + dim.x, (T)top + dim.y};
 }
 template< class T > trect< T > RectHalfSize( T centerX, T centerY, T halfWidth, T halfHeight )
 {
@@ -329,29 +347,35 @@ template< class T > trect< T > RectMirroredDiagonal( trectarg< T > a )
 {
 	return {-a.right, -a.bottom, -a.left, -a.top};
 }
-template< class T > trect< T > RectSetLeft( trectarg< T > a, T left )
+template< class T, class U > trect< T > RectSetLeft( trectarg< T > a, U left )
 {
-	return {left, a.top, a.right, a.bottom};
+	static_assert( std::is_convertible< T, U >::value, "Values not implicitly convertible" );
+	return {(T)left, a.top, a.right, a.bottom};
 }
-template< class T > trect< T > RectSetTop( trectarg< T > a, T top )
+template< class T, class U > trect< T > RectSetTop( trectarg< T > a, U top )
 {
-	return {a.left, top, a.right, a.bottom};
+	static_assert( std::is_convertible< T, U >::value, "Values not implicitly convertible" );
+	return {a.left, (T)top, a.right, a.bottom};
 }
-template< class T > trect< T > RectSetRight( trectarg< T > a, T right )
+template< class T, class U > trect< T > RectSetRight( trectarg< T > a, U right )
 {
-	return {a.left, a.top, right, a.bottom};
+	static_assert( std::is_convertible< T, U >::value, "Values not implicitly convertible" );
+	return {a.left, a.top, (T)right, a.bottom};
 }
-template< class T > trect< T > RectSetBottom( trectarg< T > a, T bottom )
+template< class T, class U > trect< T > RectSetBottom( trectarg< T > a, U bottom )
 {
-	return {a.left, a.top, a.right, bottom};
+	static_assert( std::is_convertible< T, U >::value, "Values not implicitly convertible" );
+	return {a.left, a.top, a.right, (T)bottom};
 }
-template< class T > trect< T > RectSetWidth( trectarg< T > a, T width )
+template< class T, class U > trect< T > RectSetWidth( trectarg< T > a, U width )
 {
-	return {a.left, a.top, a.left + width, a.bottom};
+	static_assert( std::is_convertible< T, U >::value, "Values not implicitly convertible" );
+	return {a.left, a.top, a.left + (T)width, a.bottom};
 }
-template< class T > trect< T > RectSetHeight( trectarg< T > a, T height )
+template< class T, class U > trect< T > RectSetHeight( trectarg< T > a, U height )
 {
-	return {a.left, a.top, a.right, a.top + height};
+	static_assert( std::is_convertible< T, U >::value, "Values not implicitly convertible" );
+	return {a.left, a.top, a.right, a.top + (T)height};
 }
 template< class T > T width( trectarg< T > r )
 {

@@ -20,6 +20,10 @@ typedef uint32 uintfast;
 typedef size_t uintptr;
 static_assert( sizeof( uintptr ) == sizeof( void* ), "pointer size mismatch" );
 
+#undef INTMAX_MIN
+#undef INTMAX_MAX
+#undef UINTMAX_MIN
+#undef UINTMAX_MAX
 #if defined( ARCHITECTURE_X86 )
 	typedef int32 intmax;
 	#define INTMAX_MIN INT32_MIN
@@ -34,6 +38,8 @@ static_assert( sizeof( uintptr ) == sizeof( void* ), "pointer size mismatch" );
 	typedef uint64 uintmax;
 	#define UINTMAX_MIN UINT64_MIN
 	#define UINTMAX_MAX UINT64_MAX
+
+	#define INTMAX_IS_BIGGER
 #else
 	#error ARCHITECTURE undefined
 #endif

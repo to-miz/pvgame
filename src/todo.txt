@@ -1,4 +1,5 @@
 gameplay:
+	line rendering
 	variable jump height based on how long the jump button is held down
 	sliding down walls should slow down descent
 	particles and decals when jumping/sliding/landing/shooting

@@ -281,6 +281,36 @@ struct Win32GameDll {
 	HMODULE library;
 };
 
+// we will not cleanup the strings returned from this function, the operating system can do the
+// cleanup, since we need the strings until the program terminates
+wchar_t* win32ConcatStrings( const wchar_t* a, size_t aLen, const wchar_t* b )
+{
+	auto bLen = wcslen( b );
+	auto resultSize = aLen + bLen + 1;
+	auto result = new wchar_t[resultSize];
+	memcpy( result, a, aLen * sizeof( wchar_t ) );
+	memcpy( result + aLen, b, bLen * sizeof( wchar_t ) );
+	result[resultSize - 1] = 0;
+	return result;
+
+}
+Win32GameDll win32MakeGameDllNames( const wchar_t* dllName, const wchar_t* dllCopyName,
+                                    const wchar_t* lockfile )
+{
+	Win32GameDll result = {};
+	wchar_t fnBuffer[1024];
+	auto size = GetModuleFileNameW( nullptr, fnBuffer, countof( fnBuffer ) );
+	// find dir
+	for( int i = size - 1; i >= 0 && fnBuffer[i] != L'\\'; --i, --size ) {
+	}
+	if( size > 0 ) {
+		result.dllName = win32ConcatStrings( fnBuffer, size, dllName );
+		result.dllCopyName = win32ConcatStrings( fnBuffer, size, dllCopyName );
+		result.lockfile = win32ConcatStrings( fnBuffer, size, lockfile );
+	}
+	return result;
+}
+
 bool win32FileExists( const wchar_t* file )
 {
 	auto exists = true;
@@ -381,8 +411,7 @@ int CALLBACK WinMain( HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdL
 	LONG width  = 800;
 	LONG height = 800;
 
-	Win32GameDll dll = {L"V:\\builds\\game_dll.dll", L"V:\\builds\\game_copy.dll",
-	                    L"V:\\builds\\lock.tmp"};
+	auto dll = win32MakeGameDllNames( L"game_dll.dll", L"game_copy.dll", L"lock.tmp" );
 	win32LoadGameDll( &dll );
 
 	PlatformServices platformServices = {&win32LoadTexture,      &win32LoadTextureFromMemory,
@@ -635,6 +664,10 @@ int CALLBACK WinMain( HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdL
 		}
 	}
 	ReleaseDC( hwnd, hdc );
+	if( dll.library ) {
+		FreeLibrary( dll.library );
+		DeleteFileW( dll.dllCopyName );
+	}
 	return 0;
 }
 

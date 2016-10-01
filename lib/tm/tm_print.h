@@ -1,5 +1,5 @@
 /*
-tm_print.h v0.0.4 - public domain
+tm_print.h v0.0.4a - public domain
 author: Tolga Mizrak 2016
 
 no warranty; use at your own risk
@@ -11,7 +11,8 @@ USAGE
     in ONE C or C++ source file before #including this header.
 
 ISSUES
-	- The output between tm_conversion.h and snprintf based output isn't the same for floating points.
+	- The output between tm_conversion.h and snprintf based output isn't the same for floating
+	points.
 	The tm_conversion.h library doesn't output trailing zeroes by default, while printf will output
 	trailing zeroes when using %f. To make the tm_conversion based implementation always output
 	trailing zeroes, define:
@@ -32,6 +33,7 @@ ISSUES
 	sized)
 
 HISTORY
+	v0.0.4a 29.09.16 fixed a bug where inputting an escaped {{ was resulting in an infinite loop
 	v0.0.4  29.09.16 added signed/unsigned char, short and long handling
 	                 fixed compiler errors when compiling with clang
 	v0.0.3  27.09.16 added printing custom types by overloading snprint
@@ -85,7 +87,7 @@ LICENSE
 	#endif
 	
 	#if defined( TMP_NO_TM_CONVERSION ) && defined( TMP_NO_STDIO ) && !defined( TMP_SNPRINTF )
-		#error "TMP_SNPRINTF has to be defined if both TMP_NO_STDIO and TMP_NO_TM_CONVERSION are defined"
+		#error "TMP_SNPRINTF has to be defined if TMP_NO_STDIO and TMP_NO_TM_CONVERSION are defined"
 	#endif
 
 	// the buffer size of the buffer that printf will use when formatting
@@ -111,7 +113,10 @@ LICENSE
 	typedef uint64_t tmp_uint64;
 	typedef size_t tmp_size_t;
 #endif
-typedef unsigned int tmp_uint;
+
+#define TMP_BITFIELD( x ) ( 1 << ( x ) )
+#define TMP_BITCOUNT( x ) ( sizeof( x ) * 8 )
+#define TMP_MIN( a, b ) ( ( a ) < ( b ) ? ( a ) : ( b ) )
 
 // define this if you do not want to use tm_conversion at all
 // the library will then use snprintf and cstdlib or a snprintf variant you supply instead
@@ -123,15 +128,15 @@ typedef unsigned int tmp_uint;
 #else
 	// these are yanked from tm_conversion, we need these to do formatting our selves
 	enum PrintFormatFlags : unsigned int {
-		PF_SIGN = ( 1 << 0 ),
-		PF_LOWERCASE = ( 1 << 1 ),
-		PF_TRAILING_ZEROES = ( 1 << 2 ),
-		PF_BOOL_AS_NUMBER = ( 1 << 3 ),
-		PF_SCIENTIFIC = ( 1 << 4 ),  // not implemented yet
+		PF_SIGN            = TMP_BITFIELD( 0 ),
+		PF_LOWERCASE       = TMP_BITFIELD( 1 ),
+		PF_TRAILING_ZEROES = TMP_BITFIELD( 2 ),
+		PF_BOOL_AS_NUMBER  = TMP_BITFIELD( 3 ),
+		PF_SCIENTIFIC      = TMP_BITFIELD( 4 ),  // not implemented yet
 
 		PF_DEFAULT = 0,
 
-		PF_COUNT = 5, // 5 flags in total
+		PF_COUNT = 5,  // 5 flags in total
 	};
 
 	typedef struct PrintFormatStruct {
@@ -146,10 +151,6 @@ typedef unsigned int tmp_uint;
 		return PrintFormat{10, 6, 0, PF_DEFAULT};
 	}
 #endif
-
-#define TMP_BITFIELD( x ) ( 1 << ( x ) )
-#define TMP_BITCOUNT( x ) ( sizeof( x ) * 8 )
-#define TMP_MIN( a, b ) ( ( a ) < ( b ) ? ( a ) : ( b ) )
 
 namespace PrintType
 {
@@ -234,8 +235,6 @@ union PrintValue {
 };
 
 struct PrintArgList {
-	// we want the args to live in a static array instead of using dynamic memory allocation, so
-	// that the optimizer has an easier job of generating optimal code
 	PrintValue args[PrintType::Count];
 	tmp_uint64 flags;
 	unsigned int size;
@@ -277,10 +276,10 @@ template <> struct tmp_int_size<2> { enum : tmp_uint64 { Value = PrintType::Int 
 template <> struct tmp_int_size<4> { enum : tmp_uint64 { Value = PrintType::Int }; };
 template <> struct tmp_int_size<8> { enum : tmp_uint64 { Value = PrintType::Int64 }; };
 template <size_t N> struct tmp_uint_size;
-template <> struct tmp_uint_size<1> { enum : tmp_uint64 { Value = PrintType::Int }; };
-template <> struct tmp_uint_size<2> { enum : tmp_uint64 { Value = PrintType::Int }; };
-template <> struct tmp_uint_size<4> { enum : tmp_uint64 { Value = PrintType::Int }; };
-template <> struct tmp_uint_size<8> { enum : tmp_uint64 { Value = PrintType::Int64 }; };
+template <> struct tmp_uint_size<1> { enum : tmp_uint64 { Value = PrintType::UInt }; };
+template <> struct tmp_uint_size<2> { enum : tmp_uint64 { Value = PrintType::UInt }; };
+template <> struct tmp_uint_size<4> { enum : tmp_uint64 { Value = PrintType::UInt }; };
+template <> struct tmp_uint_size<8> { enum : tmp_uint64 { Value = PrintType::UInt64 }; };
 
 template < class... Types > struct tmp_type_flags< signed char, Types... > {
 	enum : tmp_uint64 {
@@ -565,7 +564,9 @@ void fillPrintArgList( PrintArgList* list, const char* value, const Types&... ar
 	template < class T, class... Types >
 	void fillPrintArgList( PrintArgList* list, const T& value, const Types&... args )
 	{
-	    static_assert( false, "T is not printable, custom printing is disabled (TMP_CUSTOM_PRINTING not defined)" );
+		static_assert(
+		    false,
+		    "T is not printable, custom printing is disabled (TMP_CUSTOM_PRINTING not defined)" );
     }
 #endif
 void fillPrintArgList( PrintArgList* ) {}
@@ -844,6 +845,8 @@ static void print_impl( const char* format, size_t formatLen, const PrintFormat&
 		++p;
 		if( *p == '{' ) {
 			printout( "{", 1 );
+			++p;
+			formatFirst = p;
 			continue;
 		}
 

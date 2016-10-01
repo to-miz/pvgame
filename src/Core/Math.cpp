@@ -88,36 +88,48 @@ float radiansToDegrees( float r )
 }
 
 #if defined( _MSC_VER ) && !defined( __clang__ )
-
-extern "C" {
-	float floorf( float );
-	float ceilf( float );
-}
-#pragma intrinsic( floorf, ceilf )
-float floor( float x )
-{
-	return floorf( x );
-}
-float ceil( float x )
-{
-	return ceilf( x );
-}
-
+	#ifdef ARCHITECTURE_X64
+		extern "C" {
+			float floorf( float );
+			float ceilf( float );
+		}
+		#pragma intrinsic( floorf, ceilf )
+		float floor( float x )
+		{
+			return floorf( x );
+		}
+		float ceil( float x )
+		{
+			return ceilf( x );
+		}
+	#elif ARCHITECTURE_X86
+		extern "C" {
+			double floor( double );
+			double ceil( double );
+		}
+		#pragma intrinsic( floor, ceil )
+		float floor( float x )
+		{
+			return (float)floor( (double)x );
+		}
+		float ceil( float x )
+		{
+			return (float)ceil( (double)x );
+		}
+	#endif
 #else
-
-extern "C" {
-	float floorf( float );
-	float ceilf( float );
-}
-float floor( float x )
-{
-	return floorf( x );
-}
-float ceil( float x )
-{
-	return ceilf( x );
-}
-
+	extern "C" {
+		float floorf( float );
+		float ceilf( float );
+	}
+	float floor( float x )
+	{
+		return floorf( x );
+	}
+	float ceil( float x )
+	{
+		return ceilf( x );
+	}
 #endif
 
 float abs( float x )

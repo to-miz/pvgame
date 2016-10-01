@@ -156,6 +156,18 @@ MeshStream makeMeshStream( Vertex* vertices, int32 maxVertices, uint16* indices,
 	result.renderOptions         = renderOptions;
 	return result;
 }
+MeshStream makeMeshStream( Mesh* mesh, MatrixStack* stack = nullptr,
+                           MeshRenderOptions renderOptions = defaultMeshRenderOptions() )
+{
+	MeshStream result            = {};
+	result.data.vertices         = mesh->vertices;
+	result.data.verticesCapacity = mesh->verticesCount;
+	result.data.indices          = mesh->indices;
+	result.data.indicesCapacity  = mesh->indicesCount;
+	result.matrixStack           = stack;
+	result.renderOptions         = renderOptions;
+	return result;
+}
 
 bool isValid( MeshStream* stream )
 {

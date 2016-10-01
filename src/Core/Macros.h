@@ -48,4 +48,6 @@
 
 #define not_implemented() debug_error( "not implemented" )
 
+#define FOR( x ) for( auto&& x )
+
 #endif // _MACROS_H_INCLUDED_
