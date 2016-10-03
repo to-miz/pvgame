@@ -72,12 +72,6 @@ constexpr float WalljumpWindowDuration = 10;
 constexpr float WalljumpMoveThreshold  = WalljumpMaxDuration - WalljumpFixDuration;
 }
 
-#define getVar( tagged, name ) \
-	( assert( ( tagged )->type == typeof( *( tagged ) )::type_##name ), ( tagged )->name )
-#define queryVar( tagged, name )                                                        \
-	( ( ( tagged )->type == typeof( *( tagged ) )::type_##name ) ? ( ( tagged )->name ) \
-	                                                             : ( nullptr ) )
-
 // PolymorphicAllocator
 struct PolymorphicAllocator {
 	enum { type_stack } type;
@@ -374,6 +368,8 @@ struct VoxelGuiState {
 	bool fileExpanded;
 	bool sizesExpanded;
 	bool texturesExpanded;
+
+	int32 mappingType;
 };
 struct VoxelGridTextureMap {
 	TextureId texture;
@@ -694,7 +690,7 @@ void fillVoxelGridFromImage( VoxelGrid* grid, ImageData image )
 			// uint32 b = image.data[index + 2];
 			uint32 a = image.data[index + 3];
 
-			// TODO: use color
+			// TODO: use color keying
 			if( a != 0 ) {
 				auto gridIndex        = x + y * grid->width /* + grid->width * grid->height*/;
 				grid->data[gridIndex] = 1;
@@ -718,8 +714,6 @@ void generateMeshFromVoxelGridNaive( MeshStream* stream, VoxelGrid* grid )
 				intmax cell  = grid->data[index];
 				if( cell != EmptyCell ) {
 					stream->color = 0xFF000000;
-					// TODO: color
-					// stream->color = ( a << 24 ) | ( r << 16 ) | ( g << 8 ) | ( b );
 					float left   = x * EDITOR_CELL_WIDTH;
 					float bottom = yStart - y * EDITOR_CELL_HEIGHT - EDITOR_CELL_HEIGHT;
 					float near   = z * EDITOR_CELL_DEPTH;
@@ -1114,7 +1108,6 @@ bool testRayVsPlane( vec3arg rayOrigin, vec3arg rayDir, vec3arg planeOrigin, vec
 {
 	auto denom = dot( rayDir, planeNormal );
 	if( denom == 0 ) {
-		// TODO: check whether rayOrigin is on the plane
 		auto projection = dot( planeOrigin - rayOrigin, planeNormal );
 		if( projection > -0.0001f && projection < 0.0001f ) {
 			if( t ) {
@@ -1209,6 +1202,8 @@ struct RayCastResult {
 	vec3 intersection;
 };
 
+// raycasting into 3d grid algorithm based on this paper:
+// http://www.cse.yorku.ca/~amana/research/grid.pdf
 RayCastResult raycastIntoVoxelGrid( VoxelGrid* grid, vec3arg rayOrigin, vec3 rayDir, float tMax )
 {
 	assert( grid );
@@ -1274,15 +1269,17 @@ RayCastResult raycastIntoVoxelGrid( VoxelGrid* grid, vec3arg rayOrigin, vec3 ray
 	float tMaxY = ( rayDir.y != 0 ) ? ( ( nextVoxelY - start.y ) * oneOverRayDirY ) : ( FLOAT_MAX );
 	float tMaxZ = ( rayDir.z != 0 ) ? ( ( nextVoxelZ - start.z ) * oneOverRayDirZ ) : ( FLOAT_MAX );
 
-	float tDeltaX = ( rayDir.x != 0 ) ? ( EDITOR_CELL_WIDTH * oneOverRayDirX * stepX ) : ( FLOAT_MAX );
-	float tDeltaY = ( rayDir.y != 0 ) ? ( EDITOR_CELL_HEIGHT * oneOverRayDirY * stepY ) : ( FLOAT_MAX );
-	float tDeltaZ = ( rayDir.z != 0 ) ? ( EDITOR_CELL_DEPTH * oneOverRayDirZ * stepZ ) : ( FLOAT_MAX );
+	float tDeltaX =
+	    ( rayDir.x != 0 ) ? ( EDITOR_CELL_WIDTH * oneOverRayDirX * stepX ) : ( FLOAT_MAX );
+	float tDeltaY =
+	    ( rayDir.y != 0 ) ? ( EDITOR_CELL_HEIGHT * oneOverRayDirY * stepY ) : ( FLOAT_MAX );
+	float tDeltaZ =
+	    ( rayDir.z != 0 ) ? ( EDITOR_CELL_DEPTH * oneOverRayDirZ * stepZ ) : ( FLOAT_MAX );
 
 	result.intersection = rayOrigin + originalDir * rayIntersectionT;
 	if( getCell( grid, x, y, z ) != EmptyCell ) {
 		result.position = {x, y, z};
 		result.found    = true;
-		// TODO: normal
 	} else {
 		float prevT = 0;
 		float t     = 0;
@@ -1373,10 +1370,10 @@ static void processBuildMode( AppData* app, GameInputs* inputs, bool focus, floa
 
 aabb calculateSelectionWorld( VoxelState* voxel )
 {
-	auto grid = &voxel->voxels;
-	auto selectionWorld = AabbScaled( voxel->selection, vec3{EDITOR_CELL_WIDTH, EDITOR_CELL_HEIGHT, EDITOR_CELL_DEPTH} );
-	auto voxelGridTop   = EDITOR_CELL_HEIGHT * grid->height;
-	selectionWorld      = translate( selectionWorld, {0, voxelGridTop, 0} );
+	auto grid             = &voxel->voxels;
+	auto selectionWorld   = AabbScaled( voxel->selection, EditorVoxelCellSize );
+	auto voxelGridTop     = EDITOR_CELL_HEIGHT * grid->height;
+	selectionWorld        = translate( selectionWorld, {0, voxelGridTop, 0} );
 	selectionWorld.bottom = voxelGridTop * 2 - selectionWorld.bottom;
 	selectionWorld.top    = voxelGridTop * 2 - selectionWorld.top;
 	swap( selectionWorld.bottom, selectionWorld.top );
@@ -1386,7 +1383,7 @@ aabb calculateSelectionWorld( VoxelState* voxel )
 aabbi getSelection( VoxelState* state )
 {
 	aabbi result;
-	auto grid = &state->voxels;
+	auto grid    = &state->voxels;
 	result.min.x = max( min( state->selection.min.x, state->selection.max.x ), 0 );
 	result.max.x = min( max( state->selection.min.x, state->selection.max.x ), grid->width );
 
@@ -1800,6 +1797,17 @@ static void doVoxelGui( AppData* app, GameInputs* inputs, bool focus, float dt )
 				voxel->voxels     = getVoxelGridFromTextureMapTopLeftColorKey( &voxel->textureMap );
 				generateVoxelMesh = true;
 			}
+#if 1
+			auto combo = imguiCombo( "Mapping Type", &gui->mappingType );
+			if( imguiComboEntry( combo, "Hero Mapping" ) ) {
+				voxel->textureMap = makeHeroVoxelGridTextureMap( voxel->textureMap.texture );
+				generateVoxelMesh = true;
+			}
+			if( imguiComboEntry( combo, "TileMapping" ) ) {
+				voxel->textureMap = makeDefaultVoxelGridTextureMap( voxel->textureMap.texture );
+				generateVoxelMesh = true;
+			}
+#else
 			imguiSameLine( 2 );
 			if( imguiButton( "Hero Mapping" ) ) {
 				voxel->textureMap = makeHeroVoxelGridTextureMap( voxel->textureMap.texture );
@@ -1809,6 +1817,7 @@ static void doVoxelGui( AppData* app, GameInputs* inputs, bool focus, float dt )
 				voxel->textureMap = makeDefaultVoxelGridTextureMap( voxel->textureMap.texture );
 				generateVoxelMesh = true;
 			}
+#endif
 			imguiEndDropGroup();
 		}
 
@@ -1936,7 +1945,7 @@ static void processCamera( GameInputs* inputs, GameSettings* settings, Camera* c
 static MeshId loadVoxelMeshFromFile( PlatformServices* platform, StackAllocator* allocator,
                                      VoxelGridTextureMap* textures, StringView filename )
 {
-	// TODO: make this work with arbitrary texture maps
+	// TODO: implement loading of texture maps too
 	MeshId result = {};
 	VoxelGrid grid;
 	if( loadVoxelGridFromFile( platform, filename, &grid ) ) {
@@ -2007,8 +2016,8 @@ static void doVoxel( AppData* app, GameInputs* inputs, bool focus, float dt )
 	}
 
 #if 1
-	MESH_STREAM_BLOCK( stream, renderer ) {
-		auto grid = &voxel->voxels;
+	LINE_MESH_STREAM_BLOCK( stream, renderer ) {
+		auto grid     = &voxel->voxels;
 		stream->color = 0xFF0000FF;
 		aabb box      = {0,
 		            0,
@@ -2027,7 +2036,7 @@ static void doVoxel( AppData* app, GameInputs* inputs, bool focus, float dt )
 	if( voxel->editMode == EditMode::Select ) {
 		setTexture( renderer, 0, null );
 		setRenderState( renderer, RenderStateType::DepthTest, false );
-		MESH_STREAM_BLOCK( stream, renderer ) {
+		LINE_MESH_STREAM_BLOCK( stream, renderer ) {
 			auto selectionWorld = calculateSelectionWorld( voxel );
 			stream->color       = Color::Blue;
 			pushAabbOutline( stream, selectionWorld );
@@ -2041,22 +2050,14 @@ static void doVoxel( AppData* app, GameInputs* inputs, bool focus, float dt )
 #define GAME_MAP_WIDTH 16
 #define GAME_MAP_HEIGHT 16
 static int8 GameTestMap[] = {
-	0,0,0,0,0,0,0,0,0,0,0,0,0,0,1,0,
-	0,0,0,0,0,0,0,0,0,0,0,0,0,0,1,0,
-	0,0,0,1,0,0,0,0,0,0,0,0,0,0,1,0,
-	0,0,0,1,0,0,0,0,0,0,0,0,0,0,1,0,
-	1,0,0,1,0,0,0,0,0,0,0,0,0,1,0,0,
-	0,0,0,1,0,0,0,0,0,0,0,0,0,0,0,0,
-	0,1,1,1,1,1,0,0,0,1,1,1,1,1,1,0,
-	0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,
-	0,0,0,0,0,0,0,0,1,0,0,0,0,0,0,1,
-	0,0,0,0,0,0,0,0,0,0,1,0,0,0,0,1,
-	0,0,0,0,0,1,0,0,0,0,0,0,0,0,0,1,
-	0,0,1,0,0,0,0,0,1,0,0,0,0,0,0,1,
-	0,0,0,0,0,0,0,0,1,0,1,0,0,0,1,1,
-	1,0,0,0,0,1,0,0,0,0,0,0,0,0,0,0,
-	1,0,1,0,0,0,0,0,0,0,0,0,0,0,0,0,
-	1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,
+    0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 0,
+    0, 0, 0, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 0,
+    1, 0, 0, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 0, 0, 0, 0, 0, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+    0, 1, 1, 1, 1, 1, 0, 0, 0, 1, 1, 1, 1, 1, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+    0, 0, 0, 0, 0, 0, 0, 0, 1, 0, 0, 0, 0, 0, 0, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1,
+    0, 0, 0, 0, 0, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 0, 0, 1, 0, 0, 0, 0, 0, 1, 0, 0, 0, 0, 0, 0, 1,
+    0, 0, 0, 0, 0, 0, 0, 0, 1, 0, 1, 0, 0, 0, 1, 1, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+    1, 0, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1,
 };
 
 const float Gravity        = 0.08f;
@@ -2158,8 +2159,6 @@ bool testAabVsAab( vec2arg aPosition, rectfarg a, vec2arg delta, rectfarg b, flo
 static void doCollisionDetection( AppData* app, CollidableSystem* system, GameInputs* inputs,
                                   float dt, bool frameBoundary )
 {
-	// TODO: factor out input code into seperate function or system
-
 	using namespace GameConstants;
 
 	auto game = &app->gameState;
@@ -2206,7 +2205,6 @@ static void doCollisionDetection( AppData* app, CollidableSystem* system, GameIn
 				auto entryGridY = (int32)floor( entry.position.y / tileHeight );
 				auto entryGridYNext =
 				    (int32)floor( ( entry.position.y + entry.velocity.y * vdt ) / tileHeight );
-				// TODO: what to do if the entry is outside the tilegrid?
 				if( entryGridY != entryGridYNext
 				    && ( entryGridY >= 0 && entryGridY < GAME_MAP_HEIGHT ) ) {
 					if( velocity.y > 0 ) {
@@ -2265,8 +2263,6 @@ static void doCollisionDetection( AppData* app, CollidableSystem* system, GameIn
 						    translate( entry.aab, entry.position + entry.velocity * vdt );
 						assert( abs( velocity.x ) <= tileWidth );
 
-						// TODO: instead of calculating velocity deltas, calculate t value of how
-						// much to apply velocity to be inside gap
 						auto currentPlayerAab = translate( entry.aab, entry.position );
 						auto yDelta = gapBounds.top - currentPlayerAab.top;
 						entry.position.y += yDelta;
@@ -2285,6 +2281,8 @@ static void doCollisionDetection( AppData* app, CollidableSystem* system, GameIn
 						auto ratio              = deltaLength / velocityMagnitude;
 						vdt -= ratio;
 #else
+						// instead of calculating velocity deltas, calculate t value of how
+						// much to apply velocity to be inside gap
 						auto yDelta = gapBounds.top - ( entry.aab.top + entry.position.y );
 						auto t = yDelta / velocity.y;
 						entry.position += velocity * t;
@@ -2658,8 +2656,6 @@ UPDATE_AND_RENDER( updateAndRender, void* memory, GameInputs* inputs, float dt )
 	// unlocked automatically
 	inputs->mouse.locked = false;
 
-	// FIXME: jump height isn't constant, that means there is a problem with framerate independent
-	// movement
 	// NOTE: assumption here is that we only cross a frame boundary once per gameloop, but in
 	// reality we might move across multiple frame boundaries at once if the game is lagging for
 	// whatever reason
@@ -2689,31 +2685,6 @@ UPDATE_AND_RENDER( updateAndRender, void* memory, GameInputs* inputs, float dt )
 
 	addRenderCommandMesh( renderer, toMesh( debug_MeshStream ) );
 
-#if 0
-	// FIXME: reimplement saving/loading to take into account different sized voxel grids
-	if( isKeyDown( inputs, KC_Control ) && isKeyPressed( inputs, KC_Key_S ) ) {
-		auto grid = &app->voxelState.voxels;
-		app->platform.writeBufferToFile( "Data/test.raw", grid->data,
-		                                 grid->size() * sizeof( VoxelCell ) );
-	}
-	if( isKeyDown( inputs, KC_Control ) && isKeyPressed( inputs, KC_Key_L ) ) {
-		auto voxel       = &app->voxelState;
-		auto grid        = &voxel->voxels;
-		auto bytesToRead = CELL_MAX_COUNT * sizeof( VoxelCell );
-		auto bytesRead =
-		    app->platform.readFileToBuffer( "Data/test.raw", voxel->voxels.data, bytesToRead );
-		if( bytesToRead != bytesRead ) {
-			LOG( ERROR, "FAILED TO READ" );
-		}
-		grid->width  = 16;
-		grid->height = 16;
-		grid->depth  = 16;
-		clear( &voxel->meshStream );
-		generateMeshFromVoxelGrid( &voxel->meshStream, &voxel->voxels, &voxel->textureMap,
-		                           EditorVoxelCellSize );
-	}
-#endif
-
 	setProjection( renderer, ProjectionType::Orthogonal );
 #if GAME_RENDER_DEBUG_OUTPUT == 1
 	RENDER_COMMANDS_STATE_BLOCK( renderer ) {
@@ -2721,12 +2692,12 @@ UPDATE_AND_RENDER( updateAndRender, void* memory, GameInputs* inputs, float dt )
 		char buffer[500];
 		string_builder builder = string_builder( buffer, countof( buffer ) );
 		builder << "FrameTime: " << app->platformInfo->frameTime
-		        << "\nFPS: " << app->platformInfo->fps
 		        << "\nAverage FrameTime:" << app->platformInfo->averageFrameTime
-		        << "\nAverage Fps:" << app->platformInfo->averageFps
 		        << "\nMin FrameTime: " << app->platformInfo->minFrameTime
-		        << "\nMin Fps: " << app->platformInfo->minFps
 		        << "\nMax FrameTime: " << app->platformInfo->maxFrameTime
+		        << "\nFPS: " << app->platformInfo->fps
+		        << "\nAverage Fps:" << app->platformInfo->averageFps
+		        << "\nMin Fps: " << app->platformInfo->minFps
 		        << "\nMax Fps: " << app->platformInfo->maxFps
 		        << "\nLight Position: " << renderer->lightPosition.x << ", "
 		        << renderer->lightPosition.y << ", " << renderer->lightPosition.z;

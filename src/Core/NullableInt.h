@@ -48,7 +48,6 @@ struct NullableInt {
 		}
 	}
 
-	// TODO: private?
 	T value;
 };
 

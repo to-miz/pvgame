@@ -145,6 +145,7 @@ static void win32HandleInputs( HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam
 			auto down = ( msg == WM_SYSKEYDOWN || msg == WM_KEYDOWN );
 			if( down && ( lParam & ( 1 << 30 ) ) ) {
 				// key was down before, this is a repeated key message
+				inputs->keys[wParam].composite |= GameInputKeyFlags::Repeated;
 				break;
 			}
 			inputs->keys[wParam] = win32SetKeyStatus( inputs->keys[wParam], down );

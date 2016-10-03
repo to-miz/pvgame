@@ -1,5 +1,61 @@
 #include "Math.h"
 
+namespace simd
+{
+struct vec4 {
+	__m128 data;
+
+	static vec4 make( float a, float b, float c, float d ) { return {_mm_set_ps( a, b, c, d )}; }
+};
+
+struct vec4result {
+	alignas( 16 ) float elements[4];
+
+	float operator[]( int32 i ) const
+	{
+		assert( i >= 0 && i < 4 );
+		return elements[i];
+	}
+};
+
+vec4result toResult( const vec4& v )
+{
+	vec4result result;
+	_mm_store_ps( result.elements, v.data );
+	return result;
+}
+
+struct sincos_result4 {
+	vec4result s;
+	vec4result c;
+};
+sincos_result4 sincos( const vec4& angles )
+{
+	v4sf s;
+	v4sf c;
+	sincos_ps( angles.data, &s, &c );
+	sincos_result4 result;
+	_mm_store_ps( result.s.elements, s );
+	_mm_store_ps( result.c.elements, c );
+	return result;
+}
+sincos_result4 sincos( float a, float b, float c, float d )
+{
+	return sincos( vec4::make( a, b, c, d ) );
+}
+
+struct sincos_result {
+	float s;
+	float c;
+};
+sincos_result sincos( float angle )
+{
+	sincos_result result;
+	::sincos( angle, &result.s, &result.c );
+	return result;
+}
+}
+
 float cos( float x )
 {
 	v4sf sse_value = _mm_set_ps1( x );
@@ -20,8 +76,8 @@ void sincos( float x, float* s, float* c )
 	v4sf sse_s;
 	v4sf sse_c;
 	sincos_ps( sse_value, &sse_s, &sse_c );
-	*s = ( (float*)&sse_s )[0];
-	*c = ( (float*)&sse_c )[0];
+	*s = _mm_cvtss_f32( sse_s );
+	*c = _mm_cvtss_f32( sse_c );
 }
 float log( float x )
 {
@@ -70,7 +126,8 @@ float rsqrt( float x )
 #ifdef MATH_FAST_RSQRT
 	return fast_rsqrt( x );
 #else
-	return 1.0f / sqrt( x );
+	v4sf val = _mm_div_ps( _mm_set1_ps( 1.0f ), _mm_sqrt_ps( _mm_set_ps1( x ) ) );
+	return _mm_cvtss_f32( val );
 #endif
 }
 float fast_rsqrt( float x )

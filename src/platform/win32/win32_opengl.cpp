@@ -60,6 +60,9 @@
 /*GL 3.0*/
 #define GL_RGBA_INTEGER                   0x8D99
 
+/* GL 3.1 */
+#define GL_PRIMITIVE_RESTART              0x8F9D
+
 /**/
 #define GL_CLAMP_TO_BORDER                0x812D
 #define GL_TEXTURE0                       0x84C0
@@ -274,6 +277,10 @@ wgl_choose_pixel_format_arb* wglChoosePixelFormatARB = nullptr;
 
 typedef BOOL APIENTRY wglSwapIntervalEXTType( int interval );
 wglSwapIntervalEXTType* wglSwapIntervalEXT = nullptr;
+
+/* GL 3.1 */
+typedef void APIENTRY glPrimitiveRestartIndexType( GLuint index );
+glPrimitiveRestartIndexType* glPrimitiveRestartIndex = nullptr;
 
 /* GL 3.2 */
 typedef void APIENTRY glDrawElementsBaseVertexType( GLenum mode, GLsizei count, GLenum type,
@@ -553,7 +560,7 @@ static void win32UnmapBuffers( OpenGlVertexBuffer* vb )
 	vb->vertices = nullptr;
 	vb->indices = nullptr;
 }
-static void win32RenderBuffers( OpenGlContext* context, mat4* projections )
+static void win32RenderBuffers( OpenGlContext* context, mat4* projections, GLenum mode )
 {
 	auto vb = &context->dynamicBuffer;
 	win32UnmapBuffers( vb );
@@ -561,22 +568,22 @@ static void win32RenderBuffers( OpenGlContext* context, mat4* projections )
 	glUniformMatrix4fv( context->worldViewProj, 1, GL_FALSE, current->m );
 	auto identity = matrixIdentity();
 	glUniformMatrix4fv( context->model, 1, GL_FALSE, identity.m );
-	glDrawElementsBaseVertex( GL_TRIANGLES, vb->indicesCount, GL_UNSIGNED_SHORT,
+	glDrawElementsBaseVertex( mode, vb->indicesCount, GL_UNSIGNED_SHORT,
 	                          BUFFER_OFFSET( vb->lastIndicesCount * sizeof( uint16 ) ),
 	                          vb->lastVerticesCount );
 }
-static void win32RenderAndFlushBuffers( OpenGlContext* context, mat4* projections )
+static void win32RenderAndFlushBuffers( OpenGlContext* context, mat4* projections, GLenum mode )
 {
 	if( context->dynamicBuffer.indicesCount ) {
 		assert( context );
-		win32RenderBuffers( context, projections );
+		win32RenderBuffers( context, projections, mode );
 		win32MapBuffersRange( &context->dynamicBuffer );
 	}
 }
-static void win32RenderAndResetBuffers( OpenGlContext* context, mat4* projections )
+static void win32RenderAndResetBuffers( OpenGlContext* context, mat4* projections, GLenum mode )
 {
 	assert( context );
-	win32RenderBuffers( context, projections );
+	win32RenderBuffers( context, projections, mode );
 	win32MapBuffers( &context->dynamicBuffer );
 }
 
@@ -709,73 +716,70 @@ static OpenGlContext win32CreateOpenGlContext( HDC hdc )
 
 	// TODO: check extionsions string whether we can call wglGetProcAddress on the opengl functions
 
-	glAttachShader		  = (gl_attach_shader*)wglGetProcAddress( "glAttachShader" );
-	glCompileShader		  = (gl_compile_shader*)wglGetProcAddress( "glCompileShader" );
-	glCreateShader		  = (gl_create_shader*)wglGetProcAddress( "glCreateShader" );
-	glDeleteShader		  = (gl_delete_shader*)wglGetProcAddress( "glDeleteShader" );
-	glDetachShader		  = (gl_detach_shader*)wglGetProcAddress( "glDetachShader" );
-	glCreateProgram		  = (gl_create_program*)wglGetProcAddress( "glCreateProgram" );
-	glDeleteProgram		  = (gl_delete_program*)wglGetProcAddress( "glDeleteProgram" );
-	glLinkProgram		  = (gl_link_program*)wglGetProcAddress( "glLinkProgram" );
-	glUseProgram		  = (gl_use_program*)wglGetProcAddress( "glUseProgram" );
-	glValidateProgram	  = (gl_validate_program*)wglGetProcAddress( "glValidateProgram" );
-	glGenBuffers		  = (gl_gen_buffers*)wglGetProcAddress( "glGenBuffers" );
-	glDeleteBuffers		  = (glDeleteBuffersType*)wglGetProcAddress( "glDeleteBuffers" );
-	glBindBuffer		  = (gl_bind_buffer*)wglGetProcAddress( "glBindBuffer" );
-	glBufferData		  = (gl_buffer_data*)wglGetProcAddress( "glBufferData" );
-	glVertexAttribPointer = (gl_vertex_attrib_pointer*)wglGetProcAddress( "glVertexAttribPointer" );
-	glEnableVertexAttribArray =
-		(gl_enable_vertex_attrib_array*)wglGetProcAddress( "glEnableVertexAttribArray" );
-	glShaderSource		  = (gl_shader_source*)wglGetProcAddress( "glShaderSource" );
-	glDrawArraysIndirect  = (gl_draw_arrays_indirect*)wglGetProcAddress( "glDrawArraysIndirect" );
-	glDrawArraysInstanced = (gl_draw_arrays_instanced*)wglGetProcAddress( "glDrawArraysInstanced" );
-	glGetShaderiv		  = (gl_get_shader_iv*)wglGetProcAddress( "glGetShaderiv" );
-	glBindAttribLocation  = (gl_bind_attrib_location*)wglGetProcAddress( "glBindAttribLocation" );
-	glGetProgramiv		  = (gl_get_program_iv*)wglGetProcAddress( "glGetProgramiv" );
+	#define wgl_get_proc_address( name ) name = (decltype( name ))wglGetProcAddress( #name )
 
-	glUniform1f          = (gl_uniform1f*)wglGetProcAddress( "glUniform1f" );
-	glUniform2f          = (gl_uniform2f*)wglGetProcAddress( "glUniform2f" );
-	glUniform3f          = (gl_uniform3f*)wglGetProcAddress( "glUniform3f" );
-	glUniform4f          = (gl_uniform4f*)wglGetProcAddress( "glUniform4f" );
-	glUniform1i          = (gl_uniform1i*)wglGetProcAddress( "glUniform1i" );
-	glUniform2i          = (gl_uniform2i*)wglGetProcAddress( "glUniform2i" );
-	glUniform3i          = (gl_uniform3i*)wglGetProcAddress( "glUniform3i" );
-	glUniform4i          = (gl_uniform4i*)wglGetProcAddress( "glUniform4i" );
-	glUniform1fv         = (gl_uniform1fv*)wglGetProcAddress( "glUniform1fv" );
-	glUniform2fv         = (gl_uniform2fv*)wglGetProcAddress( "glUniform2fv" );
-	glUniform3fv         = (gl_uniform3fv*)wglGetProcAddress( "glUniform3fv" );
-	glUniform4fv         = (gl_uniform4fv*)wglGetProcAddress( "glUniform4fv" );
-	glUniform1iv         = (gl_uniform1iv*)wglGetProcAddress( "glUniform1iv" );
-	glUniform2iv         = (gl_uniform2iv*)wglGetProcAddress( "glUniform2iv" );
-	glUniform3iv         = (gl_uniform3iv*)wglGetProcAddress( "glUniform3iv" );
-	glUniform4iv         = (gl_uniform4iv*)wglGetProcAddress( "glUniform4iv" );
-	glUniformMatrix2fv   = (gl_uniform_matrix2fv*)wglGetProcAddress( "glUniformMatrix2fv" );
-	glUniformMatrix3fv   = (gl_uniform_matrix3fv*)wglGetProcAddress( "glUniformMatrix3fv" );
-	glUniformMatrix4fv   = (gl_uniform_matrix4fv*)wglGetProcAddress( "glUniformMatrix4fv" );
-	glGetUniformLocation = (gl_get_uniform_location*)wglGetProcAddress( "glGetUniformLocation" );
-	glBindVertexArray    = (gl_bind_vertex_array*)wglGetProcAddress( "glBindVertexArray" );
-	glDeleteVertexArrays = (gl_delete_vertex_arrays*)wglGetProcAddress( "glDeleteVertexArrays" );
-	glGenVertexArrays    = (gl_gen_vertex_arrays*)wglGetProcAddress( "glGenVertexArrays" );
-	glGetAttribLocation  = (gl_get_attrib_location*)wglGetProcAddress( "glGetAttribLocation" );
-	glBindFragDataLocation =
-	    (glBindFragDataLocationType*)wglGetProcAddress( "glBindFragDataLocation" );
-	glMapBuffer      = (glMapBufferType*)wglGetProcAddress( "glMapBuffer" );
-	glUnmapBuffer    = (glUnmapBufferType*)wglGetProcAddress( "glUnmapBuffer" );
-	glMapBufferRange = (glMapBufferRangeType*)wglGetProcAddress( "glMapBufferRange" );
-	glFlushMappedBufferRange =
-	    (glFlushMappedBufferRangeType*)wglGetProcAddress( "glFlushMappedBufferRange" );
-	glActiveTexture = (glActiveTextureType*)wglGetProcAddress( "glActiveTexture" );
-	glVertexAttribP4ui = (glVertexAttribP4uiType*)wglGetProcAddress( "glVertexAttribP4ui" );
-	glVertexAttrib4f = (glVertexAttrib4fType*)wglGetProcAddress( "glVertexAttrib4f" );
-	glDrawElementsBaseVertex =
-	    (glDrawElementsBaseVertexType*)wglGetProcAddress( "glDrawElementsBaseVertex" );
-	glDrawRangeElementsBaseVertex =
-	    (glDrawRangeElementsBaseVertexType*)wglGetProcAddress( "glDrawRangeElementsBaseVertex" );
+	wgl_get_proc_address( glAttachShader );
+	wgl_get_proc_address( glCompileShader );
+	wgl_get_proc_address( glCreateShader );
+	wgl_get_proc_address( glDeleteShader );
+	wgl_get_proc_address( glDetachShader );
+	wgl_get_proc_address( glCreateProgram );
+	wgl_get_proc_address( glDeleteProgram );
+	wgl_get_proc_address( glLinkProgram );
+	wgl_get_proc_address( glUseProgram );
+	wgl_get_proc_address( glValidateProgram );
+	wgl_get_proc_address( glGenBuffers );
+	wgl_get_proc_address( glDeleteBuffers );
+	wgl_get_proc_address( glBindBuffer );
+	wgl_get_proc_address( glBufferData );
+	wgl_get_proc_address( glVertexAttribPointer );
+	wgl_get_proc_address( glEnableVertexAttribArray );
+	wgl_get_proc_address( glShaderSource );
+	wgl_get_proc_address( glDrawArraysIndirect );
+	wgl_get_proc_address( glDrawArraysInstanced );
+	wgl_get_proc_address( glGetShaderiv );
+	wgl_get_proc_address( glBindAttribLocation );
+	wgl_get_proc_address( glGetProgramiv );
+	wgl_get_proc_address( glUniform1f );
+	wgl_get_proc_address( glUniform2f );
+	wgl_get_proc_address( glUniform3f );
+	wgl_get_proc_address( glUniform4f );
+	wgl_get_proc_address( glUniform1i );
+	wgl_get_proc_address( glUniform2i );
+	wgl_get_proc_address( glUniform3i );
+	wgl_get_proc_address( glUniform4i );
+	wgl_get_proc_address( glUniform1fv );
+	wgl_get_proc_address( glUniform2fv );
+	wgl_get_proc_address( glUniform3fv );
+	wgl_get_proc_address( glUniform4fv );
+	wgl_get_proc_address( glUniform1iv );
+	wgl_get_proc_address( glUniform2iv );
+	wgl_get_proc_address( glUniform3iv );
+	wgl_get_proc_address( glUniform4iv );
+	wgl_get_proc_address( glUniformMatrix2fv );
+	wgl_get_proc_address( glUniformMatrix3fv );
+	wgl_get_proc_address( glUniformMatrix4fv );
+	wgl_get_proc_address( glGetUniformLocation );
+	wgl_get_proc_address( glBindVertexArray );
+	wgl_get_proc_address( glDeleteVertexArrays );
+	wgl_get_proc_address( glGenVertexArrays );
+	wgl_get_proc_address( glGetAttribLocation );
+	wgl_get_proc_address( glBindFragDataLocation );
+	wgl_get_proc_address( glMapBuffer );
+	wgl_get_proc_address( glUnmapBuffer );
+	wgl_get_proc_address( glMapBufferRange );
+	wgl_get_proc_address( glFlushMappedBufferRange );
+	wgl_get_proc_address( glActiveTexture );
+	wgl_get_proc_address( glVertexAttribP4ui );
+	wgl_get_proc_address( glVertexAttrib4f );
+	wgl_get_proc_address( glDrawElementsBaseVertex );
+	wgl_get_proc_address( glDrawRangeElementsBaseVertex );
+	wgl_get_proc_address( glPrimitiveRestartIndex );
+	wgl_get_proc_address( wglSwapIntervalEXT );
+	wgl_get_proc_address( glDebugMessageCallback );
 
-	wglSwapIntervalEXT = (wglSwapIntervalEXTType*)wglGetProcAddress( "wglSwapIntervalEXT" );
+	#undef wgl_get_proc_address
 
-	glDebugMessageCallback =
-	    (glDebugMessageCallbackType*)wglGetProcAddress( "glDebugMessageCallback" );
 	if( glDebugMessageCallback ) {
 		glDebugMessageCallback( win32OpenGlDebugCallback, nullptr );
 	}
@@ -794,7 +798,7 @@ static OpenGlContext win32CreateOpenGlContext( HDC hdc )
 	    || !glGenVertexArrays || !glGetAttribLocation || !glBindFragDataLocation || !glMapBuffer
 	    || !glUnmapBuffer || !glMapBufferRange || !glFlushMappedBufferRange || !glActiveTexture
 	    || !glVertexAttribP4ui || !glVertexAttrib4f || !glDrawElementsBaseVertex
-	    || !glDrawRangeElementsBaseVertex || !wglSwapIntervalEXT ) {
+	    || !glDrawRangeElementsBaseVertex || !wglSwapIntervalEXT || !glPrimitiveRestartIndex ) {
 		return {};
 	}
 
@@ -1102,7 +1106,7 @@ static void win32SetRenderState( OpenGlContext* context, mat4* projections, Rend
 	assert( context );
 	assert( valueof( type ) >= 0 && valueof( type ) < valueof( RenderStateType::Count ) );
 	if( context->renderStates[valueof( type )] != enabled ) {
-		win32RenderAndFlushBuffers( context, projections );
+		win32RenderAndFlushBuffers( context, projections, GL_TRIANGLES );
 
 		context->renderStates[valueof( type )] = enabled;
 		if( enabled ) {
@@ -1156,7 +1160,6 @@ static void win32ProcessRenderCommands( OpenGlContext* context, RenderCommands* 
 		auto header = getRenderCommandsHeader( &stream );
 		switch( header->type ) {
 			case RenderCommandEntryType::Mesh: {
-				// TODO: check remaining vbo size and flush if not enough memory
 				auto body = getRenderCommandMesh( &stream, header );
 				auto mesh = &body->mesh;
 				if( mesh->verticesCount > vb->verticesCapacity ) {
@@ -1167,7 +1170,7 @@ static void win32ProcessRenderCommands( OpenGlContext* context, RenderCommands* 
 				}
 				if( !win32VertexBufferHasSpace( vb, mesh->verticesCount, mesh->indicesCount ) ) {
 					// we need to reset the buffers since we need new memory
-					win32RenderAndResetBuffers( context, projections );
+					win32RenderAndResetBuffers( context, projections, GL_TRIANGLES );
 				}
 
 				// upload the vertices to the gpu
@@ -1184,6 +1187,36 @@ static void win32ProcessRenderCommands( OpenGlContext* context, RenderCommands* 
 					++indices;
 				}
 				vb->indicesCount += mesh->indicesCount;
+				break;
+			}
+			case RenderCommandEntryType::LineMesh: {
+				auto body = getRenderCommandLineMesh( &stream, header );
+				auto mesh = &body->mesh;
+				if( mesh->verticesCount > vb->verticesCapacity ) {
+					LOG( ERROR, "Mesh vertices count is bigger than vertex buffer capacity" );
+					break;
+				}
+				if( !win32VertexBufferHasSpace( vb, mesh->verticesCount, mesh->indicesCount ) ) {
+					// we need to reset the buffers since we need new memory
+					win32RenderAndResetBuffers( context, projections, GL_TRIANGLES );
+				} else {
+					win32RenderAndFlushBuffers( context, projections, GL_TRIANGLES );
+				}
+				// upload the vertices to the gpu
+				auto startIndex = safe_truncate< uint16 >( vb->verticesCount );
+				copy( vb->vertices + vb->verticesCount, mesh->vertices, mesh->verticesCount );
+				vb->verticesCount += mesh->verticesCount;
+
+				auto meshIndices = mesh->indices;
+				auto indices     = vb->indices + vb->indicesCount;
+				auto end         = indices + mesh->indicesCount;
+				while( indices < end ) {
+					*indices = *( meshIndices ) + startIndex;
+					++meshIndices;
+					++indices;
+				}
+				vb->indicesCount += mesh->indicesCount;
+				win32RenderAndFlushBuffers( context, projections, GL_LINE_STRIP );
 				break;
 			}
 			case RenderCommandEntryType::StaticMesh: {
@@ -1209,7 +1242,7 @@ static void win32ProcessRenderCommands( OpenGlContext* context, RenderCommands* 
 					id = context->plainWhiteTexture;
 				}
 				if( context->currentTextures[body->stage] != id ) {
-					win32RenderAndFlushBuffers( context, projections );
+					win32RenderAndFlushBuffers( context, projections, GL_TRIANGLES );
 
 					glActiveTexture( GL_TEXTURE0 + body->stage );
 					glBindTexture( GL_TEXTURE_2D, id );
@@ -1222,7 +1255,7 @@ static void win32ProcessRenderCommands( OpenGlContext* context, RenderCommands* 
 				assert( valueof( body->projectionType ) >= 0
 				        && valueof( body->projectionType ) < 2 );
 				if( context->currentProjectionType != body->projectionType ) {
-					win32RenderAndFlushBuffers( context, projections );
+					win32RenderAndFlushBuffers( context, projections, GL_TRIANGLES );
 
 					openGlSetProjection( context, projections, body->projectionType );
 				}
@@ -1242,7 +1275,7 @@ static void win32ProcessRenderCommands( OpenGlContext* context, RenderCommands* 
 		}
 	}
 
-	win32RenderBuffers( context, projections );
+	win32RenderBuffers( context, projections, GL_TRIANGLES );
 }
 
 static bool win32InitOpenGL( OpenGlContext* context, float width, float height )
@@ -1277,6 +1310,10 @@ static bool win32InitOpenGL( OpenGlContext* context, float width, float height )
 	glDepthFunc( GL_GREATER );
 	glAlphaFunc( GL_GREATER, 0 );
 	glEnable( GL_ALPHA_TEST );
+
+	glEnable( GL_PRIMITIVE_RESTART );
+	glPrimitiveRestartIndex( MeshPrimitiveRestart );
+
 	// TODO: read up on vsync and targeting 60 fps
 	// TODO: do we need glFinish?
 	// wglSwapIntervalEXT( 1 );

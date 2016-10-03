@@ -111,7 +111,6 @@ inline typename Container::iterator erase_index( Container& container, int32 ind
 	return container.erase( begin( container ) + index );
 }
 
-// no idea why this doesn't exist in the stl
 template < class Iterator, class ValueType >
 void iota_n( Iterator first, int32 n, ValueType val )
 {

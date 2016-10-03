@@ -1,8 +1,9 @@
 namespace GameInputKeyFlags
 {
 enum Values : uint8 {
-	WasDown   = ( 1 << 7 ),
-	CountMask = 0x7F,  // every bit set except the WasDown bit
+	WasDown   = BITFIELD( 7 ),
+	Repeated  = BITFIELD( 6 ),
+	CountMask = ( uint8 )( ~( WasDown | Repeated ) ),
 };
 }
 struct GameInputKey {
@@ -39,12 +40,9 @@ struct GameInputs {
 	int32 count;
 };
 
-StringView asStringView( GameInputs* inputs )
-{
-	return {inputs->chars, inputs->count};
-}
+StringView asStringView( GameInputs* inputs ) { return {inputs->chars, inputs->count}; }
 
-inline bool isKeyPressed( GameInputs* inputs, intmax keycode )
+inline bool isKeyPressed( GameInputs* inputs, int32 keycode )
 {
 	assert( keycode >= 0 && keycode <= KC_Count );
 	auto key     = inputs->keys[keycode];
@@ -52,7 +50,7 @@ inline bool isKeyPressed( GameInputs* inputs, intmax keycode )
 	auto count   = ( key.composite & GameInputKeyFlags::CountMask );
 	return !wasDown && count;
 }
-inline bool isKeyReleased( GameInputs* inputs, intmax keycode )
+inline bool isKeyReleased( GameInputs* inputs, int32 keycode )
 {
 	assert( keycode >= 0 && keycode <= KC_Count );
 	auto key     = inputs->keys[keycode];
@@ -66,7 +64,7 @@ inline bool isKeyDown( GameInputKey key )
 	auto count   = ( key.composite & GameInputKeyFlags::CountMask );
 	return ( wasDown && !( count % 2 ) ) || ( !wasDown && ( count % 2 ) );
 }
-inline bool isKeyDown( GameInputs* inputs, intmax keycode )
+inline bool isKeyDown( GameInputs* inputs, int32 keycode )
 {
 	assert( keycode >= 0 && keycode <= KC_Count );
 	auto key     = inputs->keys[keycode];
@@ -74,10 +72,14 @@ inline bool isKeyDown( GameInputs* inputs, intmax keycode )
 	auto count   = ( key.composite & GameInputKeyFlags::CountMask );
 	return ( wasDown && !( count % 2 ) ) || ( !wasDown && ( count % 2 ) );
 }
-inline bool isKeyUp( GameInputs* inputs, intmax keycode ) { return !isKeyDown( inputs, keycode ); }
+inline bool isKeyUp( GameInputs* inputs, int32 keycode ) { return !isKeyDown( inputs, keycode ); }
 
-inline bool isKeyPressedRepeated( GameInputs* inputs, intmax keycode )
+inline bool isKeyPressedRepeated( GameInputs* inputs, int32 keycode )
 {
-	// TODO: implement properly
-	return isKeyPressed( inputs, keycode );
+	assert( keycode >= 0 && keycode <= KC_Count );
+	auto key      = inputs->keys[keycode];
+	auto wasDown  = ( key.composite & GameInputKeyFlags::WasDown );
+	auto count    = ( key.composite & GameInputKeyFlags::CountMask );
+	auto repeated = ( key.composite & GameInputKeyFlags::Repeated );
+	return ( !wasDown && count ) || repeated;
 }

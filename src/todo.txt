@@ -1,5 +1,4 @@
 gameplay:
-	line rendering
 	variable jump height based on how long the jump button is held down
 	sliding down walls should slow down descent
 	particles and decals when jumping/sliding/landing/shooting
@@ -26,14 +25,14 @@ gameplay:
 	room generation?
 	multiplayer
 
+reading material:
 opengl:
 	glGetString( GL_VERSION )
-	https://en.wikipedia.org/wiki/Vertex_Buffer_Object#Example_usage_in_C_Using_OpenGL_3.x_and_OpenGL_4.x
+	http://learnopengl.com/
+	http://www.mbsoftworks.sk/index.php?page=tutorials&series=1
+	http://www.opengl-tutorial.org/
 maths:
 	http://www.realtimerendering.com/intersections.html
 	http://www.cprogramming.com/tutorial/3d/quaternions.html
 	http://geomalgorithms.com/a05-_intersect-1.html
-
-http://www.mbsoftworks.sk/index.php?page=tutorials&series=1
-http://www.cse.yorku.ca/~amana/research/grid.pdf
-http://learnopengl.com/
+	http://www.cse.yorku.ca/~amana/research/grid.pdf

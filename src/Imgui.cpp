@@ -1,14 +1,14 @@
 /*
 TODO:
     - when fading out, the gui still accepts input, needs a way to toggle input processing
-    - when dragging a group, the titlebar lags behind
+    - when dragging a container, the titlebar lags behind
 */
 
 union ImGuiHandle {
 	struct {
 		uint32 base;
 		uint16 index;
-		int8 group;
+		int8 container;
 		uint8 flags;
 	};
 	uint64 bits;
@@ -34,6 +34,11 @@ enum Values : int32 {
 	CheckboxUnchecked,
 	CheckboxChecked,
 
+	DropGroupRetracted,
+	DropGroupExpanded,
+
+	ComboButton,
+
 	SliderKnob,
 
 	Count
@@ -49,7 +54,7 @@ struct ImGuiStyle {
 	float editboxWidth;
 	float editboxHeight;
 
-	float groupWidth;
+	float containerWidth;
 
 	Color buttonBg;
 	Color buttonText;
@@ -78,7 +83,7 @@ ImGuiStyle defaultImGuiStyle()
 	result.editboxWidth  = 88;
 	result.editboxHeight = 18;
 
-	result.groupWidth = 200;
+	result.containerWidth = 200;
 
 	result.buttonBg   = Color::White;
 	result.buttonText = Color::Black;
@@ -95,7 +100,7 @@ ImGuiStyle defaultImGuiStyle()
 	return result;
 }
 
-struct ImGuiGroupState {
+struct ImGuiContainerState {
 	rectf rect;
 	vec2 addPosition;
 	int32 horizontalCount; // how many controls to place horizontally instead of vertically
@@ -104,6 +109,7 @@ struct ImGuiGroupState {
 	bool8 minimized;
 	bool8 hidden;
 	bool8 dragging;
+	Mesh* bgMesh;
 
 	ImGuiHandle checkedRadiobox;
 };
@@ -132,18 +138,20 @@ struct ImGuiEditboxState {
 	}
 };
 
-ImGuiGroupState defaultImGuiGroupSate( rectfarg rect );
-#define ImGuiMaxGroups 8
-
-enum class ImGuiStateType {
-	None,
-	Editbox,
-	Slider,
-};
+ImGuiContainerState defaultImGuiContainerSate( rectfarg rect );
+#define ImGuiMaxContainers 8
 
 struct ImGuiSliderState {
 	rectf knobRect;
 	bool dragging;
+};
+
+struct ImGuiControlState {
+	enum { type_none, type_editbox, type_slider } type;
+	union {
+		ImGuiEditboxState editbox;
+		ImGuiSliderState slider;
+	};
 };
 
 struct ImmediateModeGui {
@@ -155,23 +163,19 @@ struct ImmediateModeGui {
 	rectf bounds;
 	ImGuiStyle style;
 
-	int8 group;         // current group
-	int8 hoverGroup;    // the group the mouse is currently over
-	int8 captureGroup;  // the group that has the mouse currently captured
+	int8 container;         // current container
+	int8 hoverContainer;    // the container the mouse is currently over
+	int8 captureContainer;  // the container that has the mouse currently captured
 	ImGuiHandle focus;
-	vec2 mouseOffset;  // offset of mouse when dragging to the leftTop position of the group
+	vec2 mouseOffset;  // offset of mouse when dragging to the leftTop position of the container
 
 	char editboxStatic[100];
 	int32 editboxStaticCount;
-	ImGuiStateType stateType;
-	union {
-		ImGuiEditboxState editbox;
-		ImGuiSliderState slider;
-	} state;
+	ImGuiControlState state;
 	float caretBlinkTime;
 
-	int32 groupsCount;
-	ImGuiGroupState groups[ImGuiMaxGroups];
+	int32 containersCount;
+	ImGuiContainerState containers[ImGuiMaxContainers];
 
 	RenderCommandJump* renderCommandJumpFirst;
 	RenderCommandJump* renderCommandJumpLast;
@@ -187,47 +191,55 @@ extern global ImmediateModeGui* ImGui;
 
 void imguiLoadDefaultStyle( PlatformServices* platform )
 {
-	ImGui->style.atlas = platform->loadTexture( "Data/Images/gui_atlas.png" );
-	auto itw           = 1.0f / 100.0f;
-	auto ith           = 1.0f / 100.0f;
-	ImGui->style.texCoords[ImGuiTexCoords::RadioboxUnchecked] =
-	    RectWH( 0.0f, 0.0f, 13 * itw, 13 * ith );
-	ImGui->style.texCoords[ImGuiTexCoords::RadioboxChecked] =
-	    RectWH( 14 * itw, 0.0f, 13 * itw, 13 * ith );
-	ImGui->style.texCoords[ImGuiTexCoords::CheckboxUnchecked] =
-	    RectWH( 0.0f, 14 * ith, 13 * itw, 13 * ith );
-	ImGui->style.texCoords[ImGuiTexCoords::CheckboxChecked] =
-	    RectWH( 14 * itw, 14 * ith, 13 * itw, 13 * ith );
+	using namespace ImGuiTexCoords;
+	auto style   = &ImGui->style;
+	style->atlas = platform->loadTexture( "Data/Images/gui_atlas.png" );
+	auto itw     = 1.0f / 100.0f;
+	auto ith     = 1.0f / 100.0f;
 
-	ImGui->style.texCoords[ImGuiTexCoords::SliderKnob] =
-	    RectWH( 0.0f, 28 * ith, 13 * itw, 13 * ith );
+	style->texCoords[RadioboxUnchecked] = RectWH( 0, 0, 13 * itw, 13 * ith );
+	style->texCoords[RadioboxChecked]   = RectWH( 14 * itw, 0, 13 * itw, 13 * ith );
+	style->texCoords[CheckboxUnchecked] = RectWH( 0, 14 * ith, 13 * itw, 13 * ith );
+	style->texCoords[CheckboxChecked]   = RectWH( 14 * itw, 14 * ith, 13 * itw, 13 * ith );
 
-	ImGui->style.rects[ImGuiTexCoords::RadioboxUnchecked] = {0, 0, 13, 13};
-	ImGui->style.rects[ImGuiTexCoords::RadioboxChecked]   = {0, 0, 13, 13};
-	ImGui->style.rects[ImGuiTexCoords::CheckboxUnchecked] = {0, 0, 13, 13};
-	ImGui->style.rects[ImGuiTexCoords::CheckboxChecked]   = {0, 0, 13, 13};
-	ImGui->style.rects[ImGuiTexCoords::SliderKnob]        = {0, 0, 13, 13};
+	style->texCoords[DropGroupRetracted] = RectWH( 14 * itw, 28 * ith, 13 * itw, 13 * ith );
+	style->texCoords[DropGroupExpanded]  = RectWH( 28 * itw, 28 * ith, 13 * itw, 13 * ith );
+
+	style->texCoords[ComboButton] = RectWH( 28 * itw, 28 * ith, 13 * itw, 13 * ith );
+
+	style->texCoords[SliderKnob] = RectWH( 0, 28 * ith, 13 * itw, 13 * ith );
+
+	style->rects[RadioboxUnchecked] = {0, 0, 13, 13};
+	style->rects[RadioboxChecked]   = {0, 0, 13, 13};
+	style->rects[CheckboxUnchecked] = {0, 0, 13, 13};
+	style->rects[CheckboxChecked]   = {0, 0, 13, 13};
+	style->rects[SliderKnob]        = {0, 0, 13, 13};
+
+	style->rects[DropGroupRetracted] = {0, 0, 13, 13};
+	style->rects[DropGroupExpanded]  = {0, 0, 13, 13};
+
+	style->rects[ComboButton] = {0, 0, 13, 13};
 }
 
-ImGuiGroupState defaultImGuiGroupSate( rectfarg rect )
+ImGuiContainerState defaultImGuiContainerSate( rectfarg rect )
 {
-	return {RectWH( rect.left, rect.top, ImGui->style.groupWidth, 0.0f )};
+	return {RectWH( rect.left, rect.top, ImGui->style.containerWidth, 0.0f )};
 }
-int32 imguiGenerateGroup( rectfarg rect = {} )
+int32 imguiGenerateContainer( rectfarg rect = {} )
 {
-	assert( ImGui->groupsCount < ImGuiMaxGroups );
-	auto result = ImGui->groupsCount;
-	auto group  = &ImGui->groups[ImGui->groupsCount];
-	*group      = defaultImGuiGroupSate( {} );
-	group->rect = rect;
-	group->z    = safe_truncate< int8 >( ImGui->groupsCount );
-	++ImGui->groupsCount;
+	assert( ImGui->containersCount < ImGuiMaxContainers );
+	auto result = ImGui->containersCount;
+	auto container  = &ImGui->containers[ImGui->containersCount];
+	*container      = defaultImGuiContainerSate( {} );
+	container->rect = rect;
+	container->z    = safe_truncate< int8 >( ImGui->containersCount );
+	++ImGui->containersCount;
 	return result;
 }
-ImGuiGroupState* imguiGetGroup( int32 index )
+ImGuiContainerState* imguiGetContainer( int32 index )
 {
-	assert( index >= 0 && index < countof( ImGui->groups ) );
-	return &ImGui->groups[index];
+	assert( index >= 0 && index < countof( ImGui->containers ) );
+	return &ImGui->containers[index];
 }
 
 rectf imguiGetTitlebar( rectfarg bounds )
@@ -245,35 +257,39 @@ rectf imguiGetDraggableRect( rectfarg bounds )
 
 void imguiClear()
 {
-	ImGui->group                  = -1;
+	ImGui->container                  = -1;
 	ImGui->renderCommandJumpFirst = nullptr;
 	ImGui->renderCommandJumpLast  = nullptr;
-	if( isKeyUp( ImGui->inputs, KC_LButton ) ) {
-		ImGui->captureGroup = -1;
+	FOR( container : ImGui->containers ) {
+		container.bgMesh = nullptr;
 	}
-	// set hover group
+
+	if( isKeyUp( ImGui->inputs, KC_LButton ) ) {
+		ImGui->captureContainer = -1;
+	}
+	// set hover container
 	auto mousePosition = ImGui->inputs->mouse.position;
-	if( ImGui->captureGroup >= 0 ) {
-		// if mouse is captured, treat the capturing group as the hover group
-		ImGui->hoverGroup = ImGui->captureGroup;
+	if( ImGui->captureContainer >= 0 ) {
+		// if mouse is captured, treat the capturing container as the hover container
+		ImGui->hoverContainer = ImGui->captureContainer;
 	} else {
-		ImGui->hoverGroup = -1;
+		ImGui->hoverContainer = -1;
 		if( auto font = ImGui->font ) {
 			int8 z = 0;
-			for( intmax i = 0, count = ImGui->groupsCount; i < count; ++i ) {
-				auto group = &ImGui->groups[i];
-				if( group->hidden ) {
+			for( intmax i = 0, count = ImGui->containersCount; i < count; ++i ) {
+				auto container = &ImGui->containers[i];
+				if( container->hidden ) {
 					continue;
 				}
 				rectf rect;
-				if( group->minimized ) {
-					rect = imguiGetTitlebar( group->rect );
+				if( container->minimized ) {
+					rect = imguiGetTitlebar( container->rect );
 				} else {
-					rect = group->rect;
+					rect = container->rect;
 				}
-				if( isPointInside( rect, mousePosition ) && group->z >= z ) {
-					ImGui->hoverGroup = safe_truncate< int8 >( i );
-					z                 = group->z;
+				if( isPointInside( rect, mousePosition ) && container->z >= z ) {
+					ImGui->hoverContainer = safe_truncate< int8 >( i );
+					z                 = container->z;
 				}
 			}
 		}
@@ -293,14 +309,14 @@ void imguiBind( ImmediateModeGui* guiState, RenderCommands* renderer, Font* font
 
 ImGuiHandle imguiMakeHandle( void* ptr )
 {
-	return {( uint32 )( (uintptr)ptr - (uintptr)ImGui->base ), 0, ImGui->group};
+	return {( uint32 )( (uintptr)ptr - (uintptr)ImGui->base ), 0, ImGui->container};
 }
-ImGuiHandle imguiSetCurrentGroup( ImGuiGroupState* group )
+ImGuiHandle imguiSetCurrentContainer( ImGuiContainerState* container )
 {
-	assert( group >= ImGui->groups && group < ImGui->groups + ImGuiMaxGroups );
+	assert( container >= ImGui->containers && container < ImGui->containers + ImGuiMaxContainers );
 	ImGuiHandle result = {};
-	result.group       = safe_truncate< int8 >( group - ImGui->groups );
-	ImGui->group       = result.group;
+	result.container       = safe_truncate< int8 >( container - ImGui->containers );
+	ImGui->container       = result.container;
 	return result;
 }
 
@@ -309,7 +325,7 @@ ImGuiHandle imguiMakeIndexHandle( uint16 index )
 	ImGuiHandle result = {};
 	result.base        = 0;
 	result.index       = index;
-	result.group       = ImGui->group;
+	result.container       = ImGui->container;
 	result.flags       = ImGuiHandleFlags::Unbased;
 	return result;
 }
@@ -323,7 +339,7 @@ ImGuiHandle imguiMakeIndexHandle( void* ptr )
 #else
 #error unknown architecture
 #endif
-	result.group = ImGui->group;
+	result.container = ImGui->container;
 	result.index = ( ( uint16 )( (uintptr)ptr - (uintptr)ImGui->base ) );
 	result.flags = ImGuiHandleFlags::Unbased;
 	return result;
@@ -391,25 +407,28 @@ static void renderTextClippedOffset( RenderCommands* renderer, Font* font, Strin
 }
 
 bool imguiHasFocus( ImGuiHandle handle ) { return ImGui->focus == handle; }
-bool imguiIsHover( ImGuiHandle handle ) { return ImGui->hoverGroup == handle.group; }
-void imguiCapture( ImGuiHandle handle ) { ImGui->captureGroup = ImGui->hoverGroup = handle.group; }
-void imguiBringToFront( int8 group )
+bool imguiIsHover( ImGuiHandle handle ) { return ImGui->hoverContainer == handle.container; }
+void imguiCapture( ImGuiHandle handle )
 {
-	assert( group >= 0 && group < ImGui->groupsCount );
-	auto current = &ImGui->groups[group];
+	ImGui->captureContainer = ImGui->hoverContainer = handle.container;
+}
+void imguiBringToFront( int8 container )
+{
+	assert( container >= 0 && container < ImGui->containersCount );
+	auto current = &ImGui->containers[container];
 	auto z       = current->z;
-	for( intmax i = 0, count = ImGui->groupsCount; i < count; ++i ) {
-		auto entry = &ImGui->groups[i];
+	for( intmax i = 0, count = ImGui->containersCount; i < count; ++i ) {
+		auto entry = &ImGui->containers[i];
 		if( entry->z > z ) {
 			--entry->z;
 		}
 	}
-	current->z = safe_truncate< int8 >( ImGui->groupsCount - 1 );
+	current->z = safe_truncate< int8 >( ImGui->containersCount - 1 );
 }
 void imguiFocus( ImGuiHandle handle )
 {
 	ImGui->focus = handle;
-	imguiBringToFront( handle.group );
+	imguiBringToFront( handle.container );
 }
 
 vec2 imguiBoundedTranslation( rectfarg draggable, vec2 trans )
@@ -448,11 +467,11 @@ bool imguiButton( ImGuiHandle handle, rectfarg rect )
 	return false;
 }
 
-bool imguiGroup( StringView name, int32 groupIndex )
+bool imguiDialog( StringView name, int32 containerIndex )
 {
-	auto groupState = imguiGetGroup( groupIndex );
-	auto handle     = imguiSetCurrentGroup( groupState );
-	if( groupState->hidden ) {
+	auto container = imguiGetContainer( containerIndex );
+	auto handle    = imguiSetCurrentContainer( container );
+	if( container->hidden ) {
 		return false;
 	}
 
@@ -461,17 +480,17 @@ bool imguiGroup( StringView name, int32 groupIndex )
 	auto font     = ImGui->font;
 	auto inputs   = ImGui->inputs;
 
-	if( width( groupState->rect ) <= 0 || height( groupState->rect ) <= 0 ) {
-		// group is uninitialized
-		*groupState      = defaultImGuiGroupSate( groupState->rect );
-		groupState->rect = imguiGetTitlebar( groupState->rect );
+	if( width( container->rect ) <= 0 || height( container->rect ) <= 0 ) {
+		// container is uninitialized
+		*container      = defaultImGuiContainerSate( container->rect );
+		container->rect = imguiGetTitlebar( container->rect );
 	}
 
-	rectf rect          = groupState->rect;
-	rectf titlebarRect  = imguiGetTitlebar( groupState->rect );
+	rectf rect          = container->rect;
+	rectf titlebarRect  = imguiGetTitlebar( container->rect );
 	auto titlebarClient = shrink( titlebarRect, style->innerPadding );
 	auto buttonSize     = height( titlebarClient );
-	auto draggableRect  = imguiGetDraggableRect( groupState->rect );
+	auto draggableRect  = imguiGetDraggableRect( container->rect );
 
 	auto closeButton        = RectSetLeft( titlebarClient, titlebarClient.right - buttonSize );
 	auto closeButtonHandle  = handle;
@@ -482,41 +501,41 @@ bool imguiGroup( StringView name, int32 groupIndex )
 	minButtonHandle.index = 1;
 	minButtonHandle.flags |= ImGuiHandleFlags::Internal;
 
-	auto wasDragging = groupState->dragging;
+	auto wasDragging = container->dragging;
 	if( isKeyPressed( inputs, KC_LButton ) && imguiIsHover( handle ) ) {
 		imguiFocus( handle );
 		if( isPointInside( draggableRect, inputs->mouse.position ) ) {
 			imguiCapture( handle );
 			ImGui->mouseOffset = inputs->mouse.position - rect.leftTop;
 			// drag
-			groupState->dragging = true;
+			container->dragging = true;
 		}
 	}
 	if( imguiButton( closeButtonHandle, closeButton ) ) {
-		groupState->hidden = true;
+		container->hidden = true;
 		return false;
 	} else if( imguiButton( minButtonHandle, minButton ) ) {
-		groupState->minimized = !groupState->minimized;
+		container->minimized = !container->minimized;
 	}
 
-	if( groupState->minimized ) {
-		rect.bottom      = titlebarRect.bottom;
-		groupState->rect = rect;
+	if( container->minimized ) {
+		rect.bottom     = titlebarRect.bottom;
+		container->rect = rect;
 	}
 
 	if( isKeyDown( inputs, KC_LButton ) && imguiHasFocus( handle ) ) {
 		if( wasDragging ) {
-			auto delta       = inputs->mouse.position - ImGui->mouseOffset - rect.leftTop;
-			delta            = imguiBoundedTranslation( draggableRect, delta );
-			groupState->rect = rect = translate( rect, delta );
-			titlebarRect            = imguiGetTitlebar( groupState->rect );
+			auto delta      = inputs->mouse.position - ImGui->mouseOffset - rect.leftTop;
+			delta           = imguiBoundedTranslation( draggableRect, delta );
+			container->rect = rect = translate( rect, delta );
+			titlebarRect           = imguiGetTitlebar( container->rect );
 		}
 	} else {
-		groupState->dragging = false;
+		container->dragging = false;
 	}
 
 	ImGui->renderCommandJumpLast = addRenderCommandJump( renderer, ImGui->renderCommandJumpLast,
-	                                                     imguiToUserData( groupState->z ) );
+	                                                     imguiToUserData( container->z ) );
 	if( !ImGui->renderCommandJumpFirst ) {
 		ImGui->renderCommandJumpFirst = ImGui->renderCommandJumpLast;
 	}
@@ -530,10 +549,14 @@ bool imguiGroup( StringView name, int32 groupIndex )
 	textRect.right -= ( style->innerPadding + buttonSize ) * 2;
 
 	setTexture( renderer, 0, null );
+	auto meshCommand = addRenderCommandMesh( renderer, 4, 6 );
+	container->bgMesh = &meshCommand->mesh;
+	{
+		auto bgStream  = makeMeshStream( container->bgMesh );
+		bgStream.color = Color::argb( bgColor );
+		pushQuad( &bgStream, rect );
+	}
 	MESH_STREAM_BLOCK( stream, renderer ) {
-		stream->color = Color::argb( bgColor );
-		pushQuad( stream, rect );
-
 		stream->color = Color::argb( buttonColor );
 		pushQuad( stream, closeButton );
 		pushQuad( stream, minButton );
@@ -544,48 +567,55 @@ bool imguiGroup( StringView name, int32 groupIndex )
 
 	renderer->color = prevColor;
 
-	if( groupState->minimized ) {
+	if( container->minimized ) {
 		return false;
 	}
-	groupState->addPosition = {titlebarRect.left, titlebarRect.bottom + style->innerPadding};
+	container->addPosition = {titlebarRect.left, titlebarRect.bottom + style->innerPadding};
 	return true;
 }
 
-ImGuiGroupState* imguiCurrentGroup()
+ImGuiContainerState* imguiCurrentContainer()
 {
-	assert( ImGui->group >= 0 && ImGui->group < ImGui->groupsCount );
-	return &ImGui->groups[ImGui->group];
+	assert( ImGui->container >= 0 && ImGui->container < ImGui->containersCount );
+	return &ImGui->containers[ImGui->container];
 }
 rectf imguiAddItem( float width, float height )
 {
-	auto group  = imguiCurrentGroup();
-	auto result = RectWH( group->addPosition.x + ImGui->style.innerPadding, group->addPosition.y,
-		                 width, height );
-	if( group->horizontalCount > 0 ) {
+	auto container = imguiCurrentContainer();
+	auto result    = RectWH( container->addPosition.x + ImGui->style.innerPadding,
+	                         container->addPosition.y, width, height );
+	bool newline = false;
+	if( container->horizontalCount > 0 ) {
 		// change layout horizontally
-		group->addPosition.x += width + ImGui->style.innerPadding;
-		--group->horizontalCount;
-		if( group->horizontalCount == 0 ) {
-			group->addPosition.y += height + ImGui->style.innerPadding;
-			group->rect.bottom = group->addPosition.y;
-			group->addPosition.x = group->rect.left;
+		container->addPosition.x += width + ImGui->style.innerPadding;
+		--container->horizontalCount;
+		if( container->horizontalCount == 0 ) {
+			newline = true;
+			container->addPosition.x = container->rect.left;
 		}
 	} else {
-		// change layout vertically
-		group->addPosition.y += height + ImGui->style.innerPadding;
-		group->rect.bottom = group->addPosition.y;
+		newline = true;
+	}
+	if( newline ) {
+		// change layout vertically	
+		container->addPosition.y += height + ImGui->style.innerPadding;
+		container->rect.bottom = container->addPosition.y;
+		if( auto mesh = container->bgMesh ) {
+			assert( mesh->verticesCount == 4 );
+			mesh->vertices[3].position.y = mesh->vertices[2].position.y = container->rect.bottom;
+		}
 	}
 	return result;
 }
 void imguiSameLine( int32 count )
 {
-	auto group  = imguiCurrentGroup();
-	group->horizontalCount = count;
+	auto container  = imguiCurrentContainer();
+	container->horizontalCount = count;
 }
-float imguiClientWidth( ImGuiGroupState* group )
+float imguiClientWidth( ImGuiContainerState* container )
 {
-	assert( group );
-	return width( group->rect ) - ImGui->style.innerPadding * 2;
+	assert( container );
+	return width( container->rect ) - ImGui->style.innerPadding * 2;
 }
 
 void imguiText( StringView text, float width, float height )
@@ -604,8 +634,8 @@ void imguiText( StringView text, float width, float height )
 void imguiText( StringView text )
 {
 	auto font     = ImGui->font;
-	auto group = imguiCurrentGroup();
-	auto width = imguiClientWidth( group );
+	auto container = imguiCurrentContainer();
+	auto width = imguiClientWidth( container );
 	imguiText( text, width, stringHeight( font, text, width ) );
 }
 
@@ -683,11 +713,10 @@ bool imguiEditbox( ImGuiHandle handle, StringView name, char* data, int32* lengt
 	    && isPointInside( editboxRect, inputs->mouse.position ) ) {
 
 		if( !imguiHasFocus( handle ) ) {
-			ImGui->state.editbox = {};
-			ImGui->stateType     = ImGuiStateType::Editbox;
+			set_variant( ImGui->state, editbox ) = {};
 		}
 		imguiFocus( handle );
-		state = &ImGui->state.editbox;
+		state = &get_variant( ImGui->state, editbox );
 
 		auto prev = state->selectionBegin;
 		auto rel = inputs->mouse.position.x - textRect.left - state->textOffset;
@@ -700,7 +729,7 @@ bool imguiEditbox( ImGuiHandle handle, StringView name, char* data, int32* lengt
 	}
 
 	if( imguiHasFocus( handle ) ) {
-		state = &ImGui->state.editbox;
+		state = &get_variant( ImGui->state, editbox );
 
 		if( isKeyDown( inputs, KC_LButton ) ) {
 			state->resetCaret();
@@ -736,6 +765,7 @@ bool imguiEditbox( ImGuiHandle handle, StringView name, char* data, int32* lengt
 			auto selection = state->selection();
 			text.erase( text.begin() + selection.min, text.begin() + selection.max );
 			auto count = min( inputString.size(), text.remaining() );
+			state->selectionEnd = clamp( state->selectionEnd, 0, text.size() );
 			text.insert( text.begin() + state->selectionEnd, inputString.begin(),
 			             inputString.begin() + count );
 			state->resetCaret();
@@ -919,8 +949,8 @@ bool imguiEditbox( StringView name, int32* value )
 
 void imguiUpdate( float dt )
 {
-	switch( ImGui->stateType ) {
-		case ImGuiStateType::Editbox: {
+	switch( ImGui->state.type ) {
+		case ImGuiControlState::type_editbox: {
 			auto state = &ImGui->state.editbox;
 			state->timePassed += dt;
 			if( state->timePassed > ImGui->caretBlinkTime ) {
@@ -932,20 +962,30 @@ void imguiUpdate( float dt )
 	}
 }
 
+static bool imguiKeypressButton( ImGuiHandle handle, rectfarg rect )
+{
+	auto inputs   = ImGui->inputs;
+	if( isKeyPressed( inputs, KC_LButton ) && imguiIsHover( handle )
+	    && isPointInside( rect, inputs->mouse.position ) ) {
+		imguiFocus( handle );
+		return true;
+	}
+	return false;
+}
+
 bool imguiCheckbox( StringView name, bool* checked )
 {
 	assert( checked );
 
 	auto renderer = ImGui->renderer;
 	auto font     = ImGui->font;
-	auto inputs   = ImGui->inputs;
 	auto style    = &ImGui->style;
 
 	auto handle  = imguiMakeHandle( checked );
 	auto changed = false;
 
-	auto index =
-	    ( *checked ) ? ( ImGuiTexCoords::CheckboxChecked ) : ( ImGuiTexCoords::CheckboxUnchecked );
+	using namespace ImGuiTexCoords;
+	auto index = ( *checked ) ? ( CheckboxChecked ) : ( CheckboxUnchecked );
 
 	auto width =
 	    stringWidth( font, name ) + style->innerPadding * 2 + ::width( style->rects[index] );
@@ -955,9 +995,7 @@ bool imguiCheckbox( StringView name, bool* checked )
 	auto inner     = imguiInnerRect( rect );
 	auto checkRect = translate( style->rects[index], inner.leftTop );
 
-	if( isKeyPressed( inputs, KC_LButton ) && imguiIsHover( handle )
-	    && isPointInside( checkRect, inputs->mouse.position ) ) {
-		imguiFocus( handle );
+	if( imguiKeypressButton( handle, checkRect ) ) {
 		*checked = !*checked;
 		changed  = true;
 	}
@@ -979,17 +1017,16 @@ bool imguiRadiobox( StringView name, bool* checked )
 {
 	assert( checked );
 
-	auto renderer = ImGui->renderer;
-	auto font     = ImGui->font;
-	auto inputs   = ImGui->inputs;
-	auto style    = &ImGui->style;
-	auto group    = imguiCurrentGroup();
+	auto renderer  = ImGui->renderer;
+	auto font      = ImGui->font;
+	auto style     = &ImGui->style;
+	auto container = imguiCurrentContainer();
 
 	auto handle  = imguiMakeHandle( checked );
 	auto changed = false;
 
-	auto index =
-	    ( *checked ) ? ( ImGuiTexCoords::RadioboxChecked ) : ( ImGuiTexCoords::RadioboxUnchecked );
+	using namespace ImGuiTexCoords;
+	auto index = ( *checked ) ? ( RadioboxChecked ) : ( RadioboxUnchecked );
 
 	auto width =
 	    stringWidth( font, name ) + style->innerPadding * 2 + ::width( style->rects[index] );
@@ -1000,20 +1037,18 @@ bool imguiRadiobox( StringView name, bool* checked )
 	auto checkRect = translate( style->rects[index], inner.leftTop );
 
 	auto isChecked =
-	    ( ( group->checkedRadiobox == handle ) || ( !group->checkedRadiobox && *checked ) );
+	    ( ( container->checkedRadiobox == handle ) || ( !container->checkedRadiobox && *checked ) );
 	changed  = *checked != isChecked;
 	*checked = isChecked;
-	if( !group->checkedRadiobox && *checked ) {
-		group->checkedRadiobox = handle;
+	if( !container->checkedRadiobox && *checked ) {
+		container->checkedRadiobox = handle;
 	}
 
-	if( isKeyPressed( inputs, KC_LButton ) && imguiIsHover( handle )
-	    && isPointInside( checkRect, inputs->mouse.position ) ) {
-		imguiFocus( handle );
+	if( imguiKeypressButton( handle, checkRect ) ) {
 		if( !*checked ) {
-			changed                = true;
-			*checked               = true;
-			group->checkedRadiobox = handle;
+			changed                    = true;
+			*checked                   = true;
+			container->checkedRadiobox = handle;
 		}
 	}
 
@@ -1031,37 +1066,145 @@ bool imguiRadiobox( StringView name, bool* checked )
 	return changed;
 }
 
+bool imguiBeginDropGroup( StringView name, bool* expanded )
+{
+	assert( expanded );
+
+	auto renderer  = ImGui->renderer;
+	auto font      = ImGui->font;
+	auto style     = &ImGui->style;
+	auto container = imguiCurrentContainer();
+
+	auto handle  = imguiMakeHandle( expanded );
+
+	using namespace ImGuiTexCoords;
+	auto index = ( *expanded ) ? ( DropGroupExpanded ) : ( DropGroupRetracted );
+
+	auto width = ::width( container->rect ) - style->innerPadding * 2;
+	auto height =
+	    max( stringHeight( font ), ::height( style->rects[index] ) ) + style->innerPadding * 2;
+	auto rect      = imguiAddItem( width, height );
+	auto inner     = imguiInnerRect( rect );
+	auto buttonRect = translate( style->rects[index], inner.leftTop );
+
+	if( imguiKeypressButton( handle, inner ) ) {
+		*expanded = !*expanded;
+	}
+	if( *expanded ) {
+		container->rect.left += style->innerPadding;
+		container->addPosition.x = container->rect.left;
+		container->horizontalCount = 0;
+	}
+
+	RENDER_COMMANDS_STATE_BLOCK( renderer ) {
+		renderer->color = multiply( renderer->color, Color::White );
+		setTexture( renderer, 0, null );
+		MESH_STREAM_BLOCK( stream, renderer ) {
+			stream->color = multiply( renderer->color, {0x80544C9A} );
+			pushQuad( stream, inner );
+		}
+		setTexture( renderer, 0, style->atlas );
+		MESH_STREAM_BLOCK( stream, renderer ) {
+			pushQuad( stream, buttonRect, 0, makeQuadTexCoords( style->texCoords[index] ) );
+		}
+		auto textArea   = inner;
+		textArea.left += ::width( buttonRect ) + style->innerPadding;
+		renderTextCenteredClipped( renderer, font, name, textArea );
+	}
+
+	return *expanded;
+}
+void imguiEndDropGroup()
+{
+	auto style     = &ImGui->style;
+	auto container = imguiCurrentContainer();
+	container->rect.left -= style->innerPadding;
+	container->addPosition.x = container->rect.left;
+	container->horizontalCount = 0;
+}
+
+struct ImGuiComboState {
+	int32* selectedIndex;
+	rectf textRect;
+	bool showComboEntries;
+};
+ImGuiComboState imguiCombo( StringView name, int32* selectedIndex )
+{
+	assert( selectedIndex );
+	using namespace ImGuiTexCoords;
+	auto renderer = ImGui->renderer;
+	auto font     = ImGui->font;
+	auto style    = &ImGui->style;
+
+	auto handle    = imguiMakeHandle( selectedIndex );
+	auto container = imguiCurrentContainer();
+	auto width     = ::width( container->rect ) - style->innerPadding * 2;
+	auto height    = ::max( stringHeight( font ), ::height( style->rects[ComboButton] ) )
+	              + style->innerPadding * 4;
+	auto rect  = imguiAddItem( width, height );
+	auto inner = imguiInnerRect( rect );
+	inner.left -= style->innerPadding;
+
+	auto buttonWidth = ::width( style->rects[ComboButton] );
+	auto buttonRect  = RectSetLeft( inner, inner.right - buttonWidth - style->innerPadding * 2 );
+	buttonRect = alignCenter( buttonRect, buttonWidth, ::height( style->rects[ComboButton] ) );
+
+	ImGuiComboState result  = {};
+	result.selectedIndex    = selectedIndex;
+	result.textRect         = imguiInnerRect( RectSetRight( inner, buttonRect.left ) );
+	result.showComboEntries = imguiKeypressButton( handle, buttonRect );
+
+	RENDER_COMMANDS_STATE_BLOCK( renderer ) {
+		auto color      = renderer->color;
+		renderer->color = multiply( color, {0x800000FF} );
+		setTexture( renderer, 0, null );
+		addRenderCommandSingleQuad( renderer, inner );
+		renderer->color = multiply( color, Color::White );
+		setTexture( renderer, 0, style->atlas );
+		addRenderCommandSingleQuad( renderer, buttonRect, 0,
+		                            makeQuadTexCoords( style->texCoords[ComboButton] ) );
+	}
+
+	return result;
+}
+bool imguiComboEntry( const ImGuiComboState& combo, StringView name )
+{
+	assert( combo.selectedIndex );
+	return false;
+}
+
 bool imguiSlider( StringView name, float* value, float min, float max )
 {
 	assert( value );
 
-	auto renderer = ImGui->renderer;
-	auto font     = ImGui->font;
-	auto inputs   = ImGui->inputs;
-	auto style    = &ImGui->style;
-	auto group    = imguiCurrentGroup();
+	using namespace ImGuiTexCoords;
+
+	auto renderer  = ImGui->renderer;
+	auto font      = ImGui->font;
+	auto inputs    = ImGui->inputs;
+	auto style     = &ImGui->style;
+	auto container = imguiCurrentContainer();
 
 	auto handle  = imguiMakeHandle( value );
 	auto changed = false;
 
-	auto width = ::width( group->rect );
-	auto height =
-	    ::max( stringHeight( font ), ::height( style->rects[ImGuiTexCoords::SliderKnob] ) )
-	    + style->innerPadding * 2;
+	auto width  = ::width( container->rect );
+	auto height = ::max( stringHeight( font ), ::height( style->rects[SliderKnob] ) )
+	              + style->innerPadding * 2;
 	auto rect  = imguiAddItem( width, height );
 	auto inner = imguiInnerRect( rect );
 
 	auto sliderArea = inner;
 	sliderArea.left += stringWidth( font, name ) + style->innerPadding;
 	*value = clamp( *value, min, max );
-	sliderArea.right -= ::width( style->rects[ImGuiTexCoords::SliderKnob] );
+	sliderArea.right -= ::width( style->rects[SliderKnob] );
 	float knobPosition = ( ( *value - min ) / ( max - min ) ) * ::width( sliderArea );
-	rectf knobRect     = translate( style->rects[ImGuiTexCoords::SliderKnob],
-	                            sliderArea.left + knobPosition, sliderArea.top );
+	rectf knobRect =
+	    translate( style->rects[SliderKnob], sliderArea.left + knobPosition, sliderArea.top );
 
 	ImGuiSliderState* state = nullptr;
 	if( imguiHasFocus( handle ) ) {
-		state = &ImGui->state.slider;
+		state = &get_variant( ImGui->state, slider );
 	}
 	bool wasDragging = true;
 	if( isKeyPressed( inputs, KC_LButton ) && imguiIsHover( handle )
@@ -1069,9 +1212,8 @@ bool imguiSlider( StringView name, float* value, float min, float max )
 		imguiFocus( handle );
 		imguiCapture( handle );
 		ImGui->mouseOffset = inputs->mouse.position - rect.leftTop;
-		state              = &ImGui->state.slider;
+		state              = &set_variant( ImGui->state, slider );
 		*state             = {};
-		ImGui->stateType   = ImGuiStateType::Slider;
 		state->knobRect    = knobRect;
 		wasDragging        = false;
 		state->dragging    = true;
@@ -1081,7 +1223,7 @@ bool imguiSlider( StringView name, float* value, float min, float max )
 		auto delta     = inputs->mouse.position - ImGui->mouseOffset - rect.leftTop;
 		knobRect       = translate( state->knobRect, delta.x, 0.0f );
 		knobRect.left  = clamp( knobRect.left, sliderArea.left, sliderArea.right );
-		knobRect.right = knobRect.left + ::width( style->rects[ImGuiTexCoords::SliderKnob] );
+		knobRect.right = knobRect.left + ::width( style->rects[SliderKnob] );
 		knobPosition   = knobRect.left - sliderArea.left;
 		*value         = ( knobPosition / ::width( sliderArea ) ) + min;
 	} else if( state ) {
@@ -1091,8 +1233,7 @@ bool imguiSlider( StringView name, float* value, float min, float max )
 	RENDER_COMMANDS_STATE_BLOCK( renderer ) {
 		setTexture( renderer, 0, style->atlas );
 		MESH_STREAM_BLOCK( stream, renderer ) {
-			pushQuad( stream, knobRect, 0,
-			          makeQuadTexCoords( style->texCoords[ImGuiTexCoords::SliderKnob] ) );
+			pushQuad( stream, knobRect, 0, makeQuadTexCoords( style->texCoords[SliderKnob] ) );
 		}
 		renderer->color = multiply( renderer->color, Color::White );
 		auto textArea   = inner;
@@ -1107,7 +1248,7 @@ void imguiFinalize()
 	if( ImGui->renderCommandJumpFirst ) {
 		auto renderer                = ImGui->renderer;
 		ImGui->renderCommandJumpLast = addRenderCommandJump(
-		    renderer, ImGui->renderCommandJumpLast, imguiToUserData( ImGui->groupsCount ) );
+		    renderer, ImGui->renderCommandJumpLast, imguiToUserData( ImGui->containersCount ) );
 		sortRenderCommandJumps( renderer, ImGui->renderCommandJumpFirst,
 		                        ImGui->renderCommandJumpLast,
 		                        []( const RenderCommandJump& a, const RenderCommandJump& b ) {

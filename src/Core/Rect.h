@@ -134,6 +134,10 @@ template< class T > trect< T > ceil( trectarg< T > r );
 template< class T > trect< T > floor( trectarg< T > r );
 template< class T > trect< T > sweep( trectarg< T > r, tvec2< T > delta );
 
+rectf alignVerticalCenter( rectfarg bounds, float height );
+rectf alignHorizontalCenter( rectfarg bounds, float width );
+rectf alignCenter( rectfarg bounds, float width, float height );
+
 // conversions
 template< class T, class U > trect< T > RectTiled( trectarg< U > rect, T tileWidth, T tileHeight );
 template< class T, class U > trect< T > RectTiled( trectarg< U > rect, tvec2< T > tileSize );
@@ -462,6 +466,30 @@ template< class T > trect< T > sweep( trectarg< T > r, tvec2< T > delta )
 	} else {
 		result.bottom += delta.y;
 	}
+	return result;
+}
+
+rectf alignVerticalCenter( rectfarg bounds, float height )
+{
+	auto result = bounds;
+	result.top += (::height( result ) - height ) * 0.5f;
+	result.bottom = result.top + height;
+	return result;
+}
+rectf alignHorizontalCenter( rectfarg bounds, float width )
+{
+	auto result = bounds;
+	result.left += (::width( result ) - width ) * 0.5f;
+	result.right = result.left + width;
+	return result;
+}
+rectf alignCenter( rectfarg bounds, float width, float height )
+{
+	auto result = bounds;
+	result.left += (::width( result ) - width ) * 0.5f;
+	result.right = result.left + width;
+	result.top += (::height( result ) - height ) * 0.5f;
+	result.bottom = result.top + height;
 	return result;
 }
 

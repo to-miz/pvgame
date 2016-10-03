@@ -1,3 +1,7 @@
+// TODO: decide which version to use, one using bitfields
+// the other manually constructing 10 bit twos complement numbers
+#if 0
+
 #define NORMAL_X_SHIFT 0u
 #define NORMAL_Y_SHIFT 10u
 #define NORMAL_Z_SHIFT 20u
@@ -49,3 +53,21 @@ constexpr const Normal normal_pos_y_axis = {0x0007fc00u};
 constexpr const Normal normal_neg_y_axis = {0x00080000u};
 constexpr const Normal normal_pos_z_axis = {0x1ff00000u};
 constexpr const Normal normal_neg_z_axis = {0x20000000u};
+#else
+// this is only correct if the target platform happens to use twos complement
+struct Normal {
+	int x : 10;
+	int y : 10;
+	int z : 10;
+	int unused : 2;
+};
+
+#define INT10_MAX ( 0x1ff )
+#define INT10_MIN ( -0x200 )
+constexpr const Normal normal_pos_x_axis = {INT10_MAX, 0, 0};
+constexpr const Normal normal_neg_x_axis = {INT10_MIN, 0, 0};
+constexpr const Normal normal_pos_y_axis = {0, INT10_MAX, 0};
+constexpr const Normal normal_neg_y_axis = {0, INT10_MIN, 0};
+constexpr const Normal normal_pos_z_axis = {0, 0, INT10_MAX};
+constexpr const Normal normal_neg_z_axis = {0, 0, INT10_MIN};
+#endif

@@ -8,8 +8,8 @@ struct DoubleBits {
 	uint32 data[2];
 };
 #if defined( ARCHITECTURE_LITTLE_ENDIAN ) && defined( ARCHITECTURE_IEEE_754 )
-	#define FLT_MAX 3.402823466e+38f		 // max value
-	#define FLT_MIN 1.175494351e-38f		 // min normalized positive value
+	#define FLT_MAX 3.402823466e+38f         // max value
+	#define FLT_MIN 1.175494351e-38f         // min normalized positive value
 	#define DBL_MAX 1.7976931348623158e+308  // max value
 	#define DBL_MIN 2.2250738585072014e-308  // min positive value
 
@@ -61,10 +61,10 @@ struct DoubleBits {
 		// mask off sign bit
 		bits.data[1] &= ~DBL_SIGN_MASK;
 		return ( bits.data[1] > DBL_POSITIVE_INF_BITS )
-			   || ( bits.data[0] != 0 && bits.data[1] == DBL_POSITIVE_INF_BITS );
+		       || ( bits.data[0] != 0 && bits.data[1] == DBL_POSITIVE_INF_BITS );
 	}
 
-#elif defined( ARCHITECTURE_BIG_ENDIAN ) && defined( ARCHITECTURE_IEEE_754 )
+	#elif defined( ARCHITECTURE_BIG_ENDIAN ) && defined( ARCHITECTURE_IEEE_754 )
 	inline bool signbit( double v )
 	{
 		auto p = (char*)&v;
@@ -75,7 +75,7 @@ struct DoubleBits {
 		auto p = (char*)&v;
 		return ( (uint8)p[0] & 0x80 ) != 0;
 	}
-#endif
+#endif // defined( ARCHITECTURE_LITTLE_ENDIAN ) && defined( ARCHITECTURE_IEEE_754 )
 
 inline bool isfinite( float v )
 {

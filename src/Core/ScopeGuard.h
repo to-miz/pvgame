@@ -5,10 +5,6 @@
 #ifndef _SCOPEGUARD_H_INCLUDED_
 #define _SCOPEGUARD_H_INCLUDED_
 
-// TODO: decide on namespace
-// namespace core
-// {
-
 class ScopeGuardBase
 {
 protected:
@@ -16,7 +12,7 @@ protected:
 	ScopeGuardBase( ScopeGuardBase&& other ) : active( other.active ) { other.active = false; }
 
 public:
-	void dismiss() { active = false; }
+	inline void dismiss() { active = false; }
 
 protected:
 	bool active = true;
@@ -42,7 +38,7 @@ public:
 private:
 	void* operator new( size_t ) = delete;
 
-	ScopeGuard() = delete;
+	ScopeGuard()                    = delete;
 	ScopeGuard( const ScopeGuard& ) = delete;
 	ScopeGuard& operator=( const ScopeGuard& ) = delete;
 
@@ -68,10 +64,8 @@ inline ScopeGuard< Func > operator+( DEFER_TAG, Func&& lambda )
 }
 }
 
-// } // namespace core
-
 #define SCOPE_EXIT( ... ) \
-	auto PP_JOIN( scope_guard_, __LINE__ ) = scope_guard_helper::DEFER_TAG() + [ __VA_ARGS__ ]()
-#define SCOPE_GUARD( ... ) scope_guard_helper::DEFER_TAG() + [ __VA_ARGS__ ]()
+	auto PP_JOIN( scope_guard_, __LINE__ ) = scope_guard_helper::DEFER_TAG() + [__VA_ARGS__]()
+#define SCOPE_GUARD( ... ) scope_guard_helper::DEFER_TAG() + [__VA_ARGS__]()
 
 #endif

@@ -20,18 +20,21 @@ mat4 matrixTranslation( float x, float y, float z )
 mat4 matrixScale( float x, float y, float z )
 {
 	mat4 result = {x, 0, 0, 0,
-					 0, y, 0, 0,
-					 0, 0, z, 0,
-					 0, 0, 0, 1};
+				   0, y, 0, 0,
+				   0, 0, z, 0,
+				   0, 0, 0, 1};
 	return result;
 }
 mat4 matrixRotationMatrix( float x, float y, float z )
 {
 	mat4 result;
-	float A, B, C, D, E, F;
-	sincos( x, &A, &B );
-	sincos( y, &C, &D );
-	sincos( z, &E, &F );
+	auto sc = simd::sincos( x, y, z, 0 );
+	float A = sc.s[0];
+	float B = sc.c[0];
+	float C = sc.s[1];
+	float D = sc.c[1];
+	float E = sc.s[2];
+	float F = sc.c[2];
 
 	float AD = A * D;
 	float BD = B * D;

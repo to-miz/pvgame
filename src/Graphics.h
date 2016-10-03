@@ -5,6 +5,7 @@
 
 enum class RenderCommandEntryType : int8 {
 	Mesh,
+	LineMesh,
 	StaticMesh,
 	SetTexture,
 	SetBlend,
@@ -99,6 +100,12 @@ struct RenderCommandJump {
 	                                // sorted linked list into an in line jump list
 	void* userData;                 // can be used to store sorting criteria
 };
+struct RenderCommandLineMesh {
+	static const RenderCommandEntryType type = RenderCommandEntryType::LineMesh;
+
+	Mesh mesh;
+	int32 size;
+};
 
 #define MeshRenderOptionsEntries \
 	Color color;                 \
@@ -128,7 +135,13 @@ struct MeshStream {
 	MeshRenderOptionsUnion;
 };
 
+struct LineMeshStream : MeshStream {};
+
 constexpr MeshRenderOptions defaultMeshRenderOptions() { return {0xFFFFFFFF, 1, 5}; }
+
+// if the index buffer contains this value, it denotes that we want to start a new primitve, used
+// with LineMesh, since it represents a line strip
+constexpr uint16 MeshPrimitiveRestart = 0xFFFF;
 
 MeshStream makeMeshStream( StackAllocator* allocator, int32 maxVertices, int32 maxIndices,
                            MatrixStack* stack,
@@ -179,6 +192,11 @@ bool isValid( MeshStream* stream )
 	return stream && stream->data.vertices && stream->data.indices && stream->data.verticesCapacity
 	       && stream->data.indicesCapacity;
 }
+bool hasCapacity( MeshStream* stream, int32 verticesCount, int32 indicesCount )
+{
+	return ( stream->data.verticesCapacity - stream->data.verticesCount >= verticesCount )
+	       && ( stream->data.indicesCapacity - stream->data.indicesCount >= indicesCount );
+}
 Mesh toMesh( MeshStream* stream )
 {
 	assert( isValid( stream ) );
@@ -200,9 +218,7 @@ void clear( MeshStream* stream )
 void pushBox( MeshStream* stream, vec3 box[8] )
 {
 	assert( isValid( stream ) );
-	if( ( stream->data.verticesCapacity - stream->data.verticesCount < 24 )
-	    || ( stream->data.indicesCapacity - stream->data.indicesCount < 36 ) ) {
-		// TOOD: logging
+	if( !hasCapacity( stream, 24, 36 ) ) {
 		// OutOfMemory();
 		return;
 	}
@@ -380,9 +396,7 @@ void pushQuad( MeshStream* stream, vec3 quad[4],
                QuadTexCoordsArg texCoords = makeQuadTexCoordsDef() )
 {
 	assert( isValid( stream ) );
-	if( ( stream->data.verticesCapacity - stream->data.verticesCount < 4 )
-	    || ( stream->data.indicesCapacity - stream->data.indicesCount < 6 ) ) {
-		// TOOD: logging
+	if( !hasCapacity( stream, 4, 6 ) ) {
 		// OutOfMemory();
 		return;
 	}
@@ -411,9 +425,7 @@ void pushQuad( MeshStream* stream, vec3 quad[4],
 void pushQuad( MeshStream* stream, Vertex vertices[4] )
 {
 	assert( isValid( stream ) );
-	if( ( stream->data.verticesCapacity - stream->data.verticesCount < 4 )
-	    || ( stream->data.indicesCapacity - stream->data.indicesCount < 6 ) ) {
-		// TOOD: logging
+	if( !hasCapacity( stream, 4, 6 ) ) {
 		// OutOfMemory();
 		return;
 	}
@@ -465,6 +477,143 @@ void pushQuadOutline( MeshStream* stream, rectfarg rect, float z = 0 )
 	pushQuad( stream, rectf{rect.left, rect.top + halfWidth, rect.right, rect.top - halfWidth}, z );
 	pushQuad( stream,
 	          rectf{rect.left, rect.bottom + halfWidth, rect.right, rect.bottom - halfWidth}, z );
+}
+
+uint16 pushLineStripVertexUnchecked( LineMeshStream* stream, float x, float y, float z = 0 )
+{
+	assert( isValid( stream ) );
+	auto currentVerticesCount = safe_truncate< uint16 >( stream->data.verticesCount );
+	stream->data.indices[stream->data.indicesCount++] = currentVerticesCount;
+	stream->data.vertices[stream->data.verticesCount++] = {
+	    {x, y, z}, stream->color, 0, 0, normal_neg_z_axis};
+	return currentVerticesCount;
+}
+uint16 pushLineStripVertex( LineMeshStream* stream, float x, float y, float z = 0 )
+{
+	assert( isValid( stream ) );
+	if( !hasCapacity( stream, 1, 1 ) ) {
+		// OutOfMemory();
+		return 0;
+	}
+	auto currentVerticesCount = safe_truncate< uint16 >( stream->data.verticesCount );
+	stream->data.indices[stream->data.indicesCount++] = currentVerticesCount;
+	stream->data.vertices[stream->data.verticesCount++] = {
+	    {x, y, z}, stream->color, 0, 0, normal_neg_z_axis};
+	return currentVerticesCount;
+}
+uint16 pushLineStripVertex( LineMeshStream* stream, vec3arg v )
+{
+	return pushLineStripVertex( stream, v.x, v.y, v.z );
+}
+uint16 pushLineStripVertex( LineMeshStream* stream, vec2arg v, float z = 0 )
+{
+	return pushLineStripVertex( stream, v.x, v.y, z );
+}
+void pushEndLineStripUnchecked( LineMeshStream* stream )
+{
+	assert( isValid( stream ) );
+	stream->data.indices[stream->data.indicesCount++] = MeshPrimitiveRestart;
+}
+void pushLineStripIndexUnchecked( LineMeshStream* stream, uint16 index )
+{
+	assert( isValid( stream ) );
+	stream->data.indices[stream->data.indicesCount++] = index;
+}
+void pushEndLineStrip( LineMeshStream* stream )
+{
+	assert( isValid( stream ) );
+	if( stream->data.indicesCapacity - stream->data.indicesCount < 1 ) {
+		// TOOD: logging
+		// OutOfMemory();
+		return;
+	}
+	stream->data.indices[stream->data.indicesCount++] = MeshPrimitiveRestart;
+}
+void pushLineStripIndex( LineMeshStream* stream, uint16 index )
+{
+	assert( isValid( stream ) );
+	if( stream->data.indicesCapacity - stream->data.indicesCount < 1 ) {
+		// TOOD: logging
+		// OutOfMemory();
+		return;
+	}
+	stream->data.indices[stream->data.indicesCount++] = index;
+}
+
+void pushLine( LineMeshStream* stream, vec3arg start, vec3arg end )
+{
+	if( !hasCapacity( stream, 2, 3 ) ) {
+		// OutOfMemory();
+		return;
+	}
+	pushLineStripVertexUnchecked( stream, start.x, start.y, start.z );
+	pushLineStripVertexUnchecked( stream, end.x, end.y, end.z );
+	pushEndLineStripUnchecked( stream );
+}
+void pushAabbOutline( LineMeshStream* stream, aabbarg box )
+{
+	if( !hasCapacity( stream, 8, 20 ) ) {
+		// OutOfMemory();
+		return;
+	}
+	pushLineStripVertexUnchecked( stream, box.min.x, box.min.y, box.min.z );
+	auto l0 = pushLineStripVertexUnchecked( stream, box.max.x, box.min.y, box.min.z );
+	auto l1 = pushLineStripVertexUnchecked( stream, box.max.x, box.min.y, box.max.z );
+	pushLineStripVertexUnchecked( stream, box.min.x, box.min.y, box.max.z );
+	auto l2 = pushLineStripVertexUnchecked( stream, box.min.x, box.max.y, box.max.z );
+	auto l3 = pushLineStripVertexUnchecked( stream, box.max.x, box.max.y, box.max.z );
+	auto l4 = pushLineStripVertexUnchecked( stream, box.max.x, box.max.y, box.min.z );
+	auto l5 = pushLineStripVertexUnchecked( stream, box.min.x, box.max.y, box.min.z );
+	pushLineStripVertexUnchecked( stream, box.min.x, box.min.y, box.min.z );
+	pushLineStripVertexUnchecked( stream, box.min.x, box.min.y, box.max.z );
+	pushEndLineStrip( stream );
+
+	pushLineStripIndexUnchecked( stream, l0 );
+	pushLineStripIndexUnchecked( stream, l4 );
+	pushEndLineStrip( stream );
+
+	pushLineStripIndexUnchecked( stream, l1 );
+	pushLineStripIndexUnchecked( stream, l3 );
+	pushEndLineStrip( stream );
+
+	pushLineStripIndexUnchecked( stream, l2 );
+	pushLineStripIndexUnchecked( stream, l5 );
+	pushEndLineStrip( stream );
+}
+void pushQuadOutline( LineMeshStream* stream, rectfarg rect, float z = 0 )
+{
+	if( !hasCapacity( stream, 4, 6 ) ) {
+		// OutOfMemory();
+		return;
+	}
+	auto start = pushLineStripVertexUnchecked( stream, rect.left, rect.top, z );
+	pushLineStripVertexUnchecked( stream, rect.right, rect.top, z );
+	pushLineStripVertexUnchecked( stream, rect.right, rect.bottom, z );
+	pushLineStripVertexUnchecked( stream, rect.left, rect.bottom, z );
+	pushLineStripIndexUnchecked( stream, start );
+	pushEndLineStripUnchecked( stream );
+}
+void pushLines( LineMeshStream* stream, Array< vec3 > vertices )
+{
+	if( !hasCapacity( stream, vertices.size(), vertices.size() + 1 ) ) {
+		// OutOfMemory();
+		return;
+	}
+	FOR( entry : vertices ) {
+		pushLineStripVertexUnchecked( stream, entry.x, entry.y, entry.z );
+	}
+	pushEndLineStripUnchecked( stream );
+}
+void pushLines( LineMeshStream* stream, Array< vec2 > vertices, float z = 0 )
+{
+	if( !hasCapacity( stream, vertices.size(), vertices.size() + 1 ) ) {
+		// OutOfMemory();
+		return;
+	}
+	FOR( entry : vertices ) {
+		pushLineStripVertexUnchecked( stream, entry.x, entry.y, z );
+	}
+	pushEndLineStripUnchecked( stream );
 }
 
 struct RenderCommands {
@@ -543,11 +692,25 @@ RenderCommandMesh* getRenderCommandMesh( RenderCommandsStream* stream, RenderCom
 	stream->size -= header->next + result->size;
 	return result;
 }
+RenderCommandLineMesh* getRenderCommandLineMesh( RenderCommandsStream* stream,
+                                                 RenderCommandHeader* header )
+{
+	auto result = (RenderCommandLineMesh*)stream->ptr;
+	assert_alignment( result, alignof( RenderCommandLineMesh ) );
+	assert( header->next == sizeof( RenderCommandLineMesh ) );
+	stream->ptr += header->next + result->size;
+	stream->size -= header->next + result->size;
+	return result;
+}
 void skipRenderCommandBody( RenderCommandsStream* stream, RenderCommandHeader* header )
 {
 	switch( header->type ) {
 		case RenderCommandEntryType::Mesh: {
 			getRenderCommandMesh( stream, header );
+			break;
+		}
+		case RenderCommandEntryType::LineMesh: {
+			getRenderCommandLineMesh( stream, header );
 			break;
 		}
 		default: {
@@ -579,14 +742,15 @@ RenderCommandHeader* allocateRenderCommandHeaderImpl( StackAllocator* allocator,
 #define allocateRenderCommandHeader( allocator, _type ) \
 	allocateRenderCommandHeaderImpl( ( allocator ), _type::type, sizeof( _type ), alignof( _type ) )
 
-RenderCommandMesh* addRenderCommandMesh( RenderCommands* renderCommands, int32 verticesCount,
+template< class T >
+T* addRenderCommandMeshImpl( RenderCommands* renderCommands, int32 verticesCount,
                                          int32 indicesCount )
 {
 	assert( isValid( renderCommands ) );
 	auto allocator = &renderCommands->allocator;
 
-	allocateRenderCommandHeader( allocator, RenderCommandMesh );
-	auto body = allocateStruct( allocator, RenderCommandMesh );
+	allocateRenderCommandHeader( allocator, T );
+	auto body = allocateStruct( allocator, T );
 
 	auto startSize           = allocator->size;
 	body->mesh.vertices      = allocateArray( allocator, Vertex, verticesCount );
@@ -597,6 +761,18 @@ RenderCommandMesh* addRenderCommandMesh( RenderCommands* renderCommands, int32 v
 	body->size               = safe_truncate< int32 >( endSize - startSize );
 
 	return body;
+}
+RenderCommandMesh* addRenderCommandMesh( RenderCommands* renderCommands, int32 verticesCount,
+                                         int32 indicesCount )
+{
+	return addRenderCommandMeshImpl< RenderCommandMesh >( renderCommands, verticesCount,
+	                                                      indicesCount );
+}
+RenderCommandLineMesh* addRenderCommandLineMesh( RenderCommands* renderCommands,
+                                                 int32 verticesCount, int32 indicesCount )
+{
+	return addRenderCommandMeshImpl< RenderCommandLineMesh >( renderCommands, verticesCount,
+	                                                          indicesCount );
 }
 
 void addRenderCommandMesh( RenderCommands* renderCommands, const Mesh& mesh )
@@ -623,6 +799,7 @@ RenderCommandStaticMesh* addRenderCommandMesh( RenderCommands* renderCommands, M
 	return body;
 }
 
+
 MeshStream addRenderCommandMeshStream( RenderCommands* renderCommands, int32 verticesCount,
                                        int32 indicesCount )
 {
@@ -631,21 +808,76 @@ MeshStream addRenderCommandMeshStream( RenderCommands* renderCommands, int32 ver
 	                       command->mesh.indices, command->mesh.indicesCount,
 	                       renderCommands->matrixStack, renderCommands->renderOptions );
 }
+LineMeshStream addRenderCommandLineMeshStream( RenderCommands* renderCommands, int32 verticesCount,
+                                           int32 indicesCount )
+{
+	auto command = addRenderCommandLineMesh( renderCommands, verticesCount, indicesCount );
+	LineMeshStream result;
+	static_cast< MeshStream& >( result ) = makeMeshStream(
+	    command->mesh.vertices, command->mesh.verticesCount, command->mesh.indices,
+	    command->mesh.indicesCount, renderCommands->matrixStack, renderCommands->renderOptions );
+	return result;
+}
 
+RenderCommandMesh* addRenderCommandSingleQuad( RenderCommands* renderCommands, rectfarg rect,
+                                               float z = 0 )
+{
+	auto color       = renderCommands->color;
+	auto result      = addRenderCommandMesh( renderCommands, 4, 6 );
+    result->mesh.vertices[0] = {{rect.left, rect.top, z}, color, 0, 0, normal_neg_z_axis};
+    result->mesh.vertices[1] = {{rect.right, rect.top, z}, color, 1, 0, normal_neg_z_axis};
+    result->mesh.vertices[2] = {{rect.left, rect.bottom, z}, color, 0, 1, normal_neg_z_axis};
+    result->mesh.vertices[3] = {{rect.right, rect.bottom, z}, color, 1, 1, normal_neg_z_axis};
+
+	result->mesh.indices[0] = 0;
+	result->mesh.indices[1] = 1;
+	result->mesh.indices[2] = 2;
+
+	result->mesh.indices[3] = 2;
+	result->mesh.indices[4] = 1;
+	result->mesh.indices[5] = 3;
+	return result;
+}
+RenderCommandMesh* addRenderCommandSingleQuad( RenderCommands* renderCommands, rectfarg rect,
+                                               float z, QuadTexCoordsArg texCoords )
+{
+	auto color       = renderCommands->color;
+	auto result      = addRenderCommandMesh( renderCommands, 4, 6 );
+	result->mesh.vertices[0] = {
+	    {rect.left, rect.top, z}, color, texCoords.elements[0], normal_neg_z_axis};
+	result->mesh.vertices[1] = {
+	    {rect.right, rect.top, z}, color, texCoords.elements[1], normal_neg_z_axis};
+	result->mesh.vertices[2] = {
+	    {rect.left, rect.bottom, z}, color, texCoords.elements[2], normal_neg_z_axis};
+	result->mesh.vertices[3] = {
+	    {rect.right, rect.bottom, z}, color, texCoords.elements[3], normal_neg_z_axis};
+
+	result->mesh.indices[0] = 0;
+	result->mesh.indices[1] = 1;
+	result->mesh.indices[2] = 2;
+
+	result->mesh.indices[3] = 2;
+	result->mesh.indices[4] = 1;
+	result->mesh.indices[5] = 3;
+	return result;
+}
+
+template < class Stream, class Command >
 struct MeshStreamingBlock {
-	MeshStream stream;
-	RenderCommandMesh* meshCommand;
+	Stream stream;
+	Command* meshCommand;
 	inline explicit operator bool() const { return meshCommand != nullptr; }
 };
 
-MeshStreamingBlock beginMeshStreaming( RenderCommands* renderCommands )
+template < class Stream, class Command >
+MeshStreamingBlock< Stream, Command > beginMeshStreamingImpl( RenderCommands* renderCommands )
 {
 	assert( isValid( renderCommands ) );
 	assert( !renderCommands->locked );
 	auto allocator = &renderCommands->allocator;
 
-	allocateRenderCommandHeader( allocator, RenderCommandMesh );
-	auto body = allocateStruct( allocator, RenderCommandMesh );
+	allocateRenderCommandHeader( allocator, Command );
+	auto body = allocateStruct( allocator, Command );
 
 	auto remainingBytes = remaining( allocator ) - alignof( Vertex ) - alignof( uint16 );
 	auto verticesCount  = safe_truncate< int32 >( ( remainingBytes / 2 ) / sizeof( Vertex ) );
@@ -660,12 +892,16 @@ MeshStreamingBlock beginMeshStreaming( RenderCommands* renderCommands )
 	body->size               = safe_truncate< int32 >( endSize - startSize );
 
 	renderCommands->locked = true;
-	return {makeMeshStream( body->mesh.vertices, body->mesh.verticesCount, body->mesh.indices,
-	                        body->mesh.indicesCount, renderCommands->matrixStack,
-	                        renderCommands->renderOptions ),
-	        body};
+	MeshStreamingBlock< Stream, Command > result;
+	static_cast< MeshStream& >( result.stream ) = makeMeshStream(
+	    body->mesh.vertices, body->mesh.verticesCount, body->mesh.indices, body->mesh.indicesCount,
+	    renderCommands->matrixStack, renderCommands->renderOptions );
+	result.meshCommand = body;
+	return result;
 }
-void endMeshStreaming( RenderCommands* renderCommands, MeshStreamingBlock* block )
+template < class Stream, class Command >
+void endMeshStreamingImpl( RenderCommands* renderCommands,
+                           MeshStreamingBlock< Stream, Command >* block )
 {
 	assert( renderCommands && renderCommands->locked );
 	auto stream               = &block->stream;
@@ -682,33 +918,59 @@ void endMeshStreaming( RenderCommands* renderCommands, MeshStreamingBlock* block
 	meshCommand->size               = safe_truncate< int32 >( memoryEnd - memoryStart );
 	renderCommands->locked          = false;
 }
+MeshStreamingBlock< MeshStream, RenderCommandMesh > beginMeshStreaming(
+    RenderCommands* renderCommands )
+{
+	return beginMeshStreamingImpl< MeshStream, RenderCommandMesh >( renderCommands );
+}
+void endMeshStreaming( RenderCommands* renderCommands,
+                       MeshStreamingBlock< MeshStream, RenderCommandMesh >* block )
+{
+	endMeshStreamingImpl( renderCommands, block );
+}
+MeshStreamingBlock< LineMeshStream, RenderCommandLineMesh > beginLineMeshStreaming(
+    RenderCommands* renderCommands )
+{
+	return beginMeshStreamingImpl< LineMeshStream, RenderCommandLineMesh >( renderCommands );
+}
+void endLineMeshStreaming( RenderCommands* renderCommands,
+                           MeshStreamingBlock< LineMeshStream, RenderCommandLineMesh >* block )
+{
+	endMeshStreamingImpl( renderCommands, block );
+}
 
+template < class Stream, class Command >
 struct MeshStreamGuard {
-	MeshStreamingBlock block;
+	MeshStreamingBlock< Stream, Command > block;
 	RenderCommands* renderCommands;
 
 	MeshStreamGuard( RenderCommands* renderCommands )
-	: block( beginMeshStreaming( renderCommands ) )
+	: block( beginMeshStreamingImpl< Stream, Command >( renderCommands ) ),
+	  renderCommands( renderCommands )
 	{
 		assert( renderCommands && renderCommands->locked );
 	}
-	MeshStreamGuard( RenderCommands* renderCommands, MeshStreamingBlock block )
+	MeshStreamGuard( RenderCommands* renderCommands,
+	                 const MeshStreamingBlock< Stream, Command >& block )
 	: block( block ), renderCommands( renderCommands )
 	{
 		assert( renderCommands && renderCommands->locked );
 	}
-	~MeshStreamGuard() { endMeshStreaming( renderCommands, &block ); }
+	~MeshStreamGuard() { endMeshStreamingImpl( renderCommands, &block ); }
 };
 
-MeshStreamGuard addRenderCommandMeshStreamImpl( RenderCommands* renderCommands )
-{
-	return MeshStreamGuard( renderCommands, beginMeshStreaming( renderCommands ) );
-}
+#define MESH_STREAM_BLOCK( name, renderer )                                                   \
+	if( auto _once = false ) {                                                                \
+	} else                                                                                    \
+		for( MeshStreamGuard< MeshStream, RenderCommandMesh > _guard( ( renderer ) ); !_once; \
+		     _once = true )                                                                   \
+			for( auto name = &_guard.block.stream; !_once; _once = true )
 
-#define MESH_STREAM_BLOCK( name, renderer )                                                       \
-	if( auto _once = false ) {                                                                    \
-	} else                                                                                        \
-		for( auto _guard = addRenderCommandMeshStreamImpl( ( renderer ) ); !_once; _once = true ) \
+#define LINE_MESH_STREAM_BLOCK( name, renderer )                                              \
+	if( auto _once = false ) {                                                                \
+	} else                                                                                    \
+		for( MeshStreamGuard< LineMeshStream, RenderCommandLineMesh > _guard( ( renderer ) ); \
+		     !_once; _once = true )                                                           \
 			for( auto name = &_guard.block.stream; !_once; _once = true )
 
 void setTexture( RenderCommands* renderCommands, int32 textureStage, TextureId texture )

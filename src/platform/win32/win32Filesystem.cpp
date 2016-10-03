@@ -23,15 +23,17 @@ FileContents win32ReadWholeFile( StringView filename, char* buffer, size_t buffe
 	} else {
 		LARGE_INTEGER size;
 		if( !GetFileSizeEx( file, &size ) ) {
-			// TODO: logging
+			LOG( ERROR, "Unknown IO error: {}", filename );
 			result.error = ReadWholeFileErrorType::IOError;
 		} else if( size.QuadPart > UINT32_MAX || (size_t)size.QuadPart > bufferSize ) {
+			LOG( ERROR, "File too big: {}", filename );
 			result.error = ReadWholeFileErrorType::FileTooBig;
 		} else {
 			auto bytesToRead    = (DWORD)size.QuadPart;
 			DWORD bytesRead     = 0;
 			auto readFileResult = ReadFile( file, buffer, bytesToRead, &bytesRead, nullptr );
 			if( !readFileResult || bytesRead != bytesToRead ) {
+				LOG( ERROR, "Unknown IO error: {}", filename );
 				result.error = ReadWholeFileErrorType::IOError;
 			} else {
 				result.data = buffer;
@@ -79,9 +81,10 @@ AllocatedFileContents win32ReadWholeFileInternal( StringView filename )
 	} else {
 		LARGE_INTEGER size;
 		if( !GetFileSizeEx( file, &size ) ) {
-			// TODO: logging
+			LOG( ERROR, "Unknown IO error: {}", filename );
 			result.error = ReadWholeFileErrorType::IOError;
 		} else if( size.QuadPart > UINT32_MAX ) {
+			LOG( ERROR, "File too big: {}", filename );
 			result.error = ReadWholeFileErrorType::FileTooBig;
 		} else {
 			auto bytesToRead = (DWORD)size.QuadPart;
@@ -89,6 +92,7 @@ AllocatedFileContents win32ReadWholeFileInternal( StringView filename )
 			DWORD bytesRead     = 0;
 			auto readFileResult = ReadFile( file, result.data, bytesToRead, &bytesRead, nullptr );
 			if( !readFileResult || bytesRead != bytesToRead ) {
+				LOG( ERROR, "Unknown IO error: {}", filename );
 				result.error = ReadWholeFileErrorType::IOError;
 				result.destroy();
 			}

@@ -36,6 +36,7 @@ struct FontInfo {
 	Array< FontRange > ranges;
 
 	// TODO: use a hashmap instead
+	// TODO: or sort keys and use binary search
 	FontKerning kerning;
 };
 

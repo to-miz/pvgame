@@ -46,6 +46,8 @@
 #define SWIZZLE_3( obj, x, y, z ) {( obj ).x, ( obj ).y, ( obj ).z}
 // #define SWIZZLE( obj, ... ) {( obj ).__VA_ARGS__}
 
+#define BITFIELD( x ) ( 1u << ( x ) )
+
 #define not_implemented() debug_error( "not implemented" )
 
 #define FOR( x ) for( auto&& x )
