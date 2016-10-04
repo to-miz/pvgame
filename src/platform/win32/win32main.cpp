@@ -406,7 +406,7 @@ int CALLBACK WinMain( HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdL
 	size_t memorySize = megabytes( 10 );
 	auto memory = VirtualAlloc( nullptr, memorySize, MEM_COMMIT | MEM_RESERVE, PAGE_READWRITE );
 	if( !memory ) {
-		// TODO: logging
+		LOG( ERROR, "Out of memory" );
 		return 0;
 	}
 	LONG width  = 800;
@@ -424,7 +424,7 @@ int CALLBACK WinMain( HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdL
 	auto initializeResult =
 	    initializeApp( memory, memorySize, platformServices, &info, (float)width, (float)height );
 	if( !initializeResult.success ) {
-		// TODO: logging
+		LOG( ERROR, "App initialization failed" );
 		return 0;
 	}
 	win32Remap( &initializeResult );
@@ -458,27 +458,36 @@ int CALLBACK WinMain( HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdL
 	auto hwnd = CreateWindowExW( exstyle, MAKEINTATOM( atom ), L"MyWindowName", style, x, y,
 	                             adjustedWidth, adjustedHeight, nullptr, nullptr, instance, 0 );
 	Win32AppContext.window.hwnd = hwnd;
-	// TODO: error handling
 	if( !hwnd ) {
+		LOG( ERROR, "CreateWindowExW failed" );
 		return 0;
 	}
 	SetWindowLongPtrW( hwnd, GWLP_USERDATA, (LONG_PTR)&( Win32AppContext.window ) );
 
-	auto hdc                      = GetDC( hwnd );
-	auto openGlContext            = win32CreateOpenGlContext( hdc );
+	auto hdc           = GetDC( hwnd );
+	auto openGlContext = win32CreateOpenGlContext( hdc );
 	if( !openGlContext.renderContext ) {
-		// TODO: logging
 		auto error = GetLastError();
-		if( error == ERROR_INVALID_VERSION_ARB ) {
-			__debugbreak();
-		}
-		if( error == ERROR_INVALID_PROFILE_ARB ) {
-			__debugbreak();
+		switch( error ) {
+			case ERROR_INVALID_VERSION_ARB: {
+				LOG( ERROR, "Failed to create OpenGL context: invalid version" );
+				__debugbreak();
+				break;
+			}
+			case ERROR_INVALID_PROFILE_ARB: {
+				LOG( ERROR, "Failed to create OpenGL context: invalid profile" );
+				__debugbreak();
+				break;
+			}
+			default: {
+				LOG( ERROR, "Failed to create OpenGL context" );
+				break;
+			}
 		}
 		return 0;
 	}
 	if( !win32InitOpenGL( &openGlContext, (float)width, (float)height ) ) {
-		// TODO: logging
+		LOG( ERROR, "Failed to initialize OpenGL" );
 		return 0;
 	}
 	const int32 MaxOpenGlMeshCount = 10;

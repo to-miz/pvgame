@@ -43,6 +43,19 @@
 	#define const_assert( x )
 #endif
 
+#ifdef GAME_DEBUG
+	#define DEBUG_WRAP( x ) x
+	// assert with an initializer of y
+	#define assert_init( x, y ) \
+		do {                    \
+			x;                  \
+			assert( y );        \
+		} while( 0 )
+#else
+	#define DEBUG_WRAP( x )
+	#define assert_init( x, y ) ( (void)0 )
+#endif // !defined( NDEBUG )
+
 #define SWIZZLE_3( obj, x, y, z ) {( obj ).x, ( obj ).y, ( obj ).z}
 // #define SWIZZLE( obj, ... ) {( obj ).__VA_ARGS__}
 

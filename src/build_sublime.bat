@@ -7,7 +7,7 @@ if EXIST "../builds/" goto :DO_BUILD
 mkdir "../builds/"
 :DO_BUILD
 pushd "../builds/"
-call ../src/build.bat %1 %2 debug
+call ../src/build.bat %1 %2 release
 popd
 
 exit /b 0

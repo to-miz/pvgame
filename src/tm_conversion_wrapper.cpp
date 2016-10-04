@@ -63,6 +63,7 @@ struct string_builder {
 	int32 size() { return sz; }
 	char* end() { return ptr + sz; }
 	int32 remaining() { return cap - sz; }
+	void clear() { sz = 0; }
 
 	string_builder( char* ptr, int32 cap )
 	: ptr( ptr ), sz( 0 ), cap( cap ), format( defaultPrintFormat() )
@@ -72,6 +73,13 @@ struct string_builder {
 	string_builder& operator<<( T value )
 	{
 		sz += ::print( end(), remaining(), &format, value );
+		return *this;
+	}
+	string_builder& operator<<( char c )
+	{
+		if( cap - sz > 0 ) {
+			*( ptr + sz++ ) = c;
+		}
 		return *this;
 	}
 	string_builder& operator<<( const char* str )
@@ -126,6 +134,16 @@ tmp_size_t snprint( char* buffer, tmp_size_t len, const PrintFormat& initialForm
                     const vec2& value )
 {
 	return ::snprint( buffer, len, "{{{}, {}}", value.x, value.y );
+}
+tmp_size_t snprint( char* buffer, tmp_size_t len, const PrintFormat& initialFormatting,
+                    const vec3& value )
+{
+	return ::snprint( buffer, len, "{{{}, {}, {}}", value.x, value.y, value.z );
+}
+tmp_size_t snprint( char* buffer, tmp_size_t len, const PrintFormat& initialFormatting,
+                    const vec4& value )
+{
+	return ::snprint( buffer, len, "{{{}, {}, {}, {}}", value.x, value.y, value.z, value.w );
 }
 tmp_size_t snprint( char* buffer, tmp_size_t len, const PrintFormat& initialFormatting,
                     const rectf& value )

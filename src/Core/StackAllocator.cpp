@@ -146,8 +146,9 @@ void* fitToSizeArraysImpl( StackAllocator* allocator, void* first, size_t firstS
 	assert( isAllocatedWithAllocator( allocator, first, firstSize ) );
 	assert( isAllocatedWithAllocator( allocator, second, secondSize ) );
 	assert( isBack( allocator, second, oldSecondSize ) );
-	auto firstOldEnd = (char*)first + oldFirstSize;
-	assert( firstOldEnd + getAlignmentOffset( firstOldEnd, secondAlignment ) == (char*)second );
+	assert_init(
+	    auto firstOldEnd = (char*)first + oldFirstSize,
+	    firstOldEnd + getAlignmentOffset( firstOldEnd, secondAlignment ) == (char*)second );
 
 	auto firstEnd             = (char*)first + firstSize;
 	auto alignmentOffset      = getAlignmentOffset( firstEnd, secondAlignment );

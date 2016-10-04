@@ -22,16 +22,21 @@
 #include <Core/NullableInt.h>
 #include <Core/Algorithm.h>
 
+#ifdef GAME_DEBUG
+	#define ARGS_AS_CONST_REF 1
+#else
+	#define ARGS_AS_CONST_REF 0
+#endif
 #include <Core/StackAllocator.cpp>
-#define VEC3_ARGS_AS_CONST_REF GAME_DEBUG
-#define VEC4_ARGS_AS_CONST_REF GAME_DEBUG
+#define VEC3_ARGS_AS_CONST_REF ARGS_AS_CONST_REF
+#define VEC4_ARGS_AS_CONST_REF ARGS_AS_CONST_REF
 #include <Core/Vector.cpp>
-#define RECT_ARGS_AS_CONST_REF GAME_DEBUG
+#define RECT_ARGS_AS_CONST_REF ARGS_AS_CONST_REF
 #include <Core/Rect.h>
 #include <Core/Matrix.cpp>
-#define AABB_ARGS_AS_CONST_REF GAME_DEBUG
+#define AABB_ARGS_AS_CONST_REF ARGS_AS_CONST_REF
 #include <Core/AABB.h>
-#define RANGE_ARGS_AS_CONST_REF GAME_DEBUG
+#define RANGE_ARGS_AS_CONST_REF ARGS_AS_CONST_REF
 #include <Core/Range.h>
 
 #include <Core/ArrayView.cpp>
@@ -40,6 +45,8 @@
 #include <tm_conversion_wrapper.cpp>
 
 #include <Core/ScopeGuard.h>
+
+#include <easing.cpp>
 
 #include <Windows.h>
 #include <Windowsx.h>
@@ -123,6 +130,8 @@ global ThreadContext* appContext    = nullptr;
 global MeshStream* debug_MeshStream = nullptr;
 global bool debug_FillMeshStream    = true;
 
+global string_builder* debugPrint = nullptr;
+
 ThreadContext* getThreadContext()
 {
 	// TODO: pull appContext from thread local storage
@@ -177,6 +186,25 @@ void updateCamera( Camera* camera, float xAngle, float yAngle )
 	camera->up    = normalize( cross( camera->look, camera->right ) );
 }
 void updateCamera( Camera* camera, vec2arg angle ) { updateCamera( camera, angle.x, angle.y ); }
+Camera cameraLookAt( const Camera& camera, vec3arg position )
+{
+	Camera result;
+	result.position = camera.position;
+	result.look = normalize( position - camera.position );
+	result.right = normalize( cross( camera.up, result.look ) );
+	result.up = cross( result.look, result.right );
+	return result;
+}
+Camera cameraLookDirection( const Camera& camera, vec3arg dir )
+{
+	assert( floatEqSoft( length( dir ), 1 ) );
+	Camera result;
+	result.position = camera.position;
+	result.look = dir;
+	result.right = normalize( cross( camera.up, dir ) );
+	result.up = cross( dir, result.right );
+	return result;
+}
 mat4 getViewMatrix( Camera* camera )
 {
 	mat4 result;
@@ -324,6 +352,8 @@ VoxelCell& getCell( VoxelGrid* grid, vec3iarg position )
 struct GameSettings {
 	float mouseSensitivity;
 	bool mouseInvertY;
+
+	bool cameraTurning;
 };
 GameSettings makeDefaultGameSettings()
 {
@@ -387,7 +417,6 @@ struct VoxelState {
 	VoxelGrid voxelsMoving;
 	VoxelGrid voxelsCombined;
 	VoxelCell placingCell;
-	bool mouseLocked;
 	bool lighting;
 	bool initialized;
 
@@ -439,7 +468,7 @@ struct HandleManager {
 	uint32 ids;
 };
 
-HandleManager makeHandleManager(  )
+HandleManager makeHandleManager()
 {
 	HandleManager result = {};
 	return result;
@@ -616,6 +645,33 @@ void processControlSystem( ControlSystem* control, CollidableSystem* collidableS
 	}
 }
 
+struct GameCamera : Camera {
+	CountdownTimer turnTimer;
+	vec3 prevLook;
+	vec3 nextLook;
+	bool turnedRight;
+
+	GameCamera& operator=( const Camera& other )
+	{
+		static_cast< Camera& >( *this ) = other;
+		return *this;
+	}
+};
+GameCamera makeGameCamera( vec3arg position, vec3arg look, vec3arg up )
+{
+	GameCamera result = {};
+	static_cast< Camera& >( result ) = makeCamera( position, look, up );
+	return result;
+}
+
+struct GameDebugGuiState {
+	ImmediateModeGui debugGuiState;
+	int32 mainDialog;
+	int32 debugOutputDialog;
+	bool show;
+	float fadeProgress;
+	bool initialized;
+};
 struct GameState {
 	MeshId tileMesh;
 	TextureId tileTexture;
@@ -628,11 +684,14 @@ struct GameState {
 	CollidableComponent* player;
 	bool initialized;
 
-	Camera camera;
+	GameCamera camera;
 	rectf cameraFollowRegion;
 	bool useGameCamera;
+	bool lighting;
 
 	// debug fields
+	GameDebugGuiState debugGui;
+
 	float groundPosition;
 	float jumpHeight;
 	float maxJumpHeight;
@@ -640,9 +699,12 @@ struct GameState {
 	float jumpHeightError;
 
 	bool paused;
+
+	bool debugCamera;
+	bool debugCollisionBoxes;
 };
 
-enum class AppFocus { Voxel, Game };
+enum class AppFocus { Game, Voxel };
 
 struct AppData {
 	PlatformServices platform;
@@ -653,6 +715,7 @@ struct AppData {
 	IngameLog log;
 	TextureMap textureMap;
 	ImmediateModeGui guiState;
+	string_builder debugPrint;
 
 	float frameTimeAcc;
 
@@ -673,6 +736,9 @@ struct AppData {
 	VoxelState voxelState;
 	GameState gameState;
 	TextureId texture;
+
+	bool mouseLocked;
+	bool displayDebug;
 };
 
 void fillVoxelGridFromImage( VoxelGrid* grid, ImageData image )
@@ -1028,8 +1094,11 @@ void generateMeshFromVoxelGrid( MeshStream* stream, VoxelGrid* grid, VoxelGridTe
 	processPlane( stream, grid, textures, &plane, map, countof( map ) );
 }
 
-INITIALIZE_APP( initializeApp, void* memory, size_t size, PlatformServices platformServices,
-                PlatformInfo* platformInfo, float viewportWidth, float viewportHeight )
+GAME_STORAGE PlatformRemapInfo initializeApp( void* memory, size_t size,
+                                              PlatformServices platformServices,
+                                              PlatformInfo* platformInfo, float viewportWidth,
+                                              float viewportHeight );
+INITIALIZE_APP( initializeApp )
 {
 	assert( getAlignmentOffset( memory, alignof( AppData ) ) == 0 );
 	char* p  = (char*)memory;
@@ -1052,6 +1121,7 @@ INITIALIZE_APP( initializeApp, void* memory, size_t size, PlatformServices platf
 
 	app->debugMeshStream = makeMeshStream( allocator, 4000, 12000, nullptr );
 	app->textureMap = {makeUArray( allocator, TextureMapEntry, 100 )};
+	app->debugPrint = string_builder( allocateArray( allocator, char, 2048 ), 2048 );
 	auto result = reloadApp( memory, size );
 
 	// custom data
@@ -1068,7 +1138,8 @@ INITIALIZE_APP( initializeApp, void* memory, size_t size, PlatformServices platf
 	return result;
 }
 
-RELOAD_APP( reloadApp, void* memory, size_t size )
+GAME_STORAGE PlatformRemapInfo reloadApp( void* memory, size_t size );
+RELOAD_APP( reloadApp )
 {
 	PlatformRemapInfo result = {};
 
@@ -1076,6 +1147,7 @@ RELOAD_APP( reloadApp, void* memory, size_t size )
 	debug_MeshStream = &app->debugMeshStream;
 	GlobalIngameLog  = &app->log;
 	GlobalTextureMap = &app->textureMap;
+	debugPrint     = &app->debugPrint;
 
 	result.success    = true;
 	result.logStorage = GlobalIngameLog;
@@ -1992,10 +2064,10 @@ static void doVoxel( AppData* app, GameInputs* inputs, bool focus, float dt )
 	
 	// mouse lock
 	if( isKeyPressed( inputs, KC_Key_L ) ) {
-		voxel->mouseLocked = !voxel->mouseLocked;
+		app->mouseLocked = !app->mouseLocked;
 	}
 	if( voxel->focus == VoxelFocus::Voxel ) {
-		inputs->mouse.locked = voxel->mouseLocked;
+		inputs->mouse.locked = app->mouseLocked;
 	}
 
 	if( voxel->focus == VoxelFocus::Voxel ) {
@@ -2015,7 +2087,6 @@ static void doVoxel( AppData* app, GameInputs* inputs, bool focus, float dt )
 		generateMeshFromVoxelGridNaive( &voxel->meshStream, &voxel->voxels );
 	}
 
-#if 1
 	LINE_MESH_STREAM_BLOCK( stream, renderer ) {
 		auto grid     = &voxel->voxels;
 		stream->color = 0xFF0000FF;
@@ -2027,7 +2098,6 @@ static void doVoxel( AppData* app, GameInputs* inputs, bool focus, float dt )
 		            grid->depth * EDITOR_CELL_DEPTH};
 		pushAabbOutline( stream, box );
 	}
-#endif
 
 	setRenderState( renderer, RenderStateType::Lighting, voxel->lighting );
 	setTexture( renderer, 0, voxel->textureMap.texture );
@@ -2307,8 +2377,7 @@ static void doCollisionDetection( AppData* app, CollidableSystem* system, GameIn
 
 			// check grounded state of entry
 			if( entry.groundedTile >= 0 ) {
-				auto tile = GameTestMap[entry.groundedTile];
-				assert( tile );
+				assert_init( auto tile = GameTestMap[entry.groundedTile], tile );
 				auto x             = entry.groundedTile % GAME_MAP_WIDTH;
 				auto y             = entry.groundedTile / GAME_MAP_WIDTH;
 				rectf tileBounds   = RectWH( x * tileWidth, y * tileHeight, tileWidth, tileHeight );
@@ -2417,6 +2486,168 @@ static void doCollisionDetection( AppData* app, CollidableSystem* system, GameIn
 	}
 }
 
+static StringView detailedDebugOutput( AppData* app, char* buffer, int32 size )
+{
+	auto builder  = string_builder( buffer, size );
+	auto renderer = &app->renderer;
+
+	builder << "FrameTime: " << app->platformInfo->frameTime
+	        << "\nAverage FrameTime:" << app->platformInfo->averageFrameTime
+	        << "\nMin FrameTime: " << app->platformInfo->minFrameTime
+	        << "\nMax FrameTime: " << app->platformInfo->maxFrameTime
+	        << "\nFPS: " << app->platformInfo->fps
+	        << "\nAverage Fps:" << app->platformInfo->averageFps
+	        << "\nMin Fps: " << app->platformInfo->minFps
+	        << "\nMax Fps: " << app->platformInfo->maxFps
+	        << "\nLight Position: " << renderer->lightPosition.x << ", "
+	        << renderer->lightPosition.y << ", " << renderer->lightPosition.z;
+	if( app->platformInfo->recordingInputs ) {
+		builder << "\nRecording Inputs: " << app->platformInfo->recordingFrame;
+	}
+	if( app->platformInfo->replayingInputs ) {
+		builder << "\nReplaying Inputs: " << app->platformInfo->recordingFrame;
+	}
+
+	builder << "\njumpHeight: " << app->gameState.jumpHeight
+	        << "\nmaxJumpHeight: " << app->gameState.maxJumpHeight
+	        << "\nJumpHeightError: " << app->gameState.jumpHeightError;
+
+	builder << "\nWallJumpTimer: " << app->gameState.player->walljumpWindow.value
+	        << "\nWallJumpDuration: " << app->gameState.player->walljumpDuration.value;
+
+	builder << '\n' << '\n';
+
+	auto camera = &app->voxelState.camera;
+	builder << "Camera:\n";
+	builder.println( "Position: {}", camera->position );
+	builder.println( "Look: {}", camera->look );
+	builder.println( "Up: {}", camera->up );
+	auto player = app->gameState.player;
+	builder.println( "CollidableComponent: {}\nCollidableComponent Time: {}",
+	                 getSpatialStateString( player->spatialState ), player->spatialStateTimer );
+	builder.println( "Player pos: {}, {}", player->position.x, player->position.y );
+	builder.println( "Camera follow: {:.2}", app->gameState.cameraFollowRegion );
+
+	return asStringView( builder );
+}
+
+static void showGameDebugGui( AppData* app, GameInputs* inputs, bool focus, float dt,
+                              bool frameBoundary )
+{
+	auto renderer  = &app->renderer;
+	auto font      = &app->font;
+	auto game      = &app->gameState;
+	auto gui       = &game->debugGui;
+	auto fadeSpeed = 0.25f * dt;
+
+	if( !focus ) {
+		return;
+	}
+	if( !gui->initialized ) {
+		gui->mainDialog        = imguiGenerateContainer();
+		gui->debugOutputDialog = imguiGenerateContainer( {200, 0, 600, 100} );
+		gui->initialized       = true;
+	}
+	setProjection( renderer, ProjectionType::Orthogonal );
+	if( !frameBoundary ) {
+		if( isKeyPressed( inputs, KC_Tab ) ) {
+			auto mainDialog = imguiGetContainer( gui->mainDialog );
+			if( mainDialog->hidden ) {
+				gui->show = true;
+				mainDialog->hidden = false;
+			} else {
+				gui->show = !gui->show;
+			}
+		}
+	}
+	gui->fadeProgress = clamp( gui->fadeProgress + fadeSpeed * ( ( gui->show ) ? ( 1 ) : ( -1 ) ) );
+	if( !gui->show || gui->fadeProgress <= 0 || imguiGetContainer( gui->mainDialog )->hidden ) {
+		renderer->color = Color::Black;
+		renderText( renderer, font, "Press [TAB] to open debug dialog", {} );
+		return;
+	}
+	renderer->color = setAlpha( 0xFFFFFFFF, gui->fadeProgress );
+	rectf guiBounds = {0, 0, app->width, app->height};
+	imguiBind( &app->guiState, renderer, font, inputs, app->stackAllocator.ptr, guiBounds );
+	if( imguiDialog( "Debug Window", gui->mainDialog ) ) {
+		if( imguiButton( "Reset Player Position" ) ) {
+			game->player->position = {};
+		}
+		imguiCheckbox( "Lighting", &game->lighting );
+		imguiCheckbox( "Camera turning", &app->settings.cameraTurning );
+	}
+	if( imguiDialog( "Debug Output", gui->debugOutputDialog ) ) {
+		imguiCheckbox( "Detailed Debug Output", &app->displayDebug );
+		if( app->displayDebug ) {
+			char buffer[1000];
+			imguiText( detailedDebugOutput( app, buffer, countof( buffer ) ) );
+		}
+
+		imguiText( asStringView( *debugPrint ) );
+	}
+	imguiUpdate( dt );
+	imguiFinalize();
+}
+static void processGameCamera( AppData* app, float dt, bool frameBoundary )
+{
+	auto game              = &app->gameState;
+	auto settings          = &app->settings;
+	auto player            = game->player;
+	vec3 cameraTranslation = {};
+	auto playerAabb        = translate( player->aab, player->position );
+	auto follow            = game->cameraFollowRegion;
+	auto camera            = &game->camera;
+	bool turnCamera        = false;
+
+	if( playerAabb.right > follow.right ) {
+		cameraTranslation.x = playerAabb.right - follow.right;
+		if( settings->cameraTurning ) {
+			if( !camera->turnTimer || !camera->turnedRight ) {
+				turnCamera          = true;
+				camera->turnedRight = true;
+			}
+		}
+	} else if( playerAabb.left < follow.left ) {
+		cameraTranslation.x = playerAabb.left - follow.left;
+		if( settings->cameraTurning ) {
+			if( !camera->turnTimer || camera->turnedRight ) {
+				turnCamera          = true;
+				camera->turnedRight = false;
+			}
+		}
+	}
+	if( playerAabb.bottom > follow.bottom ) {
+		cameraTranslation.y = playerAabb.bottom - follow.bottom;
+	} else if( playerAabb.top < follow.top ) {
+		cameraTranslation.y = playerAabb.top - follow.top;
+	}
+	camera->position.x += cameraTranslation.x * VoxelCellSize.x;
+	camera->position.y -= cameraTranslation.y * VoxelCellSize.y;
+	game->cameraFollowRegion = translate( game->cameraFollowRegion, cameraTranslation.xy );
+	if( settings->cameraTurning ) {
+		if( turnCamera ) {
+			camera->turnTimer = {1};
+			camera->prevLook  = camera->look;
+			camera->nextLook =
+			    normalize( Vec3( player->position.x, camera->position.y, 0 ) - camera->position );
+		}
+		if( camera->turnTimer ) {
+			auto t = quadratic( camera->turnTimer.value, 0 );
+			auto dir          = normalize( lerp( t, camera->nextLook, camera->prevLook ) );
+			*camera           = cameraLookDirection( *camera, dir );
+			camera->turnTimer = processCountdownTimer( camera->turnTimer, dt * 0.05f );
+			if( !frameBoundary ) {
+				debugPrint->println( "camera prev look: {}", camera->prevLook );
+				debugPrint->println( "camera next look: {}", camera->nextLook );
+				debugPrint->println( "camera dir: {}", dir );
+				debugPrint->println( "camera turn timer: {}", camera->turnTimer.value );
+			}
+		}
+	} else {
+		*camera = cameraLookDirection( *camera, {0, 0, 1} );
+	}
+}
+
 static void doGame( AppData* app, GameInputs* inputs, bool focus, float dt, bool frameBoundary,
                     bool enableRender = true )
 {
@@ -2435,32 +2666,34 @@ static void doGame( AppData* app, GameInputs* inputs, bool focus, float dt, bool
 		auto heroTextureMap        = makeHeroVoxelGridTextureMap( app->gameState.heroTexture );
 		app->gameState.heroMesh    = loadVoxelMeshFromFile( &app->platform, &app->stackAllocator,
 		                                                 &heroTextureMap, "Data/hero.raw" );
-		auto maxEntities = 10;
+		auto maxEntities       = 10;
 		game->entityHandles    = makeHandleManager();
 		game->collidableSystem = makeCollidableSystem( allocator, maxEntities );
 		game->controlSystem    = makeControlSystem( allocator, maxEntities );
 
-		auto playerHandle      = addEntity( &game->entityHandles );
-		game->player           = addCollidableComponent( &game->collidableSystem, playerHandle );
+		auto playerHandle = addEntity( &game->entityHandles );
+		game->player      = addCollidableComponent( &game->collidableSystem, playerHandle );
 		game->player->aab = {-6, 0, 6, 26};
 		addControlComponent( &game->controlSystem, playerHandle );
 
-		auto enemyHandle       = addEntity( &game->entityHandles );
-		auto enemy = addCollidableComponent( &game->collidableSystem, enemyHandle );
-		enemy->aab = {-8, 0, 8, 28};
+		auto enemyHandle = addEntity( &game->entityHandles );
+		auto enemy       = addCollidableComponent( &game->collidableSystem, enemyHandle );
+		enemy->aab       = {-8, 0, 8, 28};
 
 		// auto followWidth         = app->width * 0.25f;
 		// auto followHeight        = app->height * 0.25f;
-		game->camera             = makeCamera( {0, -50, -200}, {0, 0, 1}, {0, 1, 0} );
+		game->camera             = makeGameCamera( {0, -50, -200}, {0, 0, 1}, {0, 1, 0} );
 		game->cameraFollowRegion = {-25, -50, 25, 50};
-		game->initialized        = true;
+		game->useGameCamera      = true;
+		game->lighting           = false;
+
+		game->initialized = true;
 	}
 
 	if( !focus ) {
 		return;
 	}
 	auto matrixStack     = renderer->matrixStack;
-	inputs->mouse.locked = app->voxelState.mouseLocked;
 
 	processCamera( inputs, settings, &app->voxelState.camera,
 	               isKeyDown( inputs, KC_Shift ) ? dt : ( dt * 0.25f ) );
@@ -2474,33 +2707,23 @@ static void doGame( AppData* app, GameInputs* inputs, bool focus, float dt, bool
 		}
 	}
 
-	auto player = game->player;
-
-	// inline camera code
-	vec3 cameraTranslation = {};
-	{
-		auto playerAabb     = translate( player->aab, player->position );
-		auto follow = game->cameraFollowRegion;
-		if( playerAabb.right > follow.right ) {
-			cameraTranslation.x = playerAabb.right - follow.right;
-		} else if( playerAabb.left < follow.left ) {
-			cameraTranslation.x = playerAabb.left - follow.left;
-		}
-		if( playerAabb.bottom > follow.bottom ) {
-			cameraTranslation.y = playerAabb.bottom - follow.bottom;
-		} else if( playerAabb.top < follow.top ) {
-			cameraTranslation.y = playerAabb.top - follow.top;
-		}
-		game->camera.position.x += cameraTranslation.x * VoxelCellSize.x;
-		game->camera.position.y -= cameraTranslation.y * VoxelCellSize.y;
-		game->cameraFollowRegion = translate( game->cameraFollowRegion, cameraTranslation.xy );
+	// mouse lock
+	if( isKeyPressed( inputs, KC_Key_L ) ) {
+		app->mouseLocked = !app->mouseLocked;
+	}
+	if( app->focus == AppFocus::Game ) {
+		inputs->mouse.locked = app->mouseLocked;
 	}
 
+	auto player = game->player;
+
+	processGameCamera( app, dt, frameBoundary );
 	processControlSystem( &game->controlSystem, &game->collidableSystem, inputs, dt,
 	                      frameBoundary );
 	doCollisionDetection( app, &app->gameState.collidableSystem, inputs, dt, frameBoundary );
 
 	if( enableRender ) {
+		setRenderState( renderer, RenderStateType::Lighting, game->lighting );
 		setProjection( renderer, ProjectionType::Perspective );
 		auto cameraTranslation = matrixTranslation( 0, -50, 0 );
 		Camera* camera         = &app->voxelState.camera;
@@ -2553,29 +2776,36 @@ static void doGame( AppData* app, GameInputs* inputs, bool focus, float dt, bool
 			result.bottom = -rect.bottom;
 			return result;
 		};
-#if 0
-		// render camera follow region
-		setTexture( renderer, 0, null );
-		MESH_STREAM_BLOCK( stream, renderer ) {
-			stream->color = Color::Blue;
-			stream->lineWidth = 2;
-			pushQuadOutline( stream, gameToScreen( app->gameState.cameraFollowRegion ) );
+#if 1
+		if( game->debugCamera ) {
+			// render camera follow region
+			setTexture( renderer, 0, null );
+			MESH_STREAM_BLOCK( stream, renderer ) {
+				stream->color = Color::Blue;
+				stream->lineWidth = 2;
+				pushQuadOutline( stream, gameToScreen( app->gameState.cameraFollowRegion ) );
+			}
 		}
 #endif
-		// setRenderState( renderer, RenderStateType::DepthTest, true );
-		// render collision box
-		/*setRenderState( renderer, RenderStateType::DepthTest, false );
-		setTexture( renderer, 0, null );
-		MESH_STREAM_BLOCK( stream, renderer ) {
-		    stream->color   = setAlpha( Color::Blue, 0.5f );
-		    auto position   = player->position;
-		    position.y      = -position.y;
-		    aabb playerAabb = {position.x + player->aab.left,  position.y + -player->aab.top,    -4,
-		                       position.x + player->aab.right, position.y + -player->aab.bottom, 4};
-		    pushAabb( stream, playerAabb * EDITOR_CELL_WIDTH );
+		if( game->debugCollisionBoxes ) {
+			// setRenderState( renderer, RenderStateType::DepthTest, true );
+			// render collision box
+			setRenderState( renderer, RenderStateType::DepthTest, false );
+			setTexture( renderer, 0, null );
+			MESH_STREAM_BLOCK( stream, renderer ) {
+				stream->color   = setAlpha( Color::Blue, 0.5f );
+				auto position   = player->position;
+				position.y      = -position.y;
+				aabb playerAabb = {
+				    position.x + player->aab.left,  position.y + -player->aab.top,    -4,
+				    position.x + player->aab.right, position.y + -player->aab.bottom, 4};
+				pushAabb( stream, playerAabb * EDITOR_CELL_WIDTH );
+			}
+			setRenderState( renderer, RenderStateType::DepthTest, true );
 		}
-		setRenderState( renderer, RenderStateType::DepthTest, true );*/
 	}
+
+	showGameDebugGui( app, inputs, focus, dt, frameBoundary );
 }
 
 template < class T >
@@ -2606,7 +2836,9 @@ void processIngameLogs( float dt )
 
 const float FrameTimeTarget = 1000.0f / 60.0f;
 
-UPDATE_AND_RENDER( updateAndRender, void* memory, GameInputs* inputs, float dt )
+GAME_STORAGE struct RenderCommands* updateAndRender( void* memory, struct GameInputs* inputs,
+                                                     float dt );
+UPDATE_AND_RENDER( updateAndRender )
 {
 	auto app       = (AppData*)memory;
 	auto renderer  = &app->renderer;
@@ -2627,6 +2859,7 @@ UPDATE_AND_RENDER( updateAndRender, void* memory, GameInputs* inputs, float dt )
 	}
 
 	// beginning of the frame
+	debugPrint->clear();
 	clear( renderer );
 	renderer->ambientStrength = 0.1f;
 	renderer->lightColor      = Color::White;
@@ -2641,12 +2874,11 @@ UPDATE_AND_RENDER( updateAndRender, void* memory, GameInputs* inputs, float dt )
 		renderer->wireframe = !renderer->wireframe;
 	}
 
-	if( isKeyPressed( inputs, KC_Key_T ) ) {
-		if( app->focus == AppFocus::Voxel ) {
-			app->focus = AppFocus::Game;
-		} else {
-			app->focus = AppFocus::Voxel;
-		}
+	if( isKeyPressed( inputs, KC_Key_1 ) ) {
+		app->focus = AppFocus::Game;
+	}
+	if( isKeyPressed( inputs, KC_Key_2 ) ) {
+		app->focus = AppFocus::Voxel;
 	}
 	if( isKeyPressed( inputs, KC_Key_R ) ) {
 		renderer->lightPosition = app->voxelState.camera.position;
@@ -2716,24 +2948,6 @@ UPDATE_AND_RENDER( updateAndRender, void* memory, GameInputs* inputs, float dt )
 		        << "\nWallJumpDuration: " << app->gameState.player->walljumpDuration.value;
 
 		renderText( renderer, font, asStringView( builder ), {300, 0, 0, 0} );
-	}
-
-	RENDER_COMMANDS_STATE_BLOCK( renderer ) {
-		renderer->color = Color::Black;
-		char buffer[1000];
-		string_builder builder = string_builder( buffer, countof( buffer ) );
-		auto camera            = &app->voxelState.camera;
-		builder << "Camera:\n"
-		        << "Position:" << camera->position.x << ", " << camera->position.y << ", "
-		        << camera->position.z << "\nLook:" << camera->look.x << ", " << camera->look.y
-		        << ", " << camera->look.z << "\nUp:" << camera->up.x << ", " << camera->up.y << ", "
-		        << camera->up.z;
-		auto player = app->gameState.player;
-		builder << "\nCollidableComponent: " << getSpatialStateString( player->spatialState )
-				<< "\nCollidableComponent Time: " << player->spatialStateTimer << "\n";
-		builder.println( "Player pos: {}, {}", player->position.x, player->position.y );
-		builder.println( "Camera follow: {:.2}", app->gameState.cameraFollowRegion );
-		renderText( renderer, font, asStringView( builder ), {0, 0, 0, 0} );
 	}
 #endif
 

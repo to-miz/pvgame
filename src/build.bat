@@ -39,7 +39,7 @@ set "link_switches="
 goto :building
 
 :is_release
-set "defines=%defines%"
+set "defines=%defines% /DNDEBUG"
 set "cl_switches=/MD /GS- /Gy /fp:fast /Ox /Oy- /GL /Oi /O2"
 set "link_switches="
 goto :building

@@ -333,7 +333,7 @@ static bool win32BindOpenGlFunctions()
 
 	auto pixelFormat = ChoosePixelFormat( hdc, &pfd );
 	if( !SetPixelFormat( hdc, pixelFormat, &pfd ) ) {
-		// TODO: logging
+		LOG( ERROR, "Failed to set dummy pixel format" );
 		return false;
 	}
 
@@ -434,7 +434,7 @@ struct OpenGlContext {
 
 	OpenGlIngameShader shader;
 	OpenGlNoLightingShader noLightingShader;
-	GLuint plainWhiteTexture;  // TODO: move this to the texture
+	GLuint plainWhiteTexture;  // TODO: move this to the atlas texture
 
 	GLuint currentTextures[2];
 	ProjectionType currentProjectionType;
@@ -553,8 +553,8 @@ static void win32UnmapBuffers( OpenGlVertexBuffer* vb )
 {
 	assert( vb->mappedBuffers );
 	glBindVertexArray( vb->vertexArrayObjectId );
-	auto result0 = glUnmapBuffer( GL_ARRAY_BUFFER );
-	auto result1 = glUnmapBuffer( GL_ELEMENT_ARRAY_BUFFER );
+	DEBUG_WRAP( auto result0 = ) glUnmapBuffer( GL_ARRAY_BUFFER );
+	DEBUG_WRAP( auto result1 = ) glUnmapBuffer( GL_ELEMENT_ARRAY_BUFFER );
 	assert( result0 != GL_FALSE && result1 != GL_FALSE );
 	vb->mappedBuffers = false;
 	vb->vertices = nullptr;
@@ -686,9 +686,9 @@ static OpenGlContext win32CreateOpenGlContext( HDC hdc )
 		return {};
 	}
 
-	PIXELFORMATDESCRIPTOR dummy;
-	if( !SetPixelFormat( hdc, pixelFormat, &dummy ) ) {
-		// TODO: logging
+	PIXELFORMATDESCRIPTOR unusedDesc;
+	if( !SetPixelFormat( hdc, pixelFormat, &unusedDesc ) ) {
+		LOG( ERROR, "Failed to set pixel format" );
 		return {};
 	}
 
@@ -909,109 +909,6 @@ static bool win32InitShaders( OpenGlContext* context )
 {
 	return win32InitIngameShaders( context ) && win32InitGuiShaders( context );
 }
-
-// TODO: remove, these are debug only
-GLuint vao;
-GLuint indexBuffer;
-
-/*static void win32SetupBuffers( OpenGlContext* context )
-{
-    GLuint buffer;
-
-    float scale         = 100.0f;
-    Vertex vertexData[] = {
-        // front-face
-        {scale * 0, scale * 0, scale * 0, 0xFFFF0000},  // 0
-        {scale * 1, scale * 0, scale * 0, 0xFFFF0000},  // 1
-        {scale * 1, scale * 1, scale * 0, 0xFFFF0000},  // 2
-        {scale * 0, scale * 1, scale * 0, 0xFFFF0000},  // 3
-
-        // top-face
-        {scale * 0, scale * 0, scale * 0, 0xFFFFFFFF},  // 4
-        {scale * 1, scale * 0, scale * 0, 0xFFFFFFFF},  // 5
-        {scale * 0, scale * 0, scale * 1, 0xFFFFFFFF},  // 6
-        {scale * 1, scale * 0, scale * 1, 0xFFFFFFFF},  // 7
-
-        // bottom-face
-        {scale * 1, scale * 1, scale * 0, 0xFFFFFFFF},  // 8
-        {scale * 0, scale * 1, scale * 0, 0xFFFFFFFF},  // 9
-        {scale * 1, scale * 1, scale * 1, 0xFFFFFFFF},  // 10
-        {scale * 0, scale * 1, scale * 1, 0xFFFFFFFF},  // 11
-
-        // right-face
-        {scale * 1, scale * 0, scale * 0, 0xFF00FF00},  // 12
-        {scale * 1, scale * 1, scale * 0, 0xFF00FF00},  // 13
-        {scale * 1, scale * 0, scale * 1, 0xFF00FF00},  // 14
-        {scale * 1, scale * 1, scale * 1, 0xFF00FF00},  // 15
-
-        // left-face
-        {scale * 0, scale * 0, scale * 0, 0xFF0000FF},  // 16
-        {scale * 0, scale * 1, scale * 0, 0xFF0000FF},  // 17
-        {scale * 0, scale * 0, scale * 1, 0xFF0000FF},  // 18
-        {scale * 0, scale * 1, scale * 1, 0xFF0000FF},  // 19
-
-        // back-face
-        {scale * 0, scale * 0, scale * 1, 0xFFFF00FF},  // 20
-        {scale * 1, scale * 0, scale * 1, 0xFFFF00FF},  // 21
-        {scale * 1, scale * 1, scale * 1, 0xFFFF00FF},  // 22
-        {scale * 0, scale * 1, scale * 1, 0xFFFF00FF},  // 23
-    };
-    uint16 indices[] = {
-        // front-face
-        0, 1, 2,
-        0, 2, 3,
-        // top-face
-        4, 5, 6,
-        5, 6, 7,
-        // bottom-face
-        8, 9, 10,
-        9, 10, 11,
-        // right-face
-        12, 13, 14,
-        13, 14, 15,
-        // left-face
-        16, 17, 18,
-        17, 18, 19,
-        // back-face
-        20, 21, 22,
-        20, 22, 23
-    };
-
-    glGenVertexArrays( 1, &vao );
-    glBindVertexArray( vao );
-    glGenBuffers( 1, &buffer );
-    glBindBuffer( GL_ARRAY_BUFFER, buffer );
-    glBufferData( GL_ARRAY_BUFFER, sizeof( vertexData ), vertexData, GL_STATIC_DRAW );
-    glEnableVertexAttribArray( AL_position );
-    glVertexAttribPointer( AL_position, 3, GL_FLOAT, GL_FALSE, sizeof( Vertex ), 0 );
-    glEnableVertexAttribArray( AL_color );
-    glVertexAttribPointer( AL_color, 4, GL_UNSIGNED_BYTE, GL_TRUE, sizeof( Vertex ),
-                           (void*)offsetof( Vertex, color ) );
-    glEnableVertexAttribArray( AL_texCoords0 );
-    glVertexAttribPointer( AL_texCoords0, 2, GL_FLOAT, GL_FALSE, sizeof( Vertex ),
-                           (void*)offsetof( Vertex, texCoords ) );
-
-    glGenBuffers( 1, &indexBuffer );
-    glBindBuffer( GL_ELEMENT_ARRAY_BUFFER, indexBuffer );
-    glBufferData( GL_ELEMENT_ARRAY_BUFFER, sizeof( indices ), indices, GL_STATIC_DRAW );
-
-    assert( offsetof( Vertex, color ) == ( sizeof( float ) * 3 ) );
-    assert( glGetError() == GL_NO_ERROR );
-}*/
-
-/*static void win32RenderScene( OpenGlContext* context, mat4* view )
-{
-    glClearDepth( -1000 );
-    glClear( GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT );
-    glUseProgram( context->shader.program );
-
-    auto worldViewProj = *view * context->projection;
-    glUniformMatrix4fv( context->shader.worldViewProj, 1, GL_FALSE, worldViewProj.m );
-
-    glBindVertexArray( vao );
-    glBindBuffer( GL_ELEMENT_ARRAY_BUFFER, indexBuffer );
-    glDrawElements( GL_TRIANGLES, 36, GL_UNSIGNED_SHORT, nullptr );
-}*/
 
 void openGlClear()
 {

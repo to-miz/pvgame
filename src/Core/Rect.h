@@ -353,32 +353,32 @@ template< class T > trect< T > RectMirroredDiagonal( trectarg< T > a )
 }
 template< class T, class U > trect< T > RectSetLeft( trectarg< T > a, U left )
 {
-	static_assert( std::is_convertible< T, U >::value, "Values not implicitly convertible" );
+	static_assert( std::is_convertible< U, T >::value, "Values not implicitly convertible" );
 	return {(T)left, a.top, a.right, a.bottom};
 }
 template< class T, class U > trect< T > RectSetTop( trectarg< T > a, U top )
 {
-	static_assert( std::is_convertible< T, U >::value, "Values not implicitly convertible" );
+	static_assert( std::is_convertible< U, T >::value, "Values not implicitly convertible" );
 	return {a.left, (T)top, a.right, a.bottom};
 }
 template< class T, class U > trect< T > RectSetRight( trectarg< T > a, U right )
 {
-	static_assert( std::is_convertible< T, U >::value, "Values not implicitly convertible" );
+	static_assert( std::is_convertible< U, T >::value, "Values not implicitly convertible" );
 	return {a.left, a.top, (T)right, a.bottom};
 }
 template< class T, class U > trect< T > RectSetBottom( trectarg< T > a, U bottom )
 {
-	static_assert( std::is_convertible< T, U >::value, "Values not implicitly convertible" );
+	static_assert( std::is_convertible< U, T >::value, "Values not implicitly convertible" );
 	return {a.left, a.top, a.right, (T)bottom};
 }
 template< class T, class U > trect< T > RectSetWidth( trectarg< T > a, U width )
 {
-	static_assert( std::is_convertible< T, U >::value, "Values not implicitly convertible" );
+	static_assert( std::is_convertible< U, T >::value, "Values not implicitly convertible" );
 	return {a.left, a.top, a.left + (T)width, a.bottom};
 }
 template< class T, class U > trect< T > RectSetHeight( trectarg< T > a, U height )
 {
-	static_assert( std::is_convertible< T, U >::value, "Values not implicitly convertible" );
+	static_assert( std::is_convertible< U, T >::value, "Values not implicitly convertible" );
 	return {a.left, a.top, a.right, a.top + (T)height};
 }
 template< class T > T width( trectarg< T > r )

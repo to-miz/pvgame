@@ -116,6 +116,10 @@ typedef tvec3arg< intmax > vec3imarg;
 
 template< class T > tvec3< T > swizzle( tvec3arg< T > v, intmax x, intmax y, intmax z );
 
+template< class A, class B, class C, class D > tvec3< D > Vec3( A a, B b, C c );
+template< class T, class A > tvec3< T > Vec3( tvec2arg< T > v, A a );
+template< class T, class A > tvec3< T > Vec3( A a, tvec2arg< T > v );
+
 vec3 cross( vec3arg a, vec3arg b );
 float dot( vec3arg a, vec3arg b );
 float length( vec3arg v );
@@ -204,6 +208,22 @@ tvec4< T > multiplyComponents( tvec4arg< T > a, tvec4arg< T > b )
 }
 
 // template implementations
+
+template < class A, class B, class C, class D = typename std::common_type< A, B, C >::type >
+tvec3< D > Vec3( A a, B b, C c )
+{
+	return {(D)a, (D)b, (D)c};
+}
+template< class T, class A > tvec3< T > Vec3( tvec2arg< T > v, A a )
+{
+	static_assert( std::is_convertible< A, T >::value, "Values not implicitly convertible" );
+	return {v.x, v.y, (T)a};
+}
+template < class T, class A > tvec3< T > Vec3( A a, tvec2arg< T > v )
+{
+	static_assert( std::is_convertible< A, T >::value, "Values not implicitly convertible" );
+	return {(T)a, v.x, v.y};
+}
 
 template< class T > tvec2< T > swizzle( tvec2arg< T > v, intmax x, intmax y )
 {

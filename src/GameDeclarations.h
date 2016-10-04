@@ -57,18 +57,18 @@ struct PlatformInfo {
 };
 
 #ifdef GAME_DLL
-#define GAME_STORAGE extern "C"
+	#define GAME_STORAGE extern "C"
 #else
-#define GAME_STORAGE
+	#define GAME_STORAGE
 #endif
 
-#define INITIALIZE_APP( name, ... )                                                               \
+#define INITIALIZE_APP( name )                                                                    \
 	GAME_STORAGE PlatformRemapInfo name(                                                          \
 	    void* memory, size_t size, PlatformServices platformServices, PlatformInfo* platformInfo, \
 	    float viewportWidth, float viewportHeight )
-#define UPDATE_AND_RENDER( name, ... ) \
+#define UPDATE_AND_RENDER( name ) \
 	GAME_STORAGE struct RenderCommands* name( void* memory, struct GameInputs* inputs, float dt )
-#define RELOAD_APP( name, ... ) GAME_STORAGE PlatformRemapInfo name( void* memory, size_t size )
+#define RELOAD_APP( name ) GAME_STORAGE PlatformRemapInfo name( void* memory, size_t size )
 
 #ifdef GAME_DLL
 INITIALIZE_APP( initializeApp );
