@@ -32,3 +32,38 @@ UArray< T > makeUArrayImpl( StackAllocator* allocator, int32 size )
 
 #define makeArray( allocator, type, size ) makeArrayImpl< type >( ( allocator ), ( size ) )
 #define makeUArray( allocator, type, size ) makeUArrayImpl< type >( ( allocator ), ( size ) )
+
+// consume all available memory from stack allocator
+#define beginVector( allocator, type ) beginVector_< type >( ( allocator ) )
+template < class T >
+UninitializedArray< T > beginVector_( StackAllocator* allocator )
+{
+	assert( isValid( allocator ) );
+	return makeUArrayImpl< T >( allocator,
+	                            safe_truncate< int32 >( remaining( allocator, alignof( T ) ) ) );
+}
+
+// fit to size vector and give back unused memory to allocator, only works if v is the most recent
+// allocation
+template < class T >
+void endVector( StackAllocator* allocator, UninitializedArray< T >* v )
+{
+	assert( isValid( allocator ) );
+	assert( v );
+	assert( isBack( allocator, v->data(), v->capacity() * sizeof( T ) ) );
+	v->ptr = (T*)reallocate( allocator, v->data(), v->size() * sizeof( T ),
+	                         v->capacity() * sizeof( T ), alignof( T ) );
+	v->cap = v->sz;
+}
+
+// small buffer based uarray
+template < class T, int32 N >
+struct SmallUninitializedArray : UninitializedArray< T > {
+	T buffer[N];
+	SmallUninitializedArray()
+	{
+		ptr = buffer;
+		sz  = 0;
+		cap = N;
+	}
+};

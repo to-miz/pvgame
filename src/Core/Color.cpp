@@ -119,6 +119,7 @@ Color multiply( Color a, Color b )
 	auto bf = getColorF( b );
 	return Color::argb( multiplyComponents( af, bf ) );
 }
+Color multiply( Color a, uint32 b ) { return multiply( a, Color{b} ); }
 
 const Color Color::White  = {0xFFFFFFFF};
 const Color Color::Black  = {0xFF000000};

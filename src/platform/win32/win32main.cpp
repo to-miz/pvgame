@@ -626,12 +626,16 @@ int CALLBACK WinMain( HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdL
 		info.recordingInputs = recordingInputs;
 		info.replayingInputs = replayingInputs;
 
+		Color clearColor = Color::White;
 		if( !replayStepped || replayStep ) {
 			renderCommands = updateAndRender( memory, &inputs, clampedElapsedTime );
 			replayStep = false;
+			if( renderCommands ) {
+				clearColor = renderCommands->clearColor;
+			}
 		}
 
-		openGlClear();
+		openGlClear( clearColor );
 		if( renderCommands ) {
 			openGlPrepareRender( &openGlContext, renderCommands->wireframe );
 			win32ProcessRenderCommands( &openGlContext, renderCommands );

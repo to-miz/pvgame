@@ -622,6 +622,7 @@ struct RenderCommands {
 	mat4 view;
 	float ambientStrength;
 	Color lightColor;
+	Color clearColor;
 	vec3 lightPosition;
 
 	bool locked;
@@ -638,6 +639,7 @@ RenderCommands makeRenderCommands( StackAllocator* allocator, size_t capacity, M
 	result.view            = matrixIdentity();
 	result.renderOptions   = defaultMeshRenderOptions();
 	result.ambientStrength = 1;
+	result.clearColor      = Color::White;
 	return result;
 }
 
@@ -650,7 +652,8 @@ void clear( RenderCommands* renderCommands )
 {
 	assert( isValid( renderCommands ) );
 	clear( &renderCommands->allocator );
-	renderCommands->locked = false;
+	renderCommands->locked     = false;
+	renderCommands->clearColor = Color::White;
 }
 
 struct RenderCommandsStream {

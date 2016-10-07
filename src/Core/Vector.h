@@ -69,6 +69,13 @@ tvec2< T > multiplyComponents( tvec2arg< T > a, tvec2arg< T > b )
 	return {a.x * b.x, a.y * b.y};
 }
 
+template< class A, class B, class C > tvec2< C > Vec2( A a, B b );
+template < class T >
+tvec2< T > clamp( tvec2arg< T > v, tvec2arg< T > min, tvec2arg< T > max )
+{
+	return {clamp( v.x, min.x, max.x ), clamp( v.y, min.y, max.y )};
+}
+
 // vec3
 template < class T >
 union tvec3 {
@@ -245,6 +252,12 @@ template< class T > tvec4< T > swizzle( tvec4arg< T > v, intmax x, intmax y, int
 	assert( z >= 0 && z < 4 );
 	assert( w >= 0 && w < 4 );
 	return {v.elements[x], v.elements[y], v.elements[z], v.elements[w]};
+}
+
+template < class A, class B, class C = typename std::common_type< A, B >::type >
+tvec2< C > Vec2( A a, B b )
+{
+	return {(C)a, (C)b};
 }
 
 // operators

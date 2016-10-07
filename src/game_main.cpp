@@ -63,10 +63,12 @@
 #include <Graphics/Font.h>
 #include "TextureMap.cpp"
 
-#include <VirtualKeys.h>
-#include <Inputs.cpp>
-#include <GameDeclarations.h>
-#include <Imgui.cpp>
+#include "VirtualKeys.h"
+#include "Inputs.cpp"
+#include "GameDeclarations.h"
+#include "Imgui.cpp"
+
+#include "Graphics/ImageProcessing.cpp"
 
 namespace GameConstants
 {
@@ -130,7 +132,18 @@ global ThreadContext* appContext    = nullptr;
 global MeshStream* debug_MeshStream = nullptr;
 global bool debug_FillMeshStream    = true;
 
-global string_builder* debugPrint = nullptr;
+global string_builder* debugPrinter = nullptr;
+#ifdef GAME_DEBUG
+	#define debugPrint( ... ) debugPrinter->print( __VA_ARGS__ );
+	#define debugPrintln( ... ) debugPrinter->println( __VA_ARGS__ );
+	#define debugPrintClear() debugPrinter->clear()
+	#define debugPrintGetString() asStringView( *debugPrinter )
+#else
+	#define debugPrint( ... )
+	#define debugPrintln( ... )
+	#define debugPrintClear()
+	#define debugPrintGetString() StringView{}
+#endif
 
 ThreadContext* getThreadContext()
 {
@@ -704,7 +717,9 @@ struct GameState {
 	bool debugCollisionBoxes;
 };
 
-enum class AppFocus { Game, Voxel };
+enum class AppFocus { Game, Voxel, TexturePack };
+
+#include "Editor/TexturePack/TexturePack.h"
 
 struct AppData {
 	PlatformServices platform;
@@ -715,7 +730,7 @@ struct AppData {
 	IngameLog log;
 	TextureMap textureMap;
 	ImmediateModeGui guiState;
-	string_builder debugPrint;
+	string_builder debugPrinter;
 
 	float frameTimeAcc;
 
@@ -735,11 +750,15 @@ struct AppData {
 	AppFocus focus;
 	VoxelState voxelState;
 	GameState gameState;
+	TexturePackState texturePackState;
+
 	TextureId texture;
 
 	bool mouseLocked;
 	bool displayDebug;
 };
+
+#include "Editor/TexturePack/TexturePack.cpp"
 
 void fillVoxelGridFromImage( VoxelGrid* grid, ImageData image )
 {
@@ -1108,7 +1127,7 @@ INITIALIZE_APP( initializeApp )
 
 	app->platform     = platformServices;
 	app->platformInfo = platformInfo;
-	app->guiState = defaultImmediateModeGui();
+	app->guiState     = defaultImmediateModeGui();
 
 	app->stackAllocator         = makeStackAllocator( p, size );
 	auto allocator              = &app->stackAllocator;
@@ -1120,9 +1139,9 @@ INITIALIZE_APP( initializeApp )
 	app->height   = viewportHeight;
 
 	app->debugMeshStream = makeMeshStream( allocator, 4000, 12000, nullptr );
-	app->textureMap = {makeUArray( allocator, TextureMapEntry, 100 )};
-	app->debugPrint = string_builder( allocateArray( allocator, char, 2048 ), 2048 );
-	auto result = reloadApp( memory, size );
+	app->textureMap      = {makeUArray( allocator, TextureMapEntry, 100 )};
+	app->debugPrinter    = string_builder( allocateArray( allocator, char, 2048 ), 2048 );
+	auto result          = reloadApp( memory, size );
 
 	// custom data
 
@@ -1147,7 +1166,7 @@ RELOAD_APP( reloadApp )
 	debug_MeshStream = &app->debugMeshStream;
 	GlobalIngameLog  = &app->log;
 	GlobalTextureMap = &app->textureMap;
-	debugPrint     = &app->debugPrint;
+	debugPrinter     = &app->debugPrinter;
 
 	result.success    = true;
 	result.logStorage = GlobalIngameLog;
@@ -1797,16 +1816,17 @@ static void doVoxelGui( AppData* app, GameInputs* inputs, bool focus, float dt )
 	gui->fadeProgress = clamp( gui->fadeProgress + fadeSpeed * ( ( focus ) ? ( 1 ) : ( -1 ) ) );
 
 	if( !gui->initialized ) {
-		gui->editMode          = imguiGenerateContainer();
-		gui->rendering         = imguiGenerateContainer( {ImGui->style.containerWidth} );
-		gui->textureIndex      = imguiGenerateContainer( {ImGui->style.containerWidth, 200} );
+		gui->editMode  = imguiGenerateContainer( &app->guiState );
+		gui->rendering = imguiGenerateContainer( &app->guiState, {ImGui->style.containerWidth} );
+		gui->textureIndex =
+		    imguiGenerateContainer( &app->guiState, {ImGui->style.containerWidth, 200} );
 		gui->noLightingChecked = true;
 		gui->initialized       = true;
 	}
 	if( isKeyPressed( inputs, KC_Key_K ) ) {
-		imguiGetContainer( gui->editMode )->hidden     = false;
-		imguiGetContainer( gui->rendering )->hidden    = false;
-		imguiGetContainer( gui->textureIndex )->hidden = false;
+		imguiGetContainer( gui->editMode )->setHidden( false );
+		imguiGetContainer( gui->rendering )->setHidden( false );
+		imguiGetContainer( gui->textureIndex )->setHidden( false );
 	}
 
 	setProjection( renderer, ProjectionType::Orthogonal );
@@ -2155,7 +2175,6 @@ struct CollisionInfo {
 struct PushPair {
 	float push;
 	vec2 normal;
-
 };
 static bool operator<( const PushPair& a, const PushPair& b ) { return a.push < b.push; }
 bool testAabVsAab( vec2arg aPosition, rectfarg a, vec2arg delta, rectfarg b, float maxT,
@@ -2531,8 +2550,7 @@ static StringView detailedDebugOutput( AppData* app, char* buffer, int32 size )
 	return asStringView( builder );
 }
 
-static void showGameDebugGui( AppData* app, GameInputs* inputs, bool focus, float dt,
-                              bool frameBoundary )
+static void showGameDebugGui( AppData* app, GameInputs* inputs, bool focus, float dt )
 {
 	auto renderer  = &app->renderer;
 	auto font      = &app->font;
@@ -2544,37 +2562,64 @@ static void showGameDebugGui( AppData* app, GameInputs* inputs, bool focus, floa
 		return;
 	}
 	if( !gui->initialized ) {
-		gui->mainDialog        = imguiGenerateContainer();
-		gui->debugOutputDialog = imguiGenerateContainer( {200, 0, 600, 100} );
+		gui->debugGuiState = defaultImmediateModeGui();
+		imguiLoadDefaultStyle( &gui->debugGuiState, &app->platform );
+		gui->mainDialog        = imguiGenerateContainer( &gui->debugGuiState );
+		gui->debugOutputDialog = imguiGenerateContainer( &gui->debugGuiState, {200, 0, 600, 100} );
 		gui->initialized       = true;
 	}
 	setProjection( renderer, ProjectionType::Orthogonal );
-	if( !frameBoundary ) {
-		if( isKeyPressed( inputs, KC_Tab ) ) {
-			auto mainDialog = imguiGetContainer( gui->mainDialog );
-			if( mainDialog->hidden ) {
-				gui->show = true;
-				mainDialog->hidden = false;
-			} else {
-				gui->show = !gui->show;
-			}
+	if( isKeyPressed( inputs, KC_Tab ) ) {
+		auto mainDialog = imguiGetContainer( gui->mainDialog );
+		if( mainDialog->isHidden() ) {
+			gui->show = true;
+			mainDialog->setHidden( false );
+		} else {
+			gui->show = !gui->show;
 		}
 	}
 	gui->fadeProgress = clamp( gui->fadeProgress + fadeSpeed * ( ( gui->show ) ? ( 1 ) : ( -1 ) ) );
-	if( !gui->show || gui->fadeProgress <= 0 || imguiGetContainer( gui->mainDialog )->hidden ) {
+	if( !gui->show || gui->fadeProgress <= 0 || imguiGetContainer( gui->mainDialog )->isHidden() ) {
 		renderer->color = Color::Black;
 		renderText( renderer, font, "Press [TAB] to open debug dialog", {} );
 		return;
 	}
 	renderer->color = setAlpha( 0xFFFFFFFF, gui->fadeProgress );
 	rectf guiBounds = {0, 0, app->width, app->height};
-	imguiBind( &app->guiState, renderer, font, inputs, app->stackAllocator.ptr, guiBounds );
+	imguiBind( &gui->debugGuiState, renderer, font, inputs, app->stackAllocator.ptr, guiBounds );
 	if( imguiDialog( "Debug Window", gui->mainDialog ) ) {
 		if( imguiButton( "Reset Player Position" ) ) {
 			game->player->position = {};
 		}
 		imguiCheckbox( "Lighting", &game->lighting );
 		imguiCheckbox( "Camera turning", &app->settings.cameraTurning );
+
+		static float pos = 0;
+		auto scrollRect  = imguiRegion( 24, 100 );
+		imguiScrollbar( &pos, 90, 100, 5, 1, scrollRect, true );
+		debugPrintln( "{}", pos );
+
+		imguiSlider( "test", &pos, 90, 100 );
+
+		{
+			static vec2 pos = {};
+			auto rect       = imguiRegion( 100, 100 );
+			auto renderer   = imguiRenderer();
+			setTexture( renderer, 0, null );
+			addRenderCommandSingleQuad( renderer, rect );
+			imguiPoint( &pos, {40, 40, 500, 500}, rect );
+			debugPrintln( "{}", pos );
+		}
+
+		{
+			static rectf value = {};
+			auto rect          = imguiRegion( 100, 100 );
+			auto renderer      = imguiRenderer();
+			setTexture( renderer, 0, null );
+			addRenderCommandSingleQuad( renderer, rect );
+			imguiRect( &value, {40, 40, 500, 500}, rect );
+			debugPrintln( "{}", value );
+		}
 	}
 	if( imguiDialog( "Debug Output", gui->debugOutputDialog ) ) {
 		imguiCheckbox( "Detailed Debug Output", &app->displayDebug );
@@ -2583,7 +2628,7 @@ static void showGameDebugGui( AppData* app, GameInputs* inputs, bool focus, floa
 			imguiText( detailedDebugOutput( app, buffer, countof( buffer ) ) );
 		}
 
-		imguiText( asStringView( *debugPrint ) );
+		imguiText( debugPrintGetString() );
 	}
 	imguiUpdate( dt );
 	imguiFinalize();
@@ -2637,10 +2682,10 @@ static void processGameCamera( AppData* app, float dt, bool frameBoundary )
 			*camera           = cameraLookDirection( *camera, dir );
 			camera->turnTimer = processCountdownTimer( camera->turnTimer, dt * 0.05f );
 			if( !frameBoundary ) {
-				debugPrint->println( "camera prev look: {}", camera->prevLook );
-				debugPrint->println( "camera next look: {}", camera->nextLook );
-				debugPrint->println( "camera dir: {}", dir );
-				debugPrint->println( "camera turn timer: {}", camera->turnTimer.value );
+				debugPrintln( "camera prev look: {}", camera->prevLook );
+				debugPrintln( "camera next look: {}", camera->nextLook );
+				debugPrintln( "camera dir: {}", dir );
+				debugPrintln( "camera turn timer: {}", camera->turnTimer.value );
 			}
 		}
 	} else {
@@ -2804,8 +2849,6 @@ static void doGame( AppData* app, GameInputs* inputs, bool focus, float dt, bool
 			setRenderState( renderer, RenderStateType::DepthTest, true );
 		}
 	}
-
-	showGameDebugGui( app, inputs, focus, dt, frameBoundary );
 }
 
 template < class T >
@@ -2849,17 +2892,17 @@ UPDATE_AND_RENDER( updateAndRender )
 	app->frameTimeAcc += dt;
 
 	if( !app->resourcesLoaded ) {
-		app->texture               = app->platform.loadTexture( "Data/Images/test.png" );
-		app->font                  = app->platform.loadFont( allocator, "Arial", 11, 400, false,
+		app->texture = app->platform.loadTexture( "Data/Images/test.png" );
+		app->font    = app->platform.loadFont( allocator, "Arial", 11, 400, false,
 		                                    getDefaultFontUnicodeRanges() );
-		imguiLoadDefaultStyle( &app->platform );
+		imguiLoadDefaultStyle( &app->guiState, &app->platform );
 		app->resourcesLoaded = true;
 
 		LOG( INFORMATION, "Resources Loaded" );
 	}
 
 	// beginning of the frame
-	debugPrint->clear();
+	debugPrintClear();
 	clear( renderer );
 	renderer->ambientStrength = 0.1f;
 	renderer->lightColor      = Color::White;
@@ -2879,6 +2922,9 @@ UPDATE_AND_RENDER( updateAndRender )
 	}
 	if( isKeyPressed( inputs, KC_Key_2 ) ) {
 		app->focus = AppFocus::Voxel;
+	}
+	if( isKeyPressed( inputs, KC_Key_3 ) ) {
+		app->focus = AppFocus::TexturePack;
 	}
 	if( isKeyPressed( inputs, KC_Key_R ) ) {
 		renderer->lightPosition = app->voxelState.camera.position;
@@ -2914,6 +2960,11 @@ UPDATE_AND_RENDER( updateAndRender )
 		// recalculate entity velocities and update entity positions
 		doGame( app, inputs, app->focus == AppFocus::Game, frameRatio, true );
 	}
+	// gui code has to be outside of the frame independent movement code, so that we do not process
+	// inputs twice on frame boundaries
+	showGameDebugGui( app, inputs, app->focus == AppFocus::Game, dt );
+
+	doTexturePack( app, inputs, app->focus == AppFocus::TexturePack, dt );
 
 	addRenderCommandMesh( renderer, toMesh( debug_MeshStream ) );
 

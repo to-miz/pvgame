@@ -3,6 +3,13 @@
 #ifndef _RECT_H_INCLUDED_
 #define _RECT_H_INCLUDED_
 
+enum RectComponentValues : int32 {
+	RectComponent_Left,
+	RectComponent_Top,
+	RectComponent_Right,
+	RectComponent_Bottom,
+};
+
 template< class T >
 union trect {
 	struct {
@@ -90,8 +97,10 @@ trect< T > RectWH( tvec2< T > leftTop, U width, V height );
 template< class T > trect< T > RectWH( tvec2< T > leftTop, tvec2< T > dim );
 template< class T, class U, class V, class D >
 trect< T > RectWH( U left, V top, tvec2< T > dim );
-template< class T > trect< T > RectHalfSize( T centerX, T centerY, T halfWidth, T halfHeight );
-template< class T > trect< T > RectHalfSize( tvec2< T > center, T halfWidth, T halfHeight );
+template < class A, class B, class C, class D, class E >
+trect< E > RectHalfSize( A centerX, B centerY, C halfWidth, D halfHeight );
+template < class T, class A, class B >
+trect< T > RectHalfSize( tvec2< T > center, A halfWidth, B halfHeight );
 template< class T > trect< T > RectHalfSize( tvec2< T > center, tvec2< T > halfSize );
 template< class T > trect< T > RectHalfSize( T centerX, T centerY, tvec2< T > halfSize );
 template< class T > trect< T > RectBounding( trectarg< T > a, trectarg< T > b );
@@ -120,7 +129,7 @@ template< class T > T height( trectarg< T > r );
 template< class T > tvec2< T > center( trectarg< T > r );
 template< class T > trect< T > lerp( float t, trectarg< T > start, trectarg< T > end );
 template< class T > tvec2< T > dimensions( trectarg< T > r );
-template< class T > trect< T > translate( trectarg< T > r, T x, T y );
+template< class T, class A, class B > trect< T > translate( trectarg< T > r, A x, B y );
 template< class T > trect< T > translate( trectarg< T > r, tvec2< T > translation );
 template< class T > trect< T > grow( trectarg< T > r, T amount );
 template< class T > trect< T > shrink( trectarg< T > r, T amount );
@@ -133,6 +142,11 @@ template< class T > bool isValid( trectarg< T > r );
 template< class T > trect< T > ceil( trectarg< T > r );
 template< class T > trect< T > floor( trectarg< T > r );
 template< class T > trect< T > sweep( trectarg< T > r, tvec2< T > delta );
+template< class T > trect< T >
+swizzle( trectarg< T > r, intmax left, intmax top, intmax right, intmax bottom );
+
+template < class T >
+tvec2< T > clamp( tvec2arg< T > v, trectarg< T > r );
 
 rectf alignVerticalCenter( rectfarg bounds, float height );
 rectf alignHorizontalCenter( rectfarg bounds, float width );
@@ -244,14 +258,20 @@ trect< T > RectWH( U left, V top, tvec2< T > dim )
 	static_assert( std::is_same< D, T >::value, "Values not implicitly convertible" );
 	return {(T)left, (T)top, (T)left + dim.x, (T)top + dim.y};
 }
-template< class T > trect< T > RectHalfSize( T centerX, T centerY, T halfWidth, T halfHeight )
+template < class A, class B, class C, class D,
+           class E = typename std::common_type< A, B, C, D >::type >
+trect< E > RectHalfSize( A centerX, B centerY, C halfWidth, D halfHeight )
 {
-	return {centerX - halfWidth, centerY - halfHeight, centerX + halfWidth, centerY + halfHeight};
+	return {(E)centerX - (E)halfWidth, (E)centerY - (E)halfHeight, (E)centerX + (E)halfWidth,
+	        (E)centerY + (E)halfHeight};
 }
-template< class T > trect< T > RectHalfSize( tvec2< T > center, T halfWidth, T halfHeight )
+template < class T, class A, class B >
+trect< T > RectHalfSize( tvec2< T > center, A halfWidth, B halfHeight )
 {
-	return {center.x - halfWidth, center.y - halfHeight, center.x + halfWidth,
-			center.y + halfHeight};
+	static_assert( std::is_convertible< A, T >::value, "Values not implicitly convertible" );
+	static_assert( std::is_convertible< B, T >::value, "Values not implicitly convertible" );
+	return {center.x - (T)halfWidth, center.y - (T)halfHeight, center.x + (T)halfWidth,
+	        center.y + (T)halfHeight};
 }
 template < class T >
 trect< T > RectHalfSize( tvec2< T > center, tvec2< T > halfSize )
@@ -311,22 +331,22 @@ template< class T > trect< T > RectTranslation( tvec2< T > translation )
 template< class T > trect< T > RectMin( trectarg< T > a, trectarg< T > b )
 {
 	trect< T > result;
-	result.left = MAX( a.left, b.left );
-	result.top = MAX( a.top, b.top );
-	result.right = MIN( a.right, b.right );
-	result.bottom = MIN( a.bottom, b.bottom );
+	result.left   = clamp( a.left, b.left, b.right );
+	result.top    = clamp( a.top, b.top, b.bottom );
+	result.right  = clamp( a.right, b.left, b.right );
+	result.bottom = clamp( a.bottom, b.top, b.bottom );
 	return result;
 }
-template< class T > trect< T > RectMax( trectarg< T > a, trectarg< T > b )
+template < class T > trect< T > RectMax( trectarg< T > a, trectarg< T > b )
 {
 	trect< T > result;
-	result.left = MIN( a.left, b.left );
-	result.top = MIN( a.top, b.top );
-	result.right = MAX( a.right, b.right );
+	result.left   = MIN( a.left, b.left );
+	result.top    = MIN( a.top, b.top );
+	result.right  = MAX( a.right, b.right );
 	result.bottom = MAX( a.bottom, b.bottom );
 	return result;
 }
-template< class T > trect< T > RectMirroredHorizontal( trectarg< T > a, T originX )
+template < class T > trect< T > RectMirroredHorizontal( trectarg< T > a, T originX )
 {
 	return {2 * originX - a.right, a.top, 2 * originX - a.left, a.bottom};
 }
@@ -401,9 +421,11 @@ template< class T > tvec2< T > dimensions( trectarg< T > r )
 {
 	return {r.right - r.left, r.bottom - r.top};
 }
-template< class T > trect< T > translate( trectarg< T > r, T x, T y )
+template< class T, class A, class B > trect< T > translate( trectarg< T > r, A x, B y )
 {
-	return {r.left + x, r.top + y, r.right + x, r.bottom + y};
+	static_assert( std::is_convertible< A, T >::value, "Values not implicitly convertible" );
+	static_assert( std::is_convertible< B, T >::value, "Values not implicitly convertible" );
+	return {r.left + (T)x, r.top + (T)y, r.right + (T)x, r.bottom + (T)y};
 }
 template< class T > trect< T > translate( trectarg< T > r, tvec2< T > translation )
 {
@@ -467,6 +489,16 @@ template< class T > trect< T > sweep( trectarg< T > r, tvec2< T > delta )
 		result.bottom += delta.y;
 	}
 	return result;
+}
+template< class T > trect< T >
+swizzle( trectarg< T > r, intmax left, intmax top, intmax right, intmax bottom )
+{
+	return {r.elements[left], r.elements[top], r.elements[right], r.elements[bottom]};
+}
+template < class T >
+tvec2< T > clamp( tvec2arg< T > v, trectarg< T > r )
+{
+	return clamp( v, r.leftTop, r.rightBottom );
 }
 
 rectf alignVerticalCenter( rectfarg bounds, float height )

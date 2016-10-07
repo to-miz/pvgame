@@ -910,10 +910,11 @@ static bool win32InitShaders( OpenGlContext* context )
 	return win32InitIngameShaders( context ) && win32InitGuiShaders( context );
 }
 
-void openGlClear()
+void openGlClear( Color clearColor )
 {
+	auto c = getColorF( clearColor );
 	glClearDepth( -1000 );
-	glClearColor( 1, 1, 1, 1 );
+	glClearColor( c.r, c.g, c.b, c.a );
 	glClear( GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT );
 }
 

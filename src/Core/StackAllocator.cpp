@@ -48,6 +48,17 @@ size_t remaining( StackAllocator* allocator )
 	assert( isValid( allocator ) );
 	return allocator->capacity - allocator->size;
 }
+// return remaining size when taking alignment of next allocation into account
+size_t remaining( StackAllocator* allocator, uint32 alignment )
+{
+	assert( isValid( allocator ) );
+	auto ret       = allocator->capacity - allocator->size;
+	auto offset = getAlignmentOffset( allocator, alignment );
+	if( ret <= offset ) {
+		ret -= offset;
+	}
+	return offset;
+}
 
 void* allocate( StackAllocator* allocator, size_t size, uint32 alignment )
 {
@@ -80,6 +91,7 @@ void* reallocate( StackAllocator* allocator, void* ptr, size_t newSize, size_t o
 		return ptr;
 	} else {
 		LOG( ERROR, "reallocate with StackAllocator: ptr wasn't at back" );
+		assert( 0 && "reallocate with StackAllocator: ptr wasn't at back" );
 		auto result = allocate( allocator, newSize, alignment );
 		memcpy( result, ptr, min( oldSize, newSize ) );
 		return result;
@@ -99,6 +111,8 @@ void free( StackAllocator* allocator, void* ptr, size_t size, uint32 alignment )
 	( type* ) allocate( ( allocator ), sizeof( type ), alignof( type ) )
 #define allocateArray( allocator, type, count ) \
 	( type* ) allocate( ( allocator ), sizeof( type ) * ( count ), alignof( type ) )
+#define maxAllocateArray( allocator, type ) \
+	( type* )allocate( ( allocator ), remaining( allocator, alignof( type ) ) / sizeof( type ) );
 
 StackAllocator makeStackAllocator( StackAllocator* allocator, size_t capacity )
 {
