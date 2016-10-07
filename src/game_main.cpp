@@ -2557,20 +2557,22 @@ static void showGameDebugGui( AppData* app, GameInputs* inputs, bool focus, floa
 	auto game      = &app->gameState;
 	auto gui       = &game->debugGui;
 	auto fadeSpeed = 0.25f * dt;
+	auto imgui     = &gui->debugGuiState;
 
 	if( !focus ) {
 		return;
 	}
+	imguiBind( imgui );
 	if( !gui->initialized ) {
 		gui->debugGuiState = defaultImmediateModeGui();
-		imguiLoadDefaultStyle( &gui->debugGuiState, &app->platform );
+		imguiLoadDefaultStyle( imgui, &app->platform );
 		gui->mainDialog        = imguiGenerateContainer( &gui->debugGuiState );
 		gui->debugOutputDialog = imguiGenerateContainer( &gui->debugGuiState, {200, 0, 600, 100} );
 		gui->initialized       = true;
 	}
 	setProjection( renderer, ProjectionType::Orthogonal );
 	if( isKeyPressed( inputs, KC_Tab ) ) {
-		auto mainDialog = imguiGetContainer( gui->mainDialog );
+		auto mainDialog = imguiGetContainer( imgui, gui->mainDialog );
 		if( mainDialog->isHidden() ) {
 			gui->show = true;
 			mainDialog->setHidden( false );
@@ -2579,14 +2581,15 @@ static void showGameDebugGui( AppData* app, GameInputs* inputs, bool focus, floa
 		}
 	}
 	gui->fadeProgress = clamp( gui->fadeProgress + fadeSpeed * ( ( gui->show ) ? ( 1 ) : ( -1 ) ) );
-	if( !gui->show || gui->fadeProgress <= 0 || imguiGetContainer( gui->mainDialog )->isHidden() ) {
+	if( !gui->show || gui->fadeProgress <= 0
+	    || imguiGetContainer( imgui, gui->mainDialog )->isHidden() ) {
 		renderer->color = Color::Black;
 		renderText( renderer, font, "Press [TAB] to open debug dialog", {} );
 		return;
 	}
 	renderer->color = setAlpha( 0xFFFFFFFF, gui->fadeProgress );
 	rectf guiBounds = {0, 0, app->width, app->height};
-	imguiBind( &gui->debugGuiState, renderer, font, inputs, app->stackAllocator.ptr, guiBounds );
+	imguiBind( imgui, renderer, font, inputs, app->stackAllocator.ptr, guiBounds );
 	if( imguiDialog( "Debug Window", gui->mainDialog ) ) {
 		if( imguiButton( "Reset Player Position" ) ) {
 			game->player->position = {};
@@ -2960,11 +2963,11 @@ UPDATE_AND_RENDER( updateAndRender )
 		// recalculate entity velocities and update entity positions
 		doGame( app, inputs, app->focus == AppFocus::Game, frameRatio, true );
 	}
+	doTexturePack( app, inputs, app->focus == AppFocus::TexturePack, dt );
+
 	// gui code has to be outside of the frame independent movement code, so that we do not process
 	// inputs twice on frame boundaries
-	showGameDebugGui( app, inputs, app->focus == AppFocus::Game, dt );
-
-	doTexturePack( app, inputs, app->focus == AppFocus::TexturePack, dt );
+	showGameDebugGui( app, inputs, true, dt );
 
 	addRenderCommandMesh( renderer, toMesh( debug_MeshStream ) );
 

@@ -50,6 +50,9 @@ TextureId win32LoadTextureFromMemory( ImageData image )
 
 int32 win32DoubleNullterminatedStringLengthInclusiveNull( const char* str )
 {
+	if( !str ) {
+		return 0;
+	}
 	int32 result = 0;
 	for( ;; ) {
 		if( *str == 0 && ( *( str + 1 ) == 0 ) ) {

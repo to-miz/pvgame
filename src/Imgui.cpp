@@ -354,6 +354,7 @@ void imguiClear()
 		}
 	}
 }
+void imguiBind( ImmediateModeGui* guiState ) { ImGui = guiState; }
 void imguiBind( ImmediateModeGui* guiState, RenderCommands* renderer, Font* font,
                 GameInputs* inputs, void* base, rectfarg bounds )
 {
@@ -1408,10 +1409,11 @@ bool imguiScrollbar( float* pos, float min, float max, float pageSize, float ste
 		changed = true;
 	}
 
-	*pos             = clamp( *pos, min, max );
-	float innerWidth = ::width( r ) - w * 2;
-	float rangeWidth = max - min;
-	float paddleWidth    = ( pageSize / rangeWidth ) * innerWidth;
+	max -= pageSize;
+	*pos                 = clamp( *pos, min, max );
+	float innerWidth     = ::width( r ) - w * 2;
+	float rangeWidth     = max - min;
+	float paddleWidth    = ( pageSize / ( rangeWidth + pageSize ) ) * innerWidth;
 	float remainingWidth = innerWidth - paddleWidth;
 	float t              = ( *pos - min ) / rangeWidth;
 	float paddleOffset   = t * remainingWidth;
@@ -1568,7 +1570,7 @@ bool imguiRect( rectf* value, rectfarg valueDomain, rectfarg rect )
 	auto renderer    = ImGui->renderer;
 	setTexture( renderer, 0, null );
 	LINE_MESH_STREAM_BLOCK( stream, renderer ) {
-		stream->color = multiply( renderer->color, Color::Black );
+		// stream->color = multiply( renderer->color, Color::Black );
 		pushQuadOutline( stream, rightBottomPoint );
 		pushQuadOutline( stream, leftBottomPoint );
 		pushQuadOutline( stream, rightTopPoint );
@@ -1577,10 +1579,8 @@ bool imguiRect( rectf* value, rectfarg valueDomain, rectfarg rect )
 	return changed;
 }
 
-RenderCommands* imguiRenderer()
-{
-	return ImGui->renderer;
-}
+RenderCommands* imguiRenderer() { return ImGui->renderer; }
+GameInputs* imguiInputs() { return ImGui->inputs; }
 
 struct ImGuiBeginColumnResult {
 	rectf rect;
@@ -1730,6 +1730,8 @@ rectf imguiScrollable( vec2* scrollPos, rectfarg scrollDomain, float width, floa
 		rect.bottom -= style->scrollHeight + style->innerPadding;
 		imguiScrollbar( &scrollPos->x, scrollDomain.left, scrollDomain.right, width, stepSize,
 		                hscrollRect, false );
+	} else {
+		scrollPos->x = 0;
 	}
 	if( vscrollActive ) {
 		rectf vscrollRect = {rect.right - style->scrollWidth, rect.top, rect.right, rect.bottom};
@@ -1739,6 +1741,8 @@ rectf imguiScrollable( vec2* scrollPos, rectfarg scrollDomain, float width, floa
 		rect.right -= style->scrollWidth + style->innerPadding;
 		imguiScrollbar( &scrollPos->y, scrollDomain.top, scrollDomain.bottom, height, stepSize,
 		                vscrollRect, true );
+	} else {
+		scrollPos->y = 0;
 	}
 
 	return rect;

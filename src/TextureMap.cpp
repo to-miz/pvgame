@@ -20,7 +20,7 @@ extern global TextureMap* GlobalTextureMap;
 TextureMapEntry* getTextureInfo( TextureId id )
 {
 	assert( GlobalTextureMap );
-	auto result =  find_first_where( GlobalTextureMap->entries, it.id == id );
+	auto result = find_first_where( GlobalTextureMap->entries, it.id == id );
 	assert( result );
 	return result;
 }

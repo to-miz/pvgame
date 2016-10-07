@@ -10,7 +10,7 @@ static recti imageFindRect( uint8* pixels, int32 x, int32 y, int32 width, int32 
 		auto changed  = false;
 		auto i        = *start + offset;
 		auto notFound = 0;
-		auto row      = pixels;
+		auto row      = pixels + i * rowStride + min * columnStride;
 		for( ; i != end; i += step ) {
 			auto found  = false;
 			auto column = row;
@@ -31,7 +31,7 @@ static recti imageFindRect( uint8* pixels, int32 x, int32 y, int32 width, int32 
 			} else {
 				notFound = 0;
 			}
-			row += rowStride;
+			row += rowStride * step;
 		}
 		return changed;
 	};
@@ -59,65 +59,81 @@ static recti imageFindRect( uint8* pixels, int32 x, int32 y, int32 width, int32 
 
 	return ret;
 }
-Array< recti > imageFindRects( StackAllocator* allocator, ImageData image, rectiarg region,
-                               int32 border )
+void imageFindRects( UArray< recti >& rects, ImageData image, recti region, int32 border,
+                     bool mergeOverlappingCells )
 {
-	assert( image );
-
-	auto rects = beginVector( allocator, recti );
-
+	if(::width( region ) == 0 ) {
+		region.right = image.width;
+	}
+	if(::height( region ) == 0 ) {
+		region.bottom = image.height;
+	}
 	auto stride     = image.width * 4;
 	auto currentRow = image.data + region.left + region.top * image.width;
 	auto width      = ::width( region );
 	auto height     = ::height( region );
 
-	// find start of a row
-	for( auto y = 0; y < height; ++y ) {
-		auto p = currentRow;
-		for( auto x = 0; x < width; ++x, p += 4 ) {
-			auto pixel = p;
-			if( pixel[3] != 0 ) {
-				auto alreadyProcessed = false;
-				FOR( entry : rects ) {
-					if( isPointInside( entry, {x, y} ) ) {
-						alreadyProcessed = true;
-						break;
+	/*auto findFirstPixel = */ [&]() {
+		for( auto y = 0; y < height; ++y ) {
+			auto p = currentRow;
+			for( auto x = 0; x < width; ++x, p += 4 ) {
+				auto pixel = p;
+				// pixel[3] is the alpha component of rgba
+				if( pixel[3] != 0 ) {
+					auto alreadyProcessed = false;
+					FOR( entry : rects ) {
+						if( isPointInside( entry, {x, y} ) ) {
+							alreadyProcessed = true;
+							break;
+						}
+					}
+					if( !alreadyProcessed ) {
+						if( !rects.remaining() ) {
+							return;
+						}
+						rects.push_back(
+						    imageFindRect( image.data, x, y, width, height, stride, border ) );
 					}
 				}
-				if( !alreadyProcessed ) {
-					rects.push_back(
-					    imageFindRect( image.data, x, y, width, height, stride, border ) );
+			}
+			currentRow += stride;
+		}
+	}();
+
+	if( mergeOverlappingCells ) {
+		auto begin = rects.begin();
+		auto end   = rects.end();
+		for( auto it = begin; it != end; ) {
+			bool erased = false;
+			FOR( other : rects ) {
+				if( &other == it ) {
+					continue;
+				}
+				if( isOverlapping( *it, other ) ) {
+					other.left   = MIN( it->left, other.left );
+					other.top    = MIN( it->top, other.top );
+					other.right  = MAX( it->right, other.right );
+					other.bottom = MAX( it->bottom, other.bottom );
+
+					it     = rects.erase( it );
+					end    = rects.end();
+					erased = true;
+					break;
 				}
 			}
-		}
-		currentRow += stride;
-	}
-
-	auto begin = rects.begin();
-	auto end   = rects.end();
-	for( auto it = begin; it != end; ) {
-		bool erased = false;
-		FOR( other : rects ) {
-			if( &other == it ) {
-				continue;
-			}
-			if( isOverlapping( *it, other ) ) {
-				other.left   = MIN( it->left, other.left );
-				other.top    = MIN( it->top, other.top );
-				other.right  = MAX( it->right, other.right );
-				other.bottom = MAX( it->bottom, other.bottom );
-
-				it     = rects.erase( it );
-				end    = rects.end();
-				erased = true;
-				break;
+			if( !erased ) {
+				++it;
 			}
 		}
-		if( !erased ) {
-			++it;
-		}
 	}
+}
+Array< recti > imageFindRects( StackAllocator* allocator, ImageData image, rectiarg region,
+                               int32 border, bool mergeOverlappingCells )
+{
+	assert( image );
 
+	auto rects = beginVector( allocator, recti );
+	imageFindRects( rects, image, region, border, mergeOverlappingCells );
 	endVector( allocator, &rects );
 	return {rects.data(), rects.size()};
 }

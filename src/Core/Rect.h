@@ -625,11 +625,13 @@ template< class T > trect< T > operator-( trectarg< T > lhs, trectarg< T > rhs )
 {
 	return {lhs.left - rhs.left, lhs.top - rhs.top, lhs.right - rhs.right, lhs.bottom - rhs.bottom};
 }
-template< class T > trect< T > operator*( trectarg< T > r, T s )
+template < class T, class S, class C = typename std::common_type< T, S >::type >
+trect< C > operator*( trectarg< T > r, S s )
 {
 	return {r.left * s, r.top * s, r.right * s, r.bottom * s};
 }
-template< class T > trect< T > operator*( T s, trectarg< T > r )
+template < class T, class S, class C = typename std::common_type< T, S >::type >
+trect< C > operator*( S s, trectarg< T > r )
 {
 	return {r.left * s, r.top * s, r.right * s, r.bottom * s};
 }
