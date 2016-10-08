@@ -109,11 +109,19 @@ struct string_builder {
 	}
 };
 
+template < size_t N >
+struct static_string_builder : string_builder {
+	char buffer[N];
+	static_string_builder() : string_builder( buffer, (int32)N ) {}
+};
+
 StringView asStringView( const string_builder& builder ) { return {builder.ptr, builder.sz}; }
 
 struct NumberString {
 	char data[100];
 	int32 count;
+
+	inline operator StringView const() { return {data, count}; }
 };
 NumberString toNumberString( float value )
 {

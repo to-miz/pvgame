@@ -597,6 +597,7 @@ static bool win32VertexBufferHasSpace( OpenGlVertexBuffer* vb, GLsizei verticesC
 }
 
 TextureId toTextureId( GLuint id ) { return {(int32)id}; }
+GLuint toOpenGlTextureId( TextureId id ) { return (GLuint)id.id ;}
 
 static GLuint win32UploadImageToGpu( ImageData image )
 {
@@ -1135,7 +1136,7 @@ static void win32ProcessRenderCommands( OpenGlContext* context, RenderCommands* 
 			case RenderCommandEntryType::SetTexture: {
 				auto body = getRenderCommandBody( &stream, header, RenderCommandSetTexture );
 				assert( body->stage >= 0 && body->stage < 2 );
-				auto id = (GLuint)body->id.id;
+				auto id = toOpenGlTextureId( body->id );
 				if( id == 0 ) {
 					id = context->plainWhiteTexture;
 				}

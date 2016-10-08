@@ -372,49 +372,47 @@ TextChain renderText( MeshStream* stream, FontInfo* info, FontRenderOptions* opt
 	auto newLineAdvance = ( info->newLineAdvance + verticalPadding ) * scale;
 	auto sep = options->sep * scale;
 
-	/*switch( verticalAlign ) {
+	switch( options->verticalAlign ) {
 		case FontVerticalAlign::Top: {
 			break;
 		}
 		case FontVerticalAlign::Center: {
-			auto height =
-				info->stringHeight( string, renderOptions, textAreaWidth, verticalPadding );
+			auto height = stringHeight( info, options, text, textAreaWidth, verticalPadding );
 			pos.y += floor( ( textAreaHeight - height ) * 0.5f );
 			break;
 		}
 		case FontVerticalAlign::Bottom: {
-			auto height =
-				info->stringHeight( string, renderOptions, textAreaWidth, verticalPadding );
+			auto height = stringHeight( info, options, text, textAreaWidth, verticalPadding );
 			pos.y += textAreaHeight - height;
 			break;
 		}
-	}*/
+	}
 
-	// auto endOfLine = 0;
+	auto endOfLine          = 0;
 	auto getAlignmentOffset = [&]() {
 		float ret = {};
-		/*switch( options->align ) {
+		switch( options->align ) {
 			case FontAlign::Left: {
 				break;
 			}
 			case FontAlign::Center: {
-				auto substr = StringView( string, endOfLine );
+				auto substr = StringView( text, endOfLine );
 				if( substr.size() ) {
-					auto width = info->lineWidth( string, endOfLine, renderOptions,
-												  renderOptions.kerning, &endOfLine );
+					auto width = lineWidth( info, options, options->kerning != 0, text, endOfLine,
+					                        &endOfLine );
 					auto halfOffset = ( textAreaWidth - width ) * 0.5f;
-					ret = floor( halfOffset );
+					ret             = floor( halfOffset );
 				}
 				break;
 			}
 			case FontAlign::Right: {
-				auto width = info->lineWidth( string, endOfLine, renderOptions,
-											  renderOptions.kerning, &endOfLine );
+				auto width =
+				    lineWidth( info, options, options->kerning != 0, text, endOfLine, &endOfLine );
 				ret = textAreaWidth - width;
 				break;
 			}
-			InvalidDefaultCase;
-		}*/
+				InvalidDefaultCase;
+		}
 		return ret;
 	};
 

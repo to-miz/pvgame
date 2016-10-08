@@ -83,3 +83,27 @@ inline bool isKeyPressedRepeated( GameInputs* inputs, int32 keycode )
 	auto repeated = ( key.composite & GameInputKeyFlags::Repeated );
 	return ( !wasDown && count ) || repeated;
 }
+
+int32 getDownKeys( GameInputs* inputs, VirtualKeyEnumValues* buffer, int32 count )
+{
+	auto result = 0;
+	for( auto i = 0; i < countof( inputs->keys ) && count > 0; ++i ) {
+		if( isKeyDown( inputs->keys[i] ) ) {
+			buffer[result++] = (VirtualKeyEnumValues)i;
+			--count;
+		}
+	}
+	return result;
+}
+void getDownKeys( GameInputs* inputs, UArray< VirtualKeyEnumValues >* buffer )
+{
+	assert( buffer );
+	buffer->resize( getDownKeys( inputs, buffer->data(), buffer->capacity() ) );
+}
+
+const char* toVirtualKeyString( VirtualKeyEnumValues key )
+{
+	auto index = (int32)key;
+	assert( index >= 0 && index < countof( VirtualKeyStrings ) );
+	return VirtualKeyStrings[index];
+}

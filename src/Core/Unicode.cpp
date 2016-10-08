@@ -225,22 +225,22 @@ int32 utf8::convertUcs2ToUtf8( const uint16* ucs2Start, int32 ucs2Length, char* 
 	return result;
 }
 
-#ifdef ACHE_USE_STD
-std::string utf8::toUtf8String( uint32 codepoint )
-{
-	auto sequence = toUtf8( codepoint );
-	return std::string( sequence.oct, sequence.length );
-}
-std::string utf8::convertUtf16ToUtf8( const uint16* utf16Start, int32 utf16Length )
-{
-	std::string ret;
-	ret.reserve( utf16Length );
-	while( utf16Length ) {
-		auto codepoint = utf16::next( utf16Start, utf16Length );
+#ifdef GAME_USE_STD
+	std::string utf8::toUtf8String( uint32 codepoint )
+	{
 		auto sequence = toUtf8( codepoint );
-		ret.insert( ret.end(), sequence.oct, sequence.oct + sequence.length );
+		return std::string( sequence.oct, sequence.length );
 	}
-	return ret;
-}
+	std::string utf8::convertUtf16ToUtf8( const uint16* utf16Start, int32 utf16Length )
+	{
+		std::string ret;
+		ret.reserve( utf16Length );
+		while( utf16Length ) {
+			auto codepoint = utf16::next( utf16Start, utf16Length );
+			auto sequence = toUtf8( codepoint );
+			ret.insert( ret.end(), sequence.oct, sequence.oct + sequence.length );
+		}
+		return ret;
+	}
 
 #endif

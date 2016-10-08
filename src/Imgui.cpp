@@ -213,6 +213,7 @@ struct ImmediateModeGui {
 	int8 container;       // current container
 	int8 hoverContainer;  // the container the mouse is currently over
 	int8 modalContainer;
+	bool8 processInputs;
 	ImGuiHandle capture;  // the container that has the mouse currently captured
 	ImGuiHandle focus;
 	vec2 mouseOffset;  // offset of mouse when dragging to the leftTop position of the container
@@ -275,7 +276,8 @@ ImGuiContainerState defaultImGuiContainerSate( rectfarg rect )
 {
 	return {RectWH( rect.left, rect.top, ImGui->style.containerWidth, 0.0f )};
 }
-int32 imguiGenerateContainer( ImmediateModeGui* gui, rectfarg rect = {} )
+typedef int32 ImGuiContainerId;
+ImGuiContainerId imguiGenerateContainer( ImmediateModeGui* gui, rectfarg rect = {} )
 {
 	assert( gui->containersCount < ImGuiMaxContainers );
 	auto result     = gui->containersCount;
@@ -356,9 +358,10 @@ void imguiClear()
 }
 void imguiBind( ImmediateModeGui* guiState ) { ImGui = guiState; }
 void imguiBind( ImmediateModeGui* guiState, RenderCommands* renderer, Font* font,
-                GameInputs* inputs, void* base, rectfarg bounds )
+                GameInputs* inputs, void* base, rectfarg bounds, bool processInputs = true )
 {
 	ImGui                     = guiState;
+	ImGui->processInputs      = processInputs;
 	ImGui->renderer           = renderer;
 	ImGui->inputs             = inputs;
 	ImGui->font               = font;
@@ -474,8 +477,9 @@ static void renderTextClippedOffset( RenderCommands* renderer, Font* font, Strin
 bool imguiHasFocus( ImGuiHandle handle ) { return ImGui->focus == handle; }
 bool imguiHasCapture( ImGuiHandle handle ) { return ImGui->capture == handle; }
 bool imguiIsHover( ImGuiHandle handle ) {
-	return ( ImGui->modalContainer < 0 && ImGui->hoverContainer == handle.container )
-	       || ( ImGui->modalContainer == handle.container );
+	return ( ImGui->processInputs )
+	       && ( ( ImGui->modalContainer < 0 && ImGui->hoverContainer == handle.container )
+	            || ( ImGui->modalContainer == handle.container ) );
 }
 void imguiCapture( ImGuiHandle handle )
 {
@@ -545,6 +549,7 @@ void imguiShowModal( int32 containerIndex )
 	auto container = imguiGetContainer( containerIndex );
 	container->setModal( true );
 	container->setHidden( false );
+	container->setMinimized( false );
 	ImGui->modalContainer = safe_truncate< int8 >( containerIndex );
 	imguiBringToFront( ImGui->modalContainer );
 }
@@ -623,7 +628,7 @@ bool imguiDialog( StringView name, int32 containerIndex )
 		container->rect = rect;
 	}
 
-	if( isKeyDown( inputs, KC_LButton ) && imguiHasFocus( handle ) ) {
+	if( isKeyDown( inputs, KC_LButton ) && imguiHasFocus( handle ) && imguiIsHover( handle ) ) {
 		if( wasDragging ) {
 			auto delta      = inputs->mouse.position - ImGui->mouseOffset - rect.leftTop;
 			delta           = imguiBoundedTranslation( draggableRect, delta );
@@ -776,6 +781,7 @@ bool imguiButton( ImGuiHandle handle, StringView name, float width, float height
 		renderer->color = multiply( renderer->color, ImGui->style.buttonText );
 		auto textArea   = imguiInnerRect( rect );
 		textArea.leftTop += offset;
+		textArea.rightBottom += offset;
 		renderTextCenteredClipped( renderer, font, name, textArea );
 	}
 
@@ -792,6 +798,10 @@ bool imguiButton( StringView name, float width, float height )
 {
 	auto stringHandle = imguiMakeStringHandle( name );
 	return imguiButton( stringHandle.handle, stringHandle.string, width, height );
+}
+bool imguiButton( StringView name, float width )
+{
+	return imguiButton( name, width, ImGui->style.buttonHeight );
 }
 
 bool imguiEditbox( ImGuiHandle handle, StringView name, char* data, int32* length, int32 size,
@@ -836,7 +846,7 @@ bool imguiEditbox( ImGuiHandle handle, StringView name, char* data, int32* lengt
 		}
 	}
 
-	if( imguiHasFocus( handle ) ) {
+	if( imguiHasFocus( handle ) && ImGui->processInputs ) {
 		state = &get_variant( ImGui->state, editbox );
 
 		if( isKeyDown( inputs, KC_LButton ) ) {
@@ -883,7 +893,7 @@ bool imguiEditbox( ImGuiHandle handle, StringView name, char* data, int32* lengt
 
 		auto backPressed   = isKeyPressedRepeated( inputs, KC_Back );
 		auto deletePressed = isKeyPressedRepeated( inputs, KC_Delete );
-		if( backPressed || deletePressed ) {
+		if( ImGui->processInputs && ( backPressed || deletePressed ) ) {
 			auto selection = state->selection();
 			if( state->selectionBegin != state->selectionEnd ) {
 				// there is selected text
@@ -927,10 +937,12 @@ bool imguiEditbox( ImGuiHandle handle, StringView name, char* data, int32* lengt
 			}
 			state->resetCaret();
 		};
-		if( isKeyPressedRepeated( inputs, KC_Left ) ) {
-			processCaretMove( -1 );
-		} else if( isKeyPressedRepeated( inputs, KC_Right ) ) {
-			processCaretMove( 1 );
+		if( ImGui->processInputs ) {
+			if( isKeyPressedRepeated( inputs, KC_Left ) ) {
+				processCaretMove( -1 );
+			} else if( isKeyPressedRepeated( inputs, KC_Right ) ) {
+				processCaretMove( 1 );
+			}
 		}
 
 		{
@@ -1096,12 +1108,11 @@ bool imguiCheckbox( StringView name, bool* checked )
 	using namespace ImGuiTexCoords;
 	auto index = ( *checked ) ? ( CheckboxChecked ) : ( CheckboxUnchecked );
 
-	auto width =
-	    stringWidth( font, name ) + style->innerPadding * 2 + ::width( style->rects[index] );
-	auto height =
-	    max( stringHeight( font ), ::height( style->rects[index] ) ) + style->innerPadding * 2;
-	auto rect      = imguiAddItem( width, height );
-	auto inner     = imguiInnerRect( rect );
+	auto innerPadding = style->innerPadding;
+	auto width  = stringWidth( font, name ) + innerPadding * 3 + ::width( style->rects[index] );
+	auto height = max( stringHeight( font ), ::height( style->rects[index] ) ) + innerPadding * 2;
+	auto rect   = imguiAddItem( width, height );
+	auto inner  = imguiInnerRect( rect );
 	auto checkRect = translate( style->rects[index], inner.leftTop );
 
 	if( imguiKeypressButton( handle, checkRect ) ) {
@@ -1116,7 +1127,7 @@ bool imguiCheckbox( StringView name, bool* checked )
 		}
 		renderer->color = multiply( renderer->color, Color::White );
 		auto textArea   = inner;
-		textArea.left += ::width( checkRect ) + style->innerPadding;
+		textArea.left += ::width( checkRect ) + innerPadding;
 		renderTextCenteredClipped( renderer, font, name, textArea );
 	}
 
@@ -1137,12 +1148,11 @@ bool imguiRadiobox( StringView name, bool* checked )
 	using namespace ImGuiTexCoords;
 	auto index = ( *checked ) ? ( RadioboxChecked ) : ( RadioboxUnchecked );
 
-	auto width =
-	    stringWidth( font, name ) + style->innerPadding * 2 + ::width( style->rects[index] );
-	auto height =
-	    max( stringHeight( font ), ::height( style->rects[index] ) ) + style->innerPadding * 2;
-	auto rect      = imguiAddItem( width, height );
-	auto inner     = imguiInnerRect( rect );
+	auto innerPadding = style->innerPadding;
+	auto width  = stringWidth( font, name ) + innerPadding * 3 + ::width( style->rects[index] );
+	auto height = max( stringHeight( font ), ::height( style->rects[index] ) ) + innerPadding * 2;
+	auto rect   = imguiAddItem( width, height );
+	auto inner  = imguiInnerRect( rect );
 	auto checkRect = translate( style->rects[index], inner.leftTop );
 
 	auto isChecked =
@@ -1168,7 +1178,7 @@ bool imguiRadiobox( StringView name, bool* checked )
 		}
 		renderer->color = multiply( renderer->color, Color::White );
 		auto textArea   = inner;
-		textArea.left += ::width( checkRect ) + style->innerPadding;
+		textArea.left += ::width( checkRect ) + innerPadding;
 		renderTextCenteredClipped( renderer, font, name, textArea );
 	}
 
@@ -1354,7 +1364,7 @@ bool imguiSlider( StringView name, float* value, float min, float max )
 		}
 		renderer->color = multiply( renderer->color, Color::White );
 		auto textArea   = inner;
-		renderTextCenteredClipped( renderer, font, name, textArea );
+		renderTextClipped( renderer, font, name, textArea );
 	}
 
 	return changed;

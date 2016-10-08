@@ -152,20 +152,28 @@ struct Utf8Sequence {
 
 Utf8Sequence toUtf8( uint32 codepoint );
 int32 convertUtf16ToUtf8( const uint16* utf16Start, int32 utf16Length, char* out, int32 size );
+#ifndef UNICODE_NO_WCHAR_T_OVERLOAD
+	inline int32 convertUtf16ToUtf8( const wchar_t* utf16Start, int32 utf16Length, char* out,
+                                     int32 size )
+	{
+		static_assert( sizeof( wchar_t ) == sizeof( uint16 ), "wchar_t size mismatch" );
+	    return convertUtf16ToUtf8( (const uint16*)utf16Start, utf16Length, out, size );
+    }
+#endif // !defined( UNICODE_NO_WCHAR_T_OVERLOAD )
 int32 convertUcs2ToUtf8( const uint16* ucs2Start, int32 ucs2Length, char* out, int32 size );
 
 int32 countCodepoints( const char* str, int32 size );
 
-#ifdef ACHE_USE_STD
-std::string toUtf8String( uint32 codepoint );
-// std::string convertUtf16ToUtf8( const uint16* utf16Start, int32 utf16Length );
-std::string convertUtf16ToUtf8( const uint16* utf16Start, int32 utf16Length );
-inline std::string convertUtf16ToUtf8( const wchar_t* utf16Start, int32 utf16Length )
-{
-	static_assert( sizeof( wchar_t ) == sizeof( uint16 ) && ALIGNOF( wchar_t ) == ALIGNOF( uint16 ),
-	               "wchar_t incompatibility" );
-	return convertUtf16ToUtf8( (const uint16*)utf16Start, utf16Length );
-}
+#ifdef GAME_USE_STD
+	std::string toUtf8String( uint32 codepoint );
+	// std::string convertUtf16ToUtf8( const uint16* utf16Start, int32 utf16Length );
+	std::string convertUtf16ToUtf8( const uint16* utf16Start, int32 utf16Length );
+	inline std::string convertUtf16ToUtf8( const wchar_t* utf16Start, int32 utf16Length )
+	{
+		static_assert( sizeof( wchar_t ) == sizeof( uint16 ) && ALIGNOF( wchar_t ) == ALIGNOF( uint16 ),
+		               "wchar_t incompatibility" );
+		return convertUtf16ToUtf8( (const uint16*)utf16Start, utf16Length );
+	}
 #endif
 }
 

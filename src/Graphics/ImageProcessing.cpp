@@ -69,7 +69,7 @@ void imageFindRects( UArray< recti >& rects, ImageData image, recti region, int3
 		region.bottom = image.height;
 	}
 	auto stride     = image.width * 4;
-	auto currentRow = image.data + region.left + region.top * image.width;
+	auto currentRow = image.data + region.left * 4 + region.top * image.width * 4;
 	auto width      = ::width( region );
 	auto height     = ::height( region );
 

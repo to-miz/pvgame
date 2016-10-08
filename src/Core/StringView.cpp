@@ -1,4 +1,21 @@
 typedef UArray< char > string;
+void copyToString( string* a, const char* b )
+{
+	auto len = (int32)strlen( b );
+	if( len > a->capacity() ) {
+		len = a->capacity();
+	}
+	a->assign( b, b + len );
+}
+int32 copyToString( char* buffer, int32 bufferLen, const char* b )
+{
+	auto len = (int32)strlen( b );
+	if( len > bufferLen ) {
+		len = bufferLen;
+	}
+	memcpy( buffer, b, len );
+	return len;
+}
 
 struct StringView {
 	const char* ptr = nullptr;

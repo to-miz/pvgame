@@ -81,53 +81,11 @@ constexpr float WalljumpWindowDuration = 10;
 constexpr float WalljumpMoveThreshold  = WalljumpMaxDuration - WalljumpFixDuration;
 }
 
-// PolymorphicAllocator
-struct PolymorphicAllocator {
-	enum { type_stack } type;
-	union {
-		StackAllocator* stack;
-	};
-};
-
-#define doPolymorphicCommandVoid( poly, command, name ) \
-	{                                                   \
-		auto _allocator_ = ( poly ).name;               \
-		command;                                        \
-		break;                                          \
-	}
-#define visitPolymorphicAllocatorVoid( poly, command )      \
-	do {                                                    \
-		switch( ( poly ).type ) {                           \
-			case PolymorphicAllocator::type_stack:          \
-				doPolymorphicCommandVoid( command, stack ); \
-				InvalidDefaultCase;                         \
-		}                                                   \
-	} while( false )
-
-#define doPolymorphicCommand( poly, result, command, name ) \
-	{                                                       \
-		auto _allocator_ = ( poly ).name;                   \
-		result           = command;                         \
-		break;                                              \
-	}
-#define visitPolymorphicAllocator( poly, result, command )                \
-	do {                                                                  \
-		switch( ( poly ).type ) {                                         \
-			case PolymorphicAllocator::type_stack:                        \
-				doPolymorphicCommand( ( poly ), result, command, stack ); \
-			InvalidDefaultCase;                                           \
-		}                                                                 \
-	} while( false )
-
-struct ThreadContext {
-	PolymorphicAllocator allocator;
-};
-
 // globals
-global TextureMap* GlobalTextureMap = nullptr;
-global IngameLog* GlobalIngameLog   = nullptr;
-global ImmediateModeGui* ImGui      = nullptr;
-global ThreadContext* appContext    = nullptr;
+global PlatformServices* GlobalPlatformServices = nullptr;
+global TextureMap* GlobalTextureMap             = nullptr;
+global IngameLog* GlobalIngameLog               = nullptr;
+global ImmediateModeGui* ImGui                  = nullptr;
 
 global MeshStream* debug_MeshStream = nullptr;
 global bool debug_FillMeshStream    = true;
@@ -145,12 +103,11 @@ global string_builder* debugPrinter = nullptr;
 	#define debugPrintGetString() StringView{}
 #endif
 
-ThreadContext* getThreadContext()
+StringView toString( VirtualKeyEnumValues key )
 {
-	// TODO: pull appContext from thread local storage
-	return appContext;
+	assert( GlobalPlatformServices );
+	return GlobalPlatformServices->getKeyboardKeyName( key );
 }
-PolymorphicAllocator getAllocator() { return getThreadContext()->allocator; }
 
 void debug_Clear()
 {
@@ -1162,11 +1119,12 @@ RELOAD_APP( reloadApp )
 {
 	PlatformRemapInfo result = {};
 
-	auto app         = (AppData*)memory;
-	debug_MeshStream = &app->debugMeshStream;
-	GlobalIngameLog  = &app->log;
-	GlobalTextureMap = &app->textureMap;
-	debugPrinter     = &app->debugPrinter;
+	auto app               = (AppData*)memory;
+	debug_MeshStream       = &app->debugMeshStream;
+	GlobalPlatformServices = &app->platform;
+	GlobalIngameLog        = &app->log;
+	GlobalTextureMap       = &app->textureMap;
+	debugPrinter           = &app->debugPrinter;
 
 	result.success    = true;
 	result.logStorage = GlobalIngameLog;
@@ -1839,7 +1797,7 @@ static void doVoxelGui( AppData* app, GameInputs* inputs, bool focus, float dt )
 	renderer->color = setAlpha( 0xFFFFFFFF, gui->fadeProgress );
 
 	rectf guiBounds = {0, 0, app->width, app->height};
-	imguiBind( &app->guiState, renderer, font, inputs, app->stackAllocator.ptr, guiBounds );
+	imguiBind( &app->guiState, renderer, font, inputs, app->stackAllocator.ptr, guiBounds, focus );
 	if( imguiDialog( "EditMode", gui->editMode ) ) {
 		char buffer[200];
 		string_builder builder( buffer, 200 );
@@ -2571,7 +2529,7 @@ static void showGameDebugGui( AppData* app, GameInputs* inputs, bool focus, floa
 		gui->initialized       = true;
 	}
 	setProjection( renderer, ProjectionType::Orthogonal );
-	if( isKeyPressed( inputs, KC_Tab ) ) {
+	if( isKeyPressed( inputs, KC_Oem_5 /*Key above tab*/ ) ) {
 		auto mainDialog = imguiGetContainer( imgui, gui->mainDialog );
 		if( mainDialog->isHidden() ) {
 			gui->show = true;
@@ -2584,7 +2542,11 @@ static void showGameDebugGui( AppData* app, GameInputs* inputs, bool focus, floa
 	if( !gui->show || gui->fadeProgress <= 0
 	    || imguiGetContainer( imgui, gui->mainDialog )->isHidden() ) {
 		renderer->color = Color::Black;
-		renderText( renderer, font, "Press [TAB] to open debug dialog", {} );
+		reset( font );
+		font->align = FontAlign::Right;
+		static_string_builder< 64 > str;
+		str.print( "Press [{}] to open debug dialog", toString( KC_Oem_5 ) );
+		renderText( renderer, font, asStringView( str ), {0, 0, app->width, app->height} );
 		return;
 	}
 	renderer->color = setAlpha( 0xFFFFFFFF, gui->fadeProgress );
@@ -2596,39 +2558,19 @@ static void showGameDebugGui( AppData* app, GameInputs* inputs, bool focus, floa
 		}
 		imguiCheckbox( "Lighting", &game->lighting );
 		imguiCheckbox( "Camera turning", &app->settings.cameraTurning );
-
-		static float pos = 0;
-		auto scrollRect  = imguiRegion( 24, 100 );
-		imguiScrollbar( &pos, 90, 100, 5, 1, scrollRect, true );
-		debugPrintln( "{}", pos );
-
-		imguiSlider( "test", &pos, 90, 100 );
-
-		{
-			static vec2 pos = {};
-			auto rect       = imguiRegion( 100, 100 );
-			auto renderer   = imguiRenderer();
-			setTexture( renderer, 0, null );
-			addRenderCommandSingleQuad( renderer, rect );
-			imguiPoint( &pos, {40, 40, 500, 500}, rect );
-			debugPrintln( "{}", pos );
-		}
-
-		{
-			static rectf value = {};
-			auto rect          = imguiRegion( 100, 100 );
-			auto renderer      = imguiRenderer();
-			setTexture( renderer, 0, null );
-			addRenderCommandSingleQuad( renderer, rect );
-			imguiRect( &value, {40, 40, 500, 500}, rect );
-			debugPrintln( "{}", value );
-		}
 	}
 	if( imguiDialog( "Debug Output", gui->debugOutputDialog ) ) {
 		imguiCheckbox( "Detailed Debug Output", &app->displayDebug );
 		if( app->displayDebug ) {
 			char buffer[1000];
 			imguiText( detailedDebugOutput( app, buffer, countof( buffer ) ) );
+		}
+
+		// display held down keys
+		SmallUninitializedArray< VirtualKeyEnumValues, 10 > keys;
+		getDownKeys( inputs, &keys );
+		FOR( key : keys ) {
+			debugPrintln( "{:x} {} {}", (int32)key, toVirtualKeyString( key ), toString( key ) );
 		}
 
 		imguiText( debugPrintGetString() );
@@ -3011,6 +2953,7 @@ UPDATE_AND_RENDER( updateAndRender )
 		renderer->color = Color::Black;
 		float step      = 16;
 		float y         = app->height - step;
+		reset( font );
 		for( intmax i = GlobalIngameLog->count - 1; i >= 0; --i ) {
 			auto entry         = &GlobalIngameLog->entries[i];
 			StringView message = {entry->message, entry->messageLength};

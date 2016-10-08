@@ -111,6 +111,14 @@ inline typename Container::iterator erase_index( Container& container, int32 ind
 	return container.erase( begin( container ) + index );
 }
 
+template < class T >
+inline int32 erase_index( T* first, int32 count, int32 index )
+{
+	--count;
+	move( first + index, first + index + 1, count );
+	return count;
+}
+
 template < class Iterator, class ValueType >
 void iota_n( Iterator first, int32 n, ValueType val )
 {

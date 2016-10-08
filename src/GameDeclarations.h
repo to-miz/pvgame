@@ -5,6 +5,7 @@
 
 typedef TextureId LoadTextureType( StringView filename );
 typedef TextureId LoadTextureFromMemoryType( ImageData image );
+typedef void DeleteTextureType( TextureId id );
 typedef ImageData LoadImageToMemoryType( StringView filename );
 typedef void FreeImageDataType( ImageData* image );
 typedef Font LoadFontType( StackAllocator* allocator, StringView utf8Name, int32 size, int32 weight,
@@ -18,9 +19,12 @@ typedef int32 GetOpenFilenameType( const char* filter, const char* initialDir, b
 typedef int32 GetSaveFilenameType( const char* filter, const char* initialDir, char* filenameBuffer,
                                    int32 filenameBufferSize );
 
+typedef StringView GetKeyboardKeyNameType( VirtualKeyEnumValues key );
+
 struct PlatformServices {
 	LoadTextureType* loadTexture;
 	LoadTextureFromMemoryType* loadTextureFromMemory;
+	DeleteTextureType* deleteTexture;
 	LoadImageToMemoryType* loadImageToMemory;
 	FreeImageDataType* freeImageData;
 
@@ -32,6 +36,8 @@ struct PlatformServices {
 
 	GetOpenFilenameType* getOpenFilename;
 	GetSaveFilenameType* getSaveFilename;
+
+	GetKeyboardKeyNameType* getKeyboardKeyName;
 };
 
 // structures that get passed into the platform layer, get filled and passed back

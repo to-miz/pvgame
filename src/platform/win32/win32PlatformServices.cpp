@@ -4,7 +4,7 @@ TextureId win32LoadTexture( StringView filename )
 {
 	TextureId result = {};
 	assert( GlobalTextureMap );
-	if( auto chached = find_first_where( GlobalTextureMap->entries, it.filename == filename ) ) {
+	if( auto chached = getTextureInfo( filename ) ) {
 		LOG( INFORMATION, "loaded chached texture {}", filename );
 		result = chached->id;
 	} else {
@@ -44,6 +44,13 @@ TextureId win32LoadTextureFromMemory( ImageData image )
 		LOG( ERROR, "failed to load texture from memory" );
 	}
 	return result;
+}
+void win32DeleteTexture( TextureId id )
+{
+	auto oglId = toOpenGlTextureId( id );
+	// glBindTexture( GL_TEXTURE_2D, 0 ); // TODO: is this needed?
+	glDeleteTextures( 1, &oglId );
+	deleteTextureInfo( id );
 }
 
 // get open/save filename
@@ -162,4 +169,26 @@ int32 win32GetSaveFilename( const char* filter, const char* initialDir, char* fi
 {
 	return win32OpenFilenameInternal( filter, initialDir, false, filenameBuffer, filenameBufferSize,
 	                                  false );
+}
+
+struct win32KeyboardKeyName {
+	char data[20];
+	int32 size;
+};
+global win32KeyboardKeyName keyboardKeyNames[KC_Count];
+
+void win32PopulateKeyboardKeyNames()
+{
+	for( auto i = 0; i < KC_Count; ++i ) {
+		wchar_t name[200];
+		auto scancode = ( MapVirtualKey( (UINT)i, MAPVK_VK_TO_VSC ) << 16 );
+		auto len      = GetKeyNameTextW( scancode, name, countof( name ) );
+		auto entry    = &keyboardKeyNames[i];
+		entry->size   = utf8::convertUtf16ToUtf8( name, len, entry->data, countof( entry->data ) );
+	}
+}
+StringView win32GetKeyboardKeyName( VirtualKeyEnumValues key )
+{
+	auto entry = &keyboardKeyNames[(int32)key];
+	return {entry->data, entry->size};
 }

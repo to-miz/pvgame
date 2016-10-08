@@ -415,11 +415,14 @@ int CALLBACK WinMain( HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdL
 	auto dll = win32MakeGameDllNames( L"game_dll.dll", L"game_copy.dll", L"lock.tmp" );
 	win32LoadGameDll( &dll );
 
-	PlatformServices platformServices = {&win32LoadTexture,      &win32LoadTextureFromMemory,
-	                                     &loadImageToMemory,     &freeImageData,
-	                                     &win32LoadFont,         &win32WriteBufferToFile,
-	                                     &win32ReadFileToBuffer, &win32UploadMeshToGpu,
-	                                     &win32GetOpenFilename,  &win32GetSaveFilename};
+	win32PopulateKeyboardKeyNames();
+
+	PlatformServices platformServices = {&win32LoadTexture,       &win32LoadTextureFromMemory,
+	                                     &win32DeleteTexture,     &loadImageToMemory,
+	                                     &freeImageData,          &win32LoadFont,
+	                                     &win32WriteBufferToFile, &win32ReadFileToBuffer,
+	                                     &win32UploadMeshToGpu,   &win32GetOpenFilename,
+	                                     &win32GetSaveFilename,   &win32GetKeyboardKeyName};
 	PlatformInfo info = {};
 	auto initializeResult =
 	    initializeApp( memory, memorySize, platformServices, &info, (float)width, (float)height );
@@ -529,7 +532,9 @@ int CALLBACK WinMain( HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdL
 
 		openGlContext.width  = (float)Win32AppContext.window.width;
 		openGlContext.height = (float)Win32AppContext.window.height;
-		win32ResetInputs( &inputs );
+		if( !replayStepped || replayStep ) {
+			win32ResetInputs( &inputs );
+		}
 		win32ResetInputs( &platformInputs );
 		while( PeekMessageW( &msg, nullptr, 0, 0, PM_REMOVE ) ) {
 			if( msg.message == WM_QUIT ) {
@@ -708,6 +713,12 @@ static LRESULT CALLBACK windowProc( HWND hwnd, UINT msg, WPARAM wParam, LPARAM l
 		case WM_ACTIVATE: {
 			if( windowData ) {
 				windowData->active = ( LOWORD( wParam ) != WA_INACTIVE );
+			}
+			break;
+		}
+		case WM_SYSCOMMAND: {
+			if( wParam == SC_KEYMENU ) {
+				return 0;
 			}
 			break;
 		}

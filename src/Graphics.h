@@ -1132,6 +1132,7 @@ struct ClippingRect {
 				}
 			}
 		}
+		clipped = true;
 	}
 };
 

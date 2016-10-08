@@ -131,6 +131,7 @@ template< class T > trect< T > lerp( float t, trectarg< T > start, trectarg< T >
 template< class T > tvec2< T > dimensions( trectarg< T > r );
 template< class T, class A, class B > trect< T > translate( trectarg< T > r, A x, B y );
 template< class T > trect< T > translate( trectarg< T > r, tvec2< T > translation );
+template< class T, class A, class B, class C > trect< C > scale( trectarg< T > r, A x, B y );
 template< class T > trect< T > grow( trectarg< T > r, T amount );
 template< class T > trect< T > shrink( trectarg< T > r, T amount );
 template< class T > bool isPointInside( trectarg< T > r, T x, T y );
@@ -430,7 +431,12 @@ template< class T, class A, class B > trect< T > translate( trectarg< T > r, A x
 template< class T > trect< T > translate( trectarg< T > r, tvec2< T > translation )
 {
 	return {r.left + translation.x, r.top + translation.y, r.right + translation.x,
-			r.bottom + translation.y};
+	        r.bottom + translation.y};
+}
+template < class T, class A, class B, class C = typename std::common_type< T, A, B >::type >
+trect< C > scale( trectarg< T > r, A x, B y )
+{
+	return {r.left * x, r.top * y, r.right * x, r.bottom * y};
 }
 template< class T > trect< T > grow( trectarg< T > r, T amount )
 {

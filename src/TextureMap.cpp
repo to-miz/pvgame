@@ -24,3 +24,13 @@ TextureMapEntry* getTextureInfo( TextureId id )
 	assert( result );
 	return result;
 }
+
+TextureMapEntry* getTextureInfo( StringView filename )
+{
+	assert( GlobalTextureMap );
+	return find_first_where( GlobalTextureMap->entries, it.filename == filename );
+}
+void deleteTextureInfo( TextureId id )
+{
+	GlobalTextureMap->entries.erase( getTextureInfo( id ) );
+}

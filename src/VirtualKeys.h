@@ -3,7 +3,7 @@
 #ifndef _VIRTUALKEYS_H_INCLUDED_
 #define _VIRTUALKEYS_H_INCLUDED_
 
-enum VirtualKeyEnumValues : intmax {
+enum VirtualKeyEnumValues : uint8 {
 	KC_LButton  = 0x01,  // Left mouse button
 	KC_RButton  = 0x02,  // Right mouse button
 	KC_Cancel   = 0x03,  // Control-break processing
@@ -211,5 +211,275 @@ enum VirtualKeyEnumValues : intmax {
 
 	KC_Count = 0xFF,
 };
+
+static const char* VirtualKeyStrings[] = {
+    "",
+    "LButton",              // Left mouse button
+    "RButton",              // Right mouse button
+    "Cancel",               // Control-break processing
+    "MButton",              // Middle mouse button (three-button mouse)
+    "XButton1",             // X1 mouse button
+    "XButton2",             // X2 mouse button
+    "Unknown",              // Undefined
+    "Back",                 // BACKSPACE key
+    "Tab",                  // TAB key
+    "Unknown",              // Reserved
+    "Unknown",              // Reserved
+    "Clear",                // CLEAR key
+    "Return",               // ENTER key
+    "Unknown",              // Undefined
+    "Unknown",              // Undefined
+    "Shift",                // SHIFT key
+    "Control",              // CTRL key
+    "Alt",                  // ALT key
+    "Pause",                // PAUSE key
+    "Capital",              // CAPS LOCK key
+    "Kana/Hangul",          // IME Hangul mode
+    "Unknown",              // Undefined
+    "Junja",                // IME Junja mode
+    "Final",                // IME final mode
+    "Hanja/Kanji",          // IME Kanji mode
+    "Unknown",              // Undefined
+    "Escape",               // ESC key
+    "Convert",              // IME convert
+    "NonConvert",           // IME nonconvert
+    "Accept",               // IME accept
+    "ModeChange",           // IME mode change request
+    "Space",                // SPACEBAR
+    "Prior",                // PAGE UP key
+    "Next",                 // PAGE DOWN key
+    "End",                  // END key
+    "Home",                 // HOME key
+    "Left",                 // LEFT ARROW key
+    "Up",                   // UP ARROW key
+    "Right",                // RIGHT ARROW key
+    "Down",                 // DOWN ARROW key
+    "Select",               // SELECT key
+    "Print",                // PRINT key
+    "Execute",              // EXECUTE key
+    "Snapshot",             // PRINT SCREEN key
+    "Insert",               // INS key
+    "Delete",               // DEL key
+    "Help",                 // HELP key
+    "Key_0",                // 0 key
+    "Key_1",                // 1 key
+    "Key_2",                // 2 key
+    "Key_3",                // 3 key
+    "Key_4",                // 4 key
+    "Key_5",                // 5 key
+    "Key_6",                // 6 key
+    "Key_7",                // 7 key
+    "Key_8",                // 8 key
+    "Key_9",                // 9 key
+    "Unknown",              // Undefined
+    "Unknown",              // Undefined
+    "Unknown",              // Undefined
+    "Unknown",              // Undefined
+    "Unknown",              // Undefined
+    "Unknown",              // Undefined
+    "Unknown",              // Undefined
+    "Key_A",                // A key
+    "Key_B",                // B key
+    "Key_C",                // C key
+    "Key_D",                // D key
+    "Key_E",                // E key
+    "Key_F",                // F key
+    "Key_G",                // G key
+    "Key_H",                // H key
+    "Key_I",                // I key
+    "Key_J",                // J key
+    "Key_K",                // K key
+    "Key_L",                // L key
+    "Key_M",                // M key
+    "Key_N",                // N key
+    "Key_O",                // O key
+    "Key_P",                // P key
+    "Key_Q",                // Q key
+    "Key_R",                // R key
+    "Key_S",                // S key
+    "Key_T",                // T key
+    "Key_U",                // U key
+    "Key_V",                // V key
+    "Key_W",                // W key
+    "Key_X",                // X key
+    "Key_Y",                // Y key
+    "Key_Z",                // Z key
+    "LWin",                 // Left Windows key (Natural keyboard)
+    "RWin",                 // Right Windows key (Natural keyboard)
+    "Apps",                 // Applications key (Natural keyboard)
+    "Unknown",              // Reserved
+    "Sleep",                // Computer Sleep key
+    "Numpad0",              // Numeric keypad 0 key
+    "Numpad1",              // Numeric keypad 1 key
+    "Numpad2",              // Numeric keypad 2 key
+    "Numpad3",              // Numeric keypad 3 key
+    "Numpad4",              // Numeric keypad 4 key
+    "Numpad5",              // Numeric keypad 5 key
+    "Numpad6",              // Numeric keypad 6 key
+    "Numpad7",              // Numeric keypad 7 key
+    "Numpad8",              // Numeric keypad 8 key
+    "Numpad9",              // Numeric keypad 9 key
+    "Multiply",             // Multiply key
+    "Add",                  // Add key
+    "Separator",            // Separator key
+    "Subtract",             // Subtract key
+    "Decimal",              // Decimal key
+    "Divide",               // Divide key
+    "F1",                   // F1 key
+    "F2",                   // F2 key
+    "F3",                   // F3 key
+    "F4",                   // F4 key
+    "F5",                   // F5 key
+    "F6",                   // F6 key
+    "F7",                   // F7 key
+    "F8",                   // F8 key
+    "F9",                   // F9 key
+    "F10",                  // F10 key
+    "F11",                  // F11 key
+    "F12",                  // F12 key
+    "F13",                  // F13 key
+    "F14",                  // F14 key
+    "F15",                  // F15 key
+    "F16",                  // F16 key
+    "F17",                  // F17 key
+    "F18",                  // F18 key
+    "F19",                  // F19 key
+    "F20",                  // F20 key
+    "F21",                  // F21 key
+    "F22",                  // F22 key
+    "F23",                  // F23 key
+    "F24",                  // F24 key
+    "Unknown",              // Unassigned
+    "Unknown",              // Unassigned
+    "Unknown",              // Unassigned
+    "Unknown",              // Unassigned
+    "Unknown",              // Unassigned
+    "Unknown",              // Unassigned
+    "Unknown",              // Unassigned
+    "Unknown",              // Unassigned
+    "NumLock",              // NUM LOCK key
+    "Scroll",               // SCROLL LOCK key
+    "Unknown",              // OEM specific
+    "Unknown",              // OEM specific
+    "Unknown",              // OEM specific
+    "Unknown",              // OEM specific
+    "Unknown",              // OEM specific
+    "Unknown",              // Unassigned
+    "Unknown",              // Unassigned
+    "Unknown",              // Unassigned
+    "Unknown",              // Unassigned
+    "Unknown",              // Unassigned
+    "Unknown",              // Unassigned
+    "Unknown",              // Unassigned
+    "Unknown",              // Unassigned
+    "Unknown",              // Unassigned
+    "LShift",               // Left SHIFT key
+    "RShift",               // Right SHIFT key
+    "LControl",             // Left CONTROL key
+    "RControl",             // Right CONTROL key
+    "LMenu",                // Left MENU key
+    "RMenu",                // Right MENU key
+    "Browser_Back",         // Browser Back key
+    "Browser_Forward",      // Browser Forward key
+    "Browser_Refresh",      // Browser Refresh key
+    "Browser_Stop",         // Browser Stop key
+    "Browser_Search",       // Browser Search key
+    "Browser_Favorites",    // Browser Favorites key
+    "Browser_Home",         // Browser Start and Home key
+    "Volume_Mute",          // Volume Mute key
+    "Volume_Down",          // Volume Down key
+    "Volume_Up",            // Volume Up key
+    "Media_Next_Track",     // Next Track key
+    "Media_Prev_Track",     // Previous Track key
+    "Media_Stop",           // Stop Media key
+    "Media_Play_Pause",     // Play/Pause Media key
+    "Launch_Mail",          // Start Mail key
+    "Launch_Media_Select",  // Select Media key
+    "Launch_App1",          // Start Application 1 key
+    "Launch_App2",          // Start Application 2 key
+    "Unknown",              // Reserved
+    "Unknown",              // Reserved
+    "Oem_1",       // Used for miscellaneous characters; it can vary by keyboard. For the US
+                   // standard keyboard, the ';:' key
+    "plus",        // For any country/region, the '+' key
+    "comma",       // For any country/region, the ',' key
+    "minus",       // For any country/region, the '-' key
+    "period",      // For any country/region, the '.' key
+    "Oem_2",       // Used for miscellaneous characters; it can vary by keyboard. For the US
+                   // standard keyboard, the '/?' key
+    "Oem_3",       // Used for miscellaneous characters; it can vary by keyboard. For the US
+                   // standard keyboard, the '`~' key
+    "Unknown",     // Reserved
+    "Unknown",     // Reserved
+    "Unknown",     // Reserved
+    "Unknown",     // Reserved
+    "Unknown",     // Reserved
+    "Unknown",     // Reserved
+    "Unknown",     // Reserved
+    "Unknown",     // Reserved
+    "Unknown",     // Reserved
+    "Unknown",     // Reserved
+    "Unknown",     // Reserved
+    "Unknown",     // Reserved
+    "Unknown",     // Reserved
+    "Unknown",     // Reserved
+    "Unknown",     // Reserved
+    "Unknown",     // Reserved
+    "Unknown",     // Reserved
+    "Unknown",     // Reserved
+    "Unknown",     // Reserved
+    "Unknown",     // Reserved
+    "Unknown",     // Reserved
+    "Unknown",     // Reserved
+    "Unknown",     // Reserved
+    "Unknown",     // Unassigned
+    "Unknown",     // Unassigned
+    "Unknown",     // Unassigned
+    "Oem_4",       // Used for miscellaneous characters; it can vary by keyboard. For the US
+                   // standard keyboard, the '[{' key
+    "Oem_5",       // Used for miscellaneous characters; it can vary by keyboard. For the US
+                   // standard keyboard, the '\|' key
+    "Oem_6",       // Used for miscellaneous characters; it can vary by keyboard. For the US
+                   // standard keyboard, the ']}' key
+    "Oem_7",       // Used for miscellaneous characters; it can vary by keyboard. For the US
+                   // standard keyboard, the 'single-quote/double-quote' key
+    "Oem_8",       // Used for miscellaneous characters; it can vary by keyboard.
+    "Unknown",     // Reserved
+    "Unknown",     // OEM specific
+    "Oem_102",     // Either the angle bracket key or the backslash key on the RT 102-key keyboard
+    "Unknown",     // OEM specific
+    "Unknown",     // OEM specific
+    "Processkey",  // IME PROCESS key
+    "Unknown",     // OEM specific
+    "Packet",      // Used to pass Unicode characters as if they were keystrokes. The "Packet"
+                   // key is the low word of a 32-bit Virtual Key value used for non-keyboard
+                   // input methods. For more information, see Remark in KEYBDINPUT, SendInput,
+                   // WM_KEYDOWN, and WM_KEYUP
+    "Unknown",     // Unassigned
+    "Unknown",     // OEM specific
+    "Unknown",     // OEM specific
+    "Unknown",     // OEM specific
+    "Unknown",     // OEM specific
+    "Unknown",     // OEM specific
+    "Unknown",     // OEM specific
+    "Unknown",     // OEM specific
+    "Unknown",     // OEM specific
+    "Unknown",     // OEM specific
+    "Unknown",     // OEM specific
+    "Unknown",     // OEM specific
+    "Unknown",     // OEM specific
+    "Unknown",     // OEM specific
+    "Attn",        // Attn key
+    "CrSel",       // CrSel key
+    "ExSel",       // ExSel key
+    "ErEof",       // Erase EOF key
+    "Play",        // Play key
+    "Zoom",        // Zoom key
+    "Noname",      // Reserved
+    "Pa1",         // PA1 key
+    "Oem_Clear",   // Clear key
+};
+
+static_assert( KC_Count == countof( VirtualKeyStrings ), "Not all virtual keys are represented" );
 
 #endif  // _VIRTUALKEYS_H_INCLUDED_
