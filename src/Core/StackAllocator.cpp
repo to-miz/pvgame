@@ -123,6 +123,12 @@ StackAllocator makeStackAllocator( void* ptr, size_t capacity )
 	return {(char*)ptr, 0, capacity, 1};
 }
 
+template< class T >
+size_t getCapacityFor( StackAllocator* allocator )
+{
+	return remaining( allocator, alignof( T ) ) / sizeof( T );
+}
+
 struct TemporaryMemoryGuard {
 	StackAllocator* allocator;
 	size_t size;

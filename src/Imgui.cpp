@@ -18,6 +18,7 @@ enum class ImGuiControlType : uint8 {
 	Point,
 	Rect,
 	Scrollable,
+	ScrollableRegion,
 };
 union ImGuiHandle {
 	struct {
@@ -379,8 +380,8 @@ ImGuiHandle imguiSetCurrentContainer( ImGuiContainerState* container )
 {
 	assert( container >= ImGui->containers && container < ImGui->containers + ImGuiMaxContainers );
 	ImGuiHandle result = {};
-	result.container       = safe_truncate< int8 >( container - ImGui->containers );
-	ImGui->container       = result.container;
+	result.container   = safe_truncate< int8 >( container - ImGui->containers );
+	ImGui->container   = result.container;
 	return result;
 }
 ImGuiHandle imguiSetCurrentContainer( int32 index )
@@ -393,7 +394,7 @@ ImGuiHandle imguiMakeIndexHandle( uint16 index )
 	ImGuiHandle result = {};
 	result.base        = 0;
 	result.index       = index;
-	result.container       = ImGui->container;
+	result.container   = ImGui->container;
 	result.flags       = ImGuiHandleFlags::Unbased;
 	return result;
 }
@@ -691,23 +692,26 @@ ImGuiContainerState* imguiCurrentContainer()
 rectf imguiAddItem( float width, float height )
 {
 	auto container = imguiCurrentContainer();
-	width = MIN( width, ::width( container->rect ) );
+	width          = MIN( width, ::width( container->rect ) );
 	auto result    = RectWH( container->addPosition.x + ImGui->style.innerPadding,
-	                         container->addPosition.y, width, height );
+	                      container->addPosition.y, width, height );
+	if( result.right > container->rect.right ) {
+		result.right = container->rect.right;
+	}
 	bool newline = false;
 	if( container->horizontalCount > 0 ) {
 		// change layout horizontally
 		container->addPosition.x += width + ImGui->style.innerPadding;
 		--container->horizontalCount;
 		if( container->horizontalCount == 0 ) {
-			newline = true;
+			newline                  = true;
 			container->addPosition.x = container->rect.left;
 		}
 	} else {
 		newline = true;
 	}
 	if( newline ) {
-		// change layout vertically	
+		// change layout vertically
 		container->addPosition.y += height + ImGui->style.innerPadding;
 		container->rect.bottom = container->addPosition.y;
 		if( auto mesh = container->bgMesh ) {
@@ -722,7 +726,7 @@ rectf imguiAddItem( float width, float height )
 }
 void imguiSameLine( int32 count )
 {
-	auto container  = imguiCurrentContainer();
+	auto container             = imguiCurrentContainer();
 	container->horizontalCount = count;
 }
 float imguiClientWidth( ImGuiContainerState* container )
@@ -1133,10 +1137,70 @@ bool imguiCheckbox( StringView name, bool* checked )
 
 	return changed;
 }
+bool imguiRadiobox( ImGuiHandle handle, StringView name )
+{
+	auto renderer  = ImGui->renderer;
+	auto font      = ImGui->font;
+	auto style     = &ImGui->style;
+	auto container = imguiCurrentContainer();
+
+	using namespace ImGuiTexCoords;
+	auto checked = container->checkedRadiobox == handle;
+	auto index   = ( checked ) ? ( RadioboxChecked ) : ( RadioboxUnchecked );
+
+	auto innerPadding = style->innerPadding;
+	auto width  = stringWidth( font, name ) + innerPadding * 3 + ::width( style->rects[index] );
+	auto height = max( stringHeight( font ), ::height( style->rects[index] ) ) + innerPadding * 2;
+	auto rect   = imguiAddItem( width, height );
+	auto inner  = imguiInnerRect( rect );
+	auto checkRect = translate( style->rects[index], inner.leftTop );
+
+	if( imguiKeypressButton( handle, checkRect ) ) {
+		checked                    = true;
+		container->checkedRadiobox = handle;
+	}
+
+	RENDER_COMMANDS_STATE_BLOCK( renderer ) {
+		setTexture( renderer, 0, style->atlas );
+		MESH_STREAM_BLOCK( stream, renderer ) {
+			pushQuad( stream, checkRect, 0, makeQuadTexCoords( style->texCoords[index] ) );
+		}
+		renderer->color = multiply( renderer->color, Color::White );
+		auto textArea   = inner;
+		textArea.left += ::width( checkRect ) + innerPadding;
+		renderTextCenteredClipped( renderer, font, name, textArea );
+	}
+
+	return checked;
+}
+bool imguiRadiobox( StringView name )
+{
+	auto handle = imguiMakeStringHandle( name );
+	return imguiRadiobox( handle.handle, handle.string );
+}
 bool imguiRadiobox( StringView name, bool* checked )
 {
 	assert( checked );
 
+	auto handle = imguiMakeHandle( checked, ImGuiControlType::Radiobox );
+	auto container = imguiCurrentContainer();
+	auto isChecked =
+	    ( ( container->checkedRadiobox == handle ) || ( !container->checkedRadiobox && *checked ) );
+	auto changed  = *checked != isChecked;
+	*checked = isChecked;
+	if( !container->checkedRadiobox && *checked ) {
+		container->checkedRadiobox = handle;
+	}
+
+	if( imguiRadiobox( handle, name ) ) {
+		if( !*checked ) {
+			changed                    = true;
+			*checked                   = true;
+			container->checkedRadiobox = handle;
+		}
+	}
+	return changed;
+#if 0
 	auto renderer  = ImGui->renderer;
 	auto font      = ImGui->font;
 	auto style     = &ImGui->style;
@@ -1183,6 +1247,7 @@ bool imguiRadiobox( StringView name, bool* checked )
 	}
 
 	return changed;
+#endif
 }
 
 bool imguiBeginDropGroup( StringView name, bool* expanded )
@@ -1594,13 +1659,14 @@ GameInputs* imguiInputs() { return ImGui->inputs; }
 
 struct ImGuiBeginColumnResult {
 	rectf rect;
+	float lastColumnWidth;
 	float x;
 	float y;
 };
 ImGuiBeginColumnResult imguiBeginColumn( float width )
 {
 	auto container                = imguiCurrentContainer();
-	ImGuiBeginColumnResult result = {container->rect, container->addPosition.x,
+	ImGuiBeginColumnResult result = {container->rect, width, container->addPosition.x,
 	                                 container->addPosition.y};
 	container->rect = RectSetWidth( container->rect, width );
 	return result;
@@ -1613,9 +1679,10 @@ void imguiFitContainerToSize()
 void imguiNextColumn( ImGuiBeginColumnResult* columns, float width )
 {
 	auto container                = imguiCurrentContainer();
-	auto lastColumnWidth          = ::width( container->rect );
+	auto lastColumnWidth          = columns->lastColumnWidth;
+	columns->lastColumnWidth      = width;
 	container->rect               = columns->rect;
-	container->rect.left          = columns->x + lastColumnWidth;
+	container->rect.left          = columns->x + lastColumnWidth + ImGui->style.innerPadding;
 	container->rect.right         = container->rect.left + width;
 	container->addPosition.x      = container->rect.left;
 	container->addPosition.y      = columns->y;
@@ -1756,6 +1823,87 @@ rectf imguiScrollable( vec2* scrollPos, rectfarg scrollDomain, float width, floa
 	}
 
 	return rect;
+}
+
+struct ImGuiScrollableRegion {
+	float scrollPos;
+	vec2 dim;
+};
+struct ImGuiScrollableRegionResult {
+	rectf inner;
+	rectf prevRect;
+	char* clippingStart;
+	bool8 wasProcessingInputs;
+};
+ImGuiScrollableRegionResult imguiBeginScrollableRegion( ImGuiScrollableRegion* region, float width,
+                                                        float height )
+{
+	assert( region );
+	auto handle    = imguiMakeHandle( region, ImGuiControlType::ScrollableRegion );
+	auto container = imguiCurrentContainer();
+	auto inputs    = ImGui->inputs;
+
+	ImGuiScrollableRegionResult result = {};
+	auto clipWidth = width;
+	if( region->dim.y > height - ImGui->style.innerPadding * 2 ) {
+		clipWidth -= ImGui->style.scrollWidth + ImGui->style.innerPadding;
+	} else {
+		region->scrollPos = 0;
+	}
+	auto rect                          = imguiAddItem( clipWidth, height );
+	result.inner                       = imguiInnerRect( rect );
+	result.prevRect                    = container->rect;
+	result.clippingStart               = back( ImGui->renderer );
+	result.wasProcessingInputs         = ImGui->processInputs;
+
+	container->rect.right  = result.inner.right;
+	container->rect.left   = result.inner.left;
+	container->rect.top    = result.inner.top - region->scrollPos;
+	container->rect.bottom = container->rect.top;
+	container->addPosition = container->rect.leftTop;
+
+	if( imguiIsHover( handle ) && !ImGui->capture
+	    && !isPointInside( rect, inputs->mouse.position ) ) {
+
+		ImGui->processInputs = false;
+	}
+	return result;
+}
+void imguiEndScrollableRegion( ImGuiScrollableRegion* region, ImGuiScrollableRegionResult* state,
+                               float stepSize = 10 )
+{
+	assert( region );
+	assert( state );
+	auto handle    = imguiMakeHandle( region, ImGuiControlType::ScrollableRegion );
+	auto container = imguiCurrentContainer();
+	auto renderer  = ImGui->renderer;
+
+	RenderCommandsStream stream = {state->clippingStart,
+	                               ( size_t )( back( renderer ) - state->clippingStart )};
+	clip( stream, state->inner );
+
+	/*RENDER_COMMANDS_STATE_BLOCK( renderer ) {
+	    renderer->color = Color::White;
+	    setTexture( renderer, 0, null );
+	    addRenderCommandSingleQuad( renderer, container->rect );
+	}*/
+
+	auto containerHeight = height( container->rect );
+	auto innerHeight = height( state->inner );
+	ImGui->processInputs   = state->wasProcessingInputs;
+	if( containerHeight > innerHeight ) {
+		rectf scrollRect = state->inner;
+		scrollRect.left  = scrollRect.right;
+		scrollRect.right += ImGui->style.scrollWidth;
+		imguiScrollbar( &region->scrollPos, 0, containerHeight, innerHeight, stepSize, scrollRect,
+		                true );
+	} else {
+		region->scrollPos = 0;
+	}
+	region->dim.x          = width( container->rect );
+	region->dim.y          = containerHeight;
+	container->rect        = state->prevRect;
+	container->addPosition = container->rect.leftTop;
 }
 
 void imguiFinalize()

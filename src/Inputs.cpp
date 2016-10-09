@@ -38,6 +38,8 @@ struct GameInputs {
 	// at most 16 characters per frame can be processed
 	char chars[16];
 	int32 count;
+
+	bool disableEscapeForQuickExit;
 };
 
 StringView asStringView( GameInputs* inputs ) { return {inputs->chars, inputs->count}; }
@@ -106,4 +108,9 @@ const char* toVirtualKeyString( VirtualKeyEnumValues key )
 	auto index = (int32)key;
 	assert( index >= 0 && index < countof( VirtualKeyStrings ) );
 	return VirtualKeyStrings[index];
+}
+
+bool isHotkeyPressed( GameInputs* inputs, int32 key, int32 modifier )
+{
+	return isKeyPressed( inputs, key ) && isKeyDown( inputs, modifier );
 }

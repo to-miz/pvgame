@@ -9,11 +9,24 @@ struct TexturePackTextureDisplay {
 	rectf selectedRegion;
 };
 
+enum class TexturePackOrientation {
+	Def,
+	Cw90,
+	Ccw90,
+	Horizontal,
+	Vertical,
+	Diagonal,
+};
+struct TexturePackFace {
+	int32 regionId;
+	TexturePackOrientation orientation;
+};
 struct TexturePackFrame {
 	bool expanded;
-	VoxelGridTextureMap textureMaps;
+	TexturePackFace faces[VF_Count];
 	float scrollPos;
 	ImGuiListboxItem textureMapItems[VF_Count];
+	int32 source;
 };
 struct TexturePackEntry {
 	char textStorage[20];
@@ -29,15 +42,14 @@ struct TexturePackSource {
 	TextureId id;
 	float width;
 	float height;
-	Array< recti > regions;
+	rangei regions;
 	char textStorage[20];
 	int32 textLength;
 };
-template < class T >
-struct TexturePackListbox {
+struct TextureSourcesListbox {
 	float scrollPos;
 	int32 lastSelected;
-	UArray< T > items;
+	UArray< TexturePackSource > items;
 };
 
 struct TexturePackRemoveVariant {
@@ -56,6 +68,12 @@ struct TexturePackRemoveVariant {
 	};
 };
 
+struct TexturePackRegion {
+	int32 id;
+	recti rect;
+	int32 referenceCount;
+};
+
 struct TexturePackState {
 	ImmediateModeGui gui;
 	bool initialized;
@@ -63,16 +81,22 @@ struct TexturePackState {
 	ImGuiContainerId removeConfirm;
 	TexturePackRemoveVariant removeVariant;
 
+	ImGuiScrollableRegion textureMapsGuiRegion;
+
 	TexturePackTextureDisplay textureDisplay;
 	float textureScale;
-	bool snapToPixels;
 	bool valuesExpanded;
 	bool bulkMode;
+	bool orientationExpanded;
+	TexturePackOrientation orientation;
 
 	UArray< recti > textureRegions;
 
-	TexturePackListbox< TexturePackSource > textureSources;
+	TextureSourcesListbox textureSources;
 	UArray< TexturePackEntry > textureMaps;
+
+	int32 regionIds;
+	UArray< TexturePackRegion > uniqueTextureRegions;
 };
 
 #endif // _TEXTUREPACK_H_INCLUDED_

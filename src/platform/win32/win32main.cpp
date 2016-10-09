@@ -567,14 +567,14 @@ int CALLBACK WinMain( HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdL
 			ClipCursor( nullptr );
 		}
 
-		if( isKeyDown( &platformInputs, KC_Escape ) ) {
+		if( isKeyDown( &platformInputs, KC_Escape ) && !inputs.disableEscapeForQuickExit ) {
 			running = false;
 		}
-		if( isKeyPressed( &platformInputs, KC_Key_X ) ) {
+		if( isHotkeyPressed( &platformInputs, KC_Key_X, KC_Control ) ) {
 			replayStepped = false;
 			replayStep = false;
 		}
-		if( isKeyPressed( &platformInputs, KC_Key_C ) ) {
+		if( isHotkeyPressed( &platformInputs, KC_Key_C, KC_Control ) ) {
 			if( !replayStepped ) {
 				replayStepped = true;
 			} else {
@@ -589,7 +589,7 @@ int CALLBACK WinMain( HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdL
 			clampedElapsedTime = targetTime;
 		}
 
-		if( isKeyPressed( &platformInputs, KC_Key_P ) ) {
+		if( isHotkeyPressed( &platformInputs, KC_Key_P, KC_Control ) ) {
 			recordingInputs = !recordingInputs;
 			if( recordingInputs ) {
 				// we just started recording, initialize
@@ -606,7 +606,7 @@ int CALLBACK WinMain( HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdL
 			info.recordingFrame = recording->count;
 		}
 
-		if( isKeyPressed( &platformInputs, KC_Key_O ) && recording->count ) {
+		if( isHotkeyPressed( &platformInputs, KC_Key_O, KC_Control ) && recording->count ) {
 			replayingInputs = !replayingInputs;
 			if( replayingInputs ) {
 				memcpy( memory, recording->memory, memorySize );

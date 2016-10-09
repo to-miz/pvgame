@@ -43,6 +43,7 @@
 #include <Core/StringView.cpp>
 #include <Core/Unicode.cpp>
 #include <tm_conversion_wrapper.cpp>
+#include <tm_bin_packing_wrapper.cpp>
 
 #include <Core/ScopeGuard.h>
 
@@ -69,6 +70,8 @@
 #include "Imgui.cpp"
 
 #include "Graphics/ImageProcessing.cpp"
+
+#include "JsonWriter.cpp"
 
 namespace GameConstants
 {
@@ -266,6 +269,14 @@ enum VoxelFaceValues : uint32 {
 	VF_Bottom,
 
 	VF_Count,
+};
+static const char* VoxelFaceStrings[] = {
+	"front",
+	"left",
+	"back",
+	"right",
+	"top",
+	"bottom",
 };
 inline vec2i getTexelPlaneByFace( int32 face )
 {
@@ -2833,6 +2844,8 @@ UPDATE_AND_RENDER( updateAndRender )
 	auto font      = &app->font;
 	auto allocator = &app->stackAllocator;
 
+	inputs->disableEscapeForQuickExit = false;
+
 	auto lastFrameTimeAcc = app->frameTimeAcc;
 	app->frameTimeAcc += dt;
 
@@ -2855,23 +2868,23 @@ UPDATE_AND_RENDER( updateAndRender )
 	debug_Clear();
 
 	// options
-	if( isKeyPressed( inputs, KC_Key_Z ) ) {
+	if( isHotkeyPressed( inputs, KC_Key_Z, KC_Control ) ) {
 		debug_FillMeshStream = !debug_FillMeshStream;
 	}
-	if( isKeyPressed( inputs, KC_Key_I ) ) {
+	if( isHotkeyPressed( inputs, KC_Key_I, KC_Control ) ) {
 		renderer->wireframe = !renderer->wireframe;
 	}
 
-	if( isKeyPressed( inputs, KC_Key_1 ) ) {
+	if( isHotkeyPressed( inputs, KC_Key_1, KC_Control ) ) {
 		app->focus = AppFocus::Game;
 	}
-	if( isKeyPressed( inputs, KC_Key_2 ) ) {
+	if( isHotkeyPressed( inputs, KC_Key_2, KC_Control ) ) {
 		app->focus = AppFocus::Voxel;
 	}
-	if( isKeyPressed( inputs, KC_Key_3 ) ) {
+	if( isHotkeyPressed( inputs, KC_Key_3, KC_Control ) ) {
 		app->focus = AppFocus::TexturePack;
 	}
-	if( isKeyPressed( inputs, KC_Key_R ) ) {
+	if( isHotkeyPressed( inputs, KC_Key_R, KC_Control ) ) {
 		renderer->lightPosition = app->voxelState.camera.position;
 	}
 

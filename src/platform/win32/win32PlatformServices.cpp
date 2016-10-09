@@ -50,6 +50,8 @@ void win32DeleteTexture( TextureId id )
 	auto oglId = toOpenGlTextureId( id );
 	// glBindTexture( GL_TEXTURE_2D, 0 ); // TODO: is this needed?
 	glDeleteTextures( 1, &oglId );
+	auto info = getTextureInfo( id );
+	freeImageData( &info->image );
 	deleteTextureInfo( id );
 }
 

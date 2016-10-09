@@ -40,7 +40,7 @@ UninitializedArray< T > beginVector_( StackAllocator* allocator )
 {
 	assert( isValid( allocator ) );
 	return makeUArrayImpl< T >( allocator,
-	                            safe_truncate< int32 >( remaining( allocator, alignof( T ) ) ) );
+	                            safe_truncate< int32 >( getCapacityFor< T >( allocator ) ) );
 }
 
 // fit to size vector and give back unused memory to allocator, only works if v is the most recent
@@ -67,3 +67,18 @@ struct SmallUninitializedArray : UninitializedArray< T > {
 		cap = N;
 	}
 };
+
+template < class Container >
+ArrayView< typename Container::value_type > makeRangeView( Container& container, rangei range )
+{
+	TMA_ASSERT( range.min >= 0 );
+	TMA_ASSERT( range.max >= 0 );
+	if( range.min >= container.size() ) {
+		range.min = container.size();
+	}
+	if( range.max >= container.size() ) {
+		range.max = container.size();
+	}
+	TMA_ASSERT( range.min <= range.max );
+	return {container.data() + range.min, range.max - range.min};
+}

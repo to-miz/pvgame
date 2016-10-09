@@ -2,9 +2,12 @@
 TODO:
 	- finish up saving texture coordinates into VoxelGridTextureMap
 	- implement saving/loading from file
-	- add a scrollbar to the left side
-	- implement texture packing of different sources into one single texture
 */
+
+TexturePackRegion* getTexturePackRegion( TexturePackState* editor, int32 id )
+{
+	return find_first_where( editor->uniqueTextureRegions, it.id == id );
+}
 
 bool doTextureDisplay( AppData* app, TexturePackSource* source )
 {
@@ -37,13 +40,13 @@ bool doTextureDisplay( AppData* app, TexturePackSource* source )
 		if( isPointInside( rect, inputs->mouse.position ) && imguiIsHover( handle ) ) {
 			setTexture( renderer, 0, null );
 			renderer->color = 0x80000000;
-			FOR( entry : source->regions ) {
+			FOR( entry : makeRangeView( editor->textureRegions, source->regions ) ) {
 				auto scaled = translate( entry * editor->textureScale, origin );
 				if( isPointInside( scaled, inputs->mouse.position ) ) {
 					addRenderCommandSingleQuad( renderer, scaled );
 
 					if( isKeyPressed( inputs, KC_LButton ) ) {
-						textureDisplay->selectedIndex  = indexof( source->regions, entry );
+						textureDisplay->selectedIndex  = indexof( editor->textureRegions, entry );
 						textureDisplay->selectedRegion = Rect< float >( entry );
 					}
 				}
@@ -54,9 +57,7 @@ bool doTextureDisplay( AppData* app, TexturePackSource* source )
 		auto translated = translate( textureRect, origin );
 		imguiRect( &textureDisplay->selectedRegion, {0, 0, source->width, source->height},
 				   translated );
-		if( editor->snapToPixels ) {
-			textureDisplay->selectedRegion = floor( textureDisplay->selectedRegion );
-		}
+		textureDisplay->selectedRegion = floor( textureDisplay->selectedRegion );
 
 		debugPrintln( "{}", textureDisplay->selectedRegion );
 
@@ -69,36 +70,75 @@ bool doTextureDisplay( AppData* app, TexturePackSource* source )
 
 	renderer->color = Color::White;
 	if( imguiButton( "Assign" ) ) {
-		auto normalized =
-			scale( textureDisplay->selectedRegion, 1.0f / source->width, 1.0f / source->height );
-		if( editor->bulkMode ) {
-			FOR( textureMap : editor->textureMaps ) {
-				FOR( frame : makeArrayView( textureMap.frames, textureMap.framesCount ) ) {
-					for( auto i = 0; i < VF_Count; ++i ) {
-						if( textureMap.bulkModeItems[i].selected ) {
-							auto entry = &frame.textureMaps.entries[i];
-							entry->texCoords = makeQuadTexCoords( normalized );
+		auto rect        = Rect< int32 >( textureDisplay->selectedRegion );
+		auto orientation = editor->orientation;
+		auto sourceIndex = indexof( editor->textureSources.items, *source );
+
+		int32 regionId     = -1;
+		auto textureRegion = find_first_where( editor->uniqueTextureRegions,
+		                                       memcmp( &it.rect, &rect, sizeof( recti ) ) == 0 );
+		if( !textureRegion ) {
+			regionId = editor->regionIds++;
+			if( !editor->uniqueTextureRegions.remaining() ) {
+				LOG( ERROR, "out of memory for unique texture regions" );
+			} else {
+				editor->uniqueTextureRegions.push_back( {regionId, rect} );
+				textureRegion = &editor->uniqueTextureRegions.back();
+			}
+		} else {
+			regionId = textureRegion->id;
+		}
+
+		if( regionId >= 0 ) {
+			if( editor->bulkMode ) {
+				FOR( textureMap : editor->textureMaps ) {
+					FOR( frame : makeArrayView( textureMap.frames, textureMap.framesCount ) ) {
+						frame.source = sourceIndex;
+						for( auto i = 0; i < VF_Count; ++i ) {
+							if( textureMap.bulkModeItems[i].selected ) {
+								auto face = &frame.faces[i];
+								if( auto prev = getTexturePackRegion( editor, face->regionId ) ) {
+									--prev->referenceCount;
+								}
+								face->regionId    = regionId;
+								face->orientation = orientation;
+								++textureRegion->referenceCount;
+							}
+						}
+					}
+				}
+			} else {
+				FOR( textureMap : editor->textureMaps ) {
+					FOR( frame : makeArrayView( textureMap.frames, textureMap.framesCount ) ) {
+						frame.source = sourceIndex;
+						for( auto i = 0; i < VF_Count; ++i ) {
+							auto item = &frame.textureMapItems[i];
+							if( item->selected ) {
+								auto face = &frame.faces[i];
+								if( auto prev = getTexturePackRegion( editor, face->regionId ) ) {
+									--prev->referenceCount;
+								}
+								face->regionId    = regionId;
+								face->orientation = orientation;
+								++textureRegion->referenceCount;
+							}
 						}
 					}
 				}
 			}
-		} else {
-			FOR( textureMap : editor->textureMaps ) {
-				FOR( frame : makeArrayView( textureMap.frames, textureMap.framesCount ) ) {
-					for( auto i = 0; i < VF_Count; ++i ) {
-						auto item = &frame.textureMapItems[i];
-						if( item->selected ) {
-							auto entry = &frame.textureMaps.entries[i];
-							entry->texCoords = makeQuadTexCoords( normalized );
-						}
-					}
+			// remove regions with negative or zero ref count
+			for( auto it = editor->uniqueTextureRegions.begin();
+			     it != editor->uniqueTextureRegions.end(); ) {
+				if( it->referenceCount <= 0 ) {
+					it = editor->uniqueTextureRegions.erase( it );
+					continue;
 				}
+				++it;
 			}
 		}
 	}
 
 	imguiSlider( "Texture Scale", &editor->textureScale, 1, 10 );
-	imguiCheckbox( "Snap to Pixels", &editor->snapToPixels );
 
 	if( editor->textureDisplay.selectedIndex >= 0 ) {
 		auto rect = &editor->textureDisplay.selectedRegion;
@@ -107,6 +147,65 @@ bool doTextureDisplay( AppData* app, TexturePackSource* source )
 			imguiEditbox( "Top", &rect->top );
 			imguiEditbox( "Right", &rect->right );
 			imguiEditbox( "Bottom", &rect->bottom );
+			imguiEndDropGroup();
+		}
+		if( imguiBeginDropGroup( "Orientation", &editor->orientationExpanded ) ) {
+			auto layout = imguiBeginColumn( 100 );
+			if( imguiRadiobox( "Def" ) ) {
+				editor->orientation = TexturePackOrientation::Def;
+			}
+			if( imguiRadiobox( "Cw90" ) ) {
+				editor->orientation = TexturePackOrientation::Cw90;
+			}
+			if( imguiRadiobox( "Ccw90" ) ) {
+				editor->orientation = TexturePackOrientation::Ccw90;
+			}
+			if( imguiRadiobox( "Horizontal" ) ) {
+				editor->orientation = TexturePackOrientation::Horizontal;
+			}
+			if( imguiRadiobox( "Vertical" ) ) {
+				editor->orientation = TexturePackOrientation::Vertical;
+			}
+			if( imguiRadiobox( "Diagonal" ) ) {
+				editor->orientation = TexturePackOrientation::Diagonal;
+			}
+
+			imguiNextColumn( &layout, 100 );
+			auto rect = imguiRegion( 100, 100 );
+			auto renderer = imguiRenderer();
+			renderer->color = Color::White;
+			setTexture( renderer, 0, source->id );
+			auto normalized = scale( textureDisplay->selectedRegion, 1.0f / source->width,
+			                         1.0f / source->height );
+			QuadTexCoords texCoords = makeQuadTexCoords( normalized );
+			switch( editor->orientation ) {
+				case TexturePackOrientation::Def: {
+					break;
+				}
+				case TexturePackOrientation::Cw90: {
+					texCoords = makeQuadTexCoordsCw90( texCoords );
+					break;
+				}
+				case TexturePackOrientation::Ccw90: {
+					texCoords = makeQuadTexCoordsCcw90( texCoords );
+					break;
+				}
+				case TexturePackOrientation::Horizontal: {
+					texCoords = makeQuadTexCoordsMirroredHorizontal( texCoords );
+					break;
+				}
+				case TexturePackOrientation::Vertical: {
+					texCoords = makeQuadTexCoordsMirroredVertical( texCoords );
+					break;
+				}
+				case TexturePackOrientation::Diagonal: {
+					texCoords = makeQuadTexCoordsMirroredDiagonal( texCoords );
+					break;
+				}
+				InvalidDefaultCase;
+			}
+			addRenderCommandSingleQuad( renderer, rect, 0, texCoords );
+
 			imguiEndDropGroup();
 		}
 	}
@@ -161,10 +260,11 @@ TexturePackSource* doTexturePackSources( AppData* app )
 					auto info         = getTextureInfo( item->id );
 					item->width       = info->width;
 					item->height      = info->height;
+					item->regions.min = editor->textureRegions.size();
 					auto slice        = makeUninitializedArrayView( editor->textureRegions.end(),
 															 editor->textureRegions.remaining() );
 					imageFindRects( slice, info->image, {}, 0, false );
-					item->regions = {slice.data(), slice.size()};
+					item->regions.max = item->regions.min + slice.size();
 					editor->textureRegions.resize( editor->textureRegions.size() + slice.size() );
 				} else {
 					textureSources->items.pop_back();
@@ -213,6 +313,7 @@ void doTexturePackEntries( AppData* app )
 
 	imguiCheckbox( "Bulk Mode", &editor->bulkMode );
 
+	auto regionState = imguiBeginScrollableRegion( &editor->textureMapsGuiRegion, 150, 400 );
 	FOR( entry : *textureMaps ) {
 		if( imguiBeginDropGroup( {entry.textStorage, entry.textLength}, &entry.expanded ) ) {
 			imguiEditbox( "Name", entry.textStorage, &entry.textLength,
@@ -220,12 +321,23 @@ void doTexturePackEntries( AppData* app )
 			if( editor->bulkMode ) {
 				imguiListbox( &entry.bulkScrollPos, makeArrayView( entry.bulkModeItems ), 150,
 							  6 * stringHeight( ImGui->font ), true );
+				if( imguiButton( "Remove Entry" ) ) {
+					auto removeEntry        = &set_variant( editor->removeVariant, removeEntry );
+					removeEntry->entryIndex = indexof( *textureMaps, entry );
+					imguiShowModal( editor->removeConfirm );
+				}
 			} else {
-				if( imguiButton( "Add Frame" ) ) {
+				imguiSameLine( 2 );
+				if( imguiButton( "Add Frame", 50 ) ) {
 					if( entry.framesCount < countof( entry.frames ) ) {
 						auto frame = &entry.frames[entry.framesCount++];
 						copy( frame->textureMapItems, entries, countof( entries ) );
 					}
+				}
+				if( imguiButton( "Remove Entry", 50 ) ) {
+					auto removeEntry        = &set_variant( editor->removeVariant, removeEntry );
+					removeEntry->entryIndex = indexof( *textureMaps, entry );
+					imguiShowModal( editor->removeConfirm );
 				}
 				auto framesView = makeInitializedArrayView( entry.frames, entry.framesCount,
 															countof( entry.frames ) );
@@ -233,26 +345,39 @@ void doTexturePackEntries( AppData* app )
 					auto frame       = &entry.frames[i];
 					auto indexString = toNumberString( i );
 					if( imguiBeginDropGroup( indexString, &frame->expanded ) ) {
-						imguiListbox( &frame->scrollPos, makeArrayView( frame->textureMapItems ), 150,
-									  6 * stringHeight( ImGui->font ), true );
+						imguiListbox( &frame->scrollPos, makeArrayView( frame->textureMapItems ),
+						              150, 6 * stringHeight( ImGui->font ), true );
 						if( imguiButton( "Remove Frame" ) ) {
 							auto removeFrame = &set_variant( editor->removeVariant, removeFrame );
 							removeFrame->entryIndex = indexof( *textureMaps, entry );
 							removeFrame->frameIndex = i;
 							imguiShowModal( editor->removeConfirm );
 						}
+						imguiEndDropGroup();
 					}
 				}
 				entry.framesCount = framesView.size();
-				if( imguiButton( "Remove Entry" ) ) {
-					auto removeEntry        = &set_variant( editor->removeVariant, removeEntry );
-					removeEntry->entryIndex = indexof( *textureMaps, entry );
-					imguiShowModal( editor->removeConfirm );
-				}
 			}
 			imguiEndDropGroup();
 		}
 	}
+	imguiEndScrollableRegion( &editor->textureMapsGuiRegion, &regionState );
+}
+
+void doBinPacking( AppData* app )
+{
+	/*auto editor   = &app->texturePackState;
+	auto allocator = &app->stackAllocator;
+
+	TEMPORARY_MEMORY_BLOCK( allocator ) {
+		auto dims = allocateArray( allocator, BinPackBatchDim,  );
+		auto rectsCount = getCapacityFor< regioni >( allocator ) / 2;
+		auto freeRects = allocateArray( allocator, regioni, rectsCount );
+		auto usedRects = allocateArray( allocator, regioni, rectsCount );
+
+		auto bins =
+		    binPackCreateStatic( width, height, freeRects, rectsCount, usedRects, rectsCount );
+	}*/
 }
 
 void doTexturePack( AppData* app, GameInputs* inputs, bool focus, float dt )
@@ -265,6 +390,10 @@ void doTexturePack( AppData* app, GameInputs* inputs, bool focus, float dt )
 	if( !focus ) {
 		return;
 	}
+
+	debugPrintln( "Unique rects: {}", editor->uniqueTextureRegions.size() );
+
+	inputs->disableEscapeForQuickExit = true;
 	imguiBind( gui );
 	if( !editor->initialized ) {
 		*gui = defaultImmediateModeGui();
@@ -277,6 +406,7 @@ void doTexturePack( AppData* app, GameInputs* inputs, bool focus, float dt )
 		editor->textureRegions               = makeUArray( allocator, recti, 100 );
 		editor->textureSources.items         = makeUArray( allocator, TexturePackSource, 10 );
 		editor->textureMaps                  = makeUArray( allocator, TexturePackEntry, 100 );
+		editor->uniqueTextureRegions         = makeUArray( allocator, TexturePackRegion, 200 );
 		editor->textureDisplay.selectedIndex = -1;
 		editor->initialized                  = true;
 	}
@@ -296,6 +426,47 @@ void doTexturePack( AppData* app, GameInputs* inputs, bool focus, float dt )
 
 	imguiNextColumn( &layout, 400 );
 	if( doTextureDisplay( app, lastSelected ) ) {
+	}
+
+	imguiNextColumn( &layout, 400 );
+	if( imguiButton( "Load" ) ) {
+		
+	}
+	if( imguiButton( "Save" ) ) {
+		auto allocator = &app->stackAllocator;
+		TEMPORARY_MEMORY_BLOCK( allocator ) {
+			auto bufferSize = safe_truncate< int32 >( remaining( allocator ) );
+			auto buffer = allocateArray( allocator, char, bufferSize );
+			auto writer = makeJsonWriter( buffer, bufferSize );
+			writer.builder.format.precision = 9;
+
+			writeStartArray( &writer );
+			FOR( textureMap : editor->textureMaps ) {
+				writeStartObject( &writer );
+					auto name = StringView{textureMap.textStorage, textureMap.textLength};
+					writeProperty( &writer, "name", name );
+					writePropertyName( &writer, "frames" );
+					writeStartArray( &writer );
+						FOR( frame : makeArrayView( textureMap.frames, textureMap.framesCount ) ) {
+							writeStartObject( &writer );
+							for( auto i = 0; i < VF_Count; ++i ) {
+								writePropertyName( &writer, VoxelFaceStrings[i] );
+								writeStartArray( &writer );
+								/*for( auto j = 0; j < 4; ++j ) {
+									// TODO: recalculate texture coordinates
+							        writeValue( &writer, frame.faces[i].texCoords.elements[j] );
+						        }*/
+						        writeEndArray( &writer );
+							}
+							writeEndObject( &writer );
+						}
+					writeEndArray( &writer );
+				writeEndObject( &writer );
+			}
+			writeEndArray( &writer );
+
+			app->platform.writeBufferToFile( "../builds/test.json", buffer, writer.builder.size() );
+		}
 	}
 
 	if( imguiDialog( "Remove", editor->removeConfirm ) ) {
@@ -331,9 +502,15 @@ void doTexturePack( AppData* app, GameInputs* inputs, bool focus, float dt )
 					auto textureSources = &editor->textureSources;
 					auto entry = &textureSources->items[removeSource->sourceIndex];
 					app->platform.deleteTexture( entry->id );
+					auto range = entry->regions;
+					auto rangeLength = length( range );
+					erase_range( editor->textureRegions, range );
+					FOR( other : textureSources->items ) {
+						if( other.regions.min > entry->regions.min ) {
+							other.regions = offsetBy( other.regions, -rangeLength );
+						}
+					}
 					entry = textureSources->items.erase( entry );
-					// TODO: update texureRegions pool so we do not "leak" region memory when
-					// removing
 					if( entry == textureSources->items.end() ) {
 						if( textureSources->items.size() ) {
 							entry                        = &textureSources->items.back();
@@ -352,7 +529,7 @@ void doTexturePack( AppData* app, GameInputs* inputs, bool focus, float dt )
 			}
 			InvalidDefaultCase;
 		}
-		if( imguiButton( "Cancel" ) ) {
+		if( imguiButton( "Cancel" ) || isKeyPressed( imguiInputs(), KC_Escape ) ) {
 			imguiClose( editor->removeConfirm );
 		}
 	}

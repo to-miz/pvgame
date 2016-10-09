@@ -90,6 +90,13 @@ struct string_builder {
 		sz += len;
 		return *this;
 	}
+	string_builder& operator<<( StringView str )
+	{
+		auto len = ( str.size() < remaining() ) ? ( str.size() ) : ( remaining() );
+		memcpy( end(), str.data(), len );
+		sz += len;
+		return *this;
+	}
 
 	template < class... Types >
 	string_builder& print( const char* format, Types... args )

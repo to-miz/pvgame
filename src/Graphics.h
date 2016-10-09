@@ -1090,6 +1090,23 @@ void clip( Mesh* mesh, rectfarg rect )
 		}
 	}
 }
+void clip( RenderCommandsStream stream, rectfarg rect )
+{
+	while( stream.size ) {
+		auto header = getRenderCommandsHeader( &stream );
+		switch( header->type ) {
+			case RenderCommandEntryType::Mesh: {
+				auto body = getRenderCommandMesh( &stream, header );
+				clip( &body->mesh, rect );
+				break;
+			}
+			default: {
+				skipRenderCommandBody( &stream, header );
+				break;
+			}
+		}
+	}
+}
 struct ClippingRect {
 	RenderCommands* renderer;
 	char* start;
@@ -1118,20 +1135,7 @@ struct ClippingRect {
 		assert( start );
 		assert( !clipped );
 		auto stream = RenderCommandsStream{start, ( size_t )( back( renderer ) - start )};
-		while( stream.size ) {
-			auto header = getRenderCommandsHeader( &stream );
-			switch( header->type ) {
-				case RenderCommandEntryType::Mesh: {
-					auto body = getRenderCommandMesh( &stream, header );
-					::clip( &body->mesh, rect );
-					break;
-				}
-				default: {
-					skipRenderCommandBody( &stream, header );
-					break;
-				}
-			}
-		}
+		::clip( stream, rect );
 		clipped = true;
 	}
 };
