@@ -71,7 +71,9 @@ struct TexturePackRemoveVariant {
 struct TexturePackRegion {
 	int32 id;
 	recti rect;
+	TextureId texture;
 	int32 referenceCount;
+	recti destRect;
 };
 
 struct TexturePackState {

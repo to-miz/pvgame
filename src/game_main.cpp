@@ -72,6 +72,7 @@
 #include "Graphics/ImageProcessing.cpp"
 
 #include "JsonWriter.cpp"
+#include "tm_json_wrapper.cpp"
 
 namespace GameConstants
 {
@@ -1772,6 +1773,28 @@ VoxelGrid getVoxelGridFromTextureMapTopLeftColorKey( VoxelGridTextureMap* map )
 	return getVoxelGridFromTextureMap( map, getPixelColor( info->image, 0, 0 ) );
 }
 
+struct VoxelCollection {
+	struct Frame {
+		VoxelGridTextureMap textureMap;
+		MeshId mesh;
+		vec2 offset;
+	};
+
+	struct FrameInfo {
+		recti textureRegion[VF_Count];
+	};
+
+	struct Animation {
+		string name;
+		rangei range;
+	};
+
+	TextureId texture;
+	Array< Frame > frames;
+	Array< FrameInfo > frameInfos;
+	Array< Animation > animations;
+};
+
 static void doVoxelGui( AppData* app, GameInputs* inputs, bool focus, float dt )
 {
 	auto voxel     = &app->voxelState;
@@ -2805,17 +2828,6 @@ static void doGame( AppData* app, GameInputs* inputs, bool focus, float dt, bool
 			setRenderState( renderer, RenderStateType::DepthTest, true );
 		}
 	}
-}
-
-template < class T >
-void* toPtr( T v )
-{
-	return (void*)( (uintmax)unsignedof( v ) );
-}
-template < class T >
-T fromPtr( void* p )
-{
-	return ( T )( (uintmax)p );
 }
 
 void processIngameLogs( float dt )

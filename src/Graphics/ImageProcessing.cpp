@@ -1,3 +1,19 @@
+void copyRegion( void* dest, rectiarg destRegion, int32 destStride, int32 elementSize, void* src,
+                 rectiarg srcRegion, int32 srcStride )
+{
+	assert( width( destRegion ) == width( srcRegion ) );
+	assert( height( destRegion ) == height( srcRegion ) );
+
+	auto rowSize   = min( width( destRegion ), width( srcRegion ) ) * elementSize;
+	auto minHeight = min( height( destRegion ), height( srcRegion ) );
+
+	auto destRow = (char*)dest + destRegion.left * elementSize + destRegion.top * destStride;
+	auto srcRow  = (char*)src + srcRegion.left * elementSize + srcRegion.top * srcStride;
+	for( auto y = 0; y < minHeight; ++y, destRow += destStride, srcRow += srcStride ) {
+		memcpy( destRow, srcRow, rowSize );
+	}
+}
+
 static recti imageFindRect( uint8* pixels, int32 x, int32 y, int32 width, int32 height,
 							int32 stride, int32 border )
 {

@@ -27,7 +27,7 @@ set debug=1
 if "%2" == "release" ( set "debug=0" )
 if "%3" == "release" ( set "debug=0" )
 
-set "defines=/DNOMINMAX /DUNICODE /DGAME_FLIP_Z"
+set "defines=/DNOMINMAX /DUNICODE /DGAME_FLIP_Z /D_CRT_SECURE_NO_WARNINGS"
 
 if %debug% == 1 goto :is_debug
 if %debug% == 0 goto :is_release

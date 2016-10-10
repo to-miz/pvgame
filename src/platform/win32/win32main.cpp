@@ -2,7 +2,7 @@
 #include <Core/IntegerTypes.h>
 #include <Core/CoreTypes.h>
 #include <Warnings.h>
-#include <stdarg.h>
+#include <cstdarg>
 
 #include <type_traits>
 #include <Core/Macros.h>

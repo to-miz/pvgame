@@ -1,12 +1,53 @@
 /*
 TODO:
-	- finish up saving texture coordinates into VoxelGridTextureMap
-	- implement saving/loading from file
+    - finish up saving texture coordinates into VoxelGridTextureMap
+    - implement saving/loading from file
 */
+
+#define STBIW_ASSERT( x ) assert( x )
+#define STBIW_MALLOC( sz ) malloc( sz )
+#define STBIW_REALLOC( p, newsz ) realloc( p, newsz )
+#define STBIW_FREE( p ) free( p )
+#define STBIW_MEMMOVE( a, b, sz ) memmove( a, b, sz )
+#define STBI_WRITE_NO_STDIO
+#define STB_IMAGE_WRITE_IMPLEMENTATION
+#include <stb_image_write.h>
 
 TexturePackRegion* getTexturePackRegion( TexturePackState* editor, int32 id )
 {
 	return find_first_where( editor->uniqueTextureRegions, it.id == id );
+}
+
+QuadTexCoords texturePackGetTexCoords( rectfarg rect, TexturePackOrientation orientation )
+{
+	QuadTexCoords texCoords = makeQuadTexCoords( rect );
+	switch( orientation ) {
+		case TexturePackOrientation::Def: {
+			break;
+		}
+		case TexturePackOrientation::Cw90: {
+			texCoords = makeQuadTexCoordsCw90( texCoords );
+			break;
+		}
+		case TexturePackOrientation::Ccw90: {
+			texCoords = makeQuadTexCoordsCcw90( texCoords );
+			break;
+		}
+		case TexturePackOrientation::Horizontal: {
+			texCoords = makeQuadTexCoordsMirroredHorizontal( texCoords );
+			break;
+		}
+		case TexturePackOrientation::Vertical: {
+			texCoords = makeQuadTexCoordsMirroredVertical( texCoords );
+			break;
+		}
+		case TexturePackOrientation::Diagonal: {
+			texCoords = makeQuadTexCoordsMirroredDiagonal( texCoords );
+			break;
+		}
+		InvalidDefaultCase;
+	}
+	return texCoords;
 }
 
 bool doTextureDisplay( AppData* app, TexturePackSource* source )
@@ -59,7 +100,7 @@ bool doTextureDisplay( AppData* app, TexturePackSource* source )
 				   translated );
 		textureDisplay->selectedRegion = floor( textureDisplay->selectedRegion );
 
-		debugPrintln( "{}", textureDisplay->selectedRegion );
+		debugPrintln( "Selected Region: {}", textureDisplay->selectedRegion );
 
 		renderer->color = 0x80000000;
 		setTexture( renderer, 0, null );
@@ -75,14 +116,16 @@ bool doTextureDisplay( AppData* app, TexturePackSource* source )
 		auto sourceIndex = indexof( editor->textureSources.items, *source );
 
 		int32 regionId     = -1;
-		auto textureRegion = find_first_where( editor->uniqueTextureRegions,
-		                                       memcmp( &it.rect, &rect, sizeof( recti ) ) == 0 );
+		auto textureRegion = find_first_where(
+		    editor->uniqueTextureRegions,
+		    it.texture == source->id && memcmp( &it.rect, &rect, sizeof( recti ) ) == 0 );
+
 		if( !textureRegion ) {
-			regionId = editor->regionIds++;
+			regionId = ++editor->regionIds;
 			if( !editor->uniqueTextureRegions.remaining() ) {
 				LOG( ERROR, "out of memory for unique texture regions" );
 			} else {
-				editor->uniqueTextureRegions.push_back( {regionId, rect} );
+				editor->uniqueTextureRegions.push_back( {regionId, rect, source->id} );
 				textureRegion = &editor->uniqueTextureRegions.back();
 			}
 		} else {
@@ -98,7 +141,9 @@ bool doTextureDisplay( AppData* app, TexturePackSource* source )
 							if( textureMap.bulkModeItems[i].selected ) {
 								auto face = &frame.faces[i];
 								if( auto prev = getTexturePackRegion( editor, face->regionId ) ) {
-									--prev->referenceCount;
+									if( prev != textureRegion ) {
+										--prev->referenceCount;
+									}
 								}
 								face->regionId    = regionId;
 								face->orientation = orientation;
@@ -116,7 +161,9 @@ bool doTextureDisplay( AppData* app, TexturePackSource* source )
 							if( item->selected ) {
 								auto face = &frame.faces[i];
 								if( auto prev = getTexturePackRegion( editor, face->regionId ) ) {
-									--prev->referenceCount;
+									if( prev != textureRegion ) {
+										--prev->referenceCount;
+									}
 								}
 								face->regionId    = regionId;
 								face->orientation = orientation;
@@ -177,33 +224,7 @@ bool doTextureDisplay( AppData* app, TexturePackSource* source )
 			setTexture( renderer, 0, source->id );
 			auto normalized = scale( textureDisplay->selectedRegion, 1.0f / source->width,
 			                         1.0f / source->height );
-			QuadTexCoords texCoords = makeQuadTexCoords( normalized );
-			switch( editor->orientation ) {
-				case TexturePackOrientation::Def: {
-					break;
-				}
-				case TexturePackOrientation::Cw90: {
-					texCoords = makeQuadTexCoordsCw90( texCoords );
-					break;
-				}
-				case TexturePackOrientation::Ccw90: {
-					texCoords = makeQuadTexCoordsCcw90( texCoords );
-					break;
-				}
-				case TexturePackOrientation::Horizontal: {
-					texCoords = makeQuadTexCoordsMirroredHorizontal( texCoords );
-					break;
-				}
-				case TexturePackOrientation::Vertical: {
-					texCoords = makeQuadTexCoordsMirroredVertical( texCoords );
-					break;
-				}
-				case TexturePackOrientation::Diagonal: {
-					texCoords = makeQuadTexCoordsMirroredDiagonal( texCoords );
-					break;
-				}
-				InvalidDefaultCase;
-			}
+			auto texCoords = texturePackGetTexCoords( normalized, editor->orientation );
 			addRenderCommandSingleQuad( renderer, rect, 0, texCoords );
 
 			imguiEndDropGroup();
@@ -364,20 +385,145 @@ void doTexturePackEntries( AppData* app )
 	imguiEndScrollableRegion( &editor->textureMapsGuiRegion, &regionState );
 }
 
-void doBinPacking( AppData* app )
+int32 doBinPacking( AppData* app, char* filenameOut, int32 filenameMaxLength )
 {
-	/*auto editor   = &app->texturePackState;
-	auto allocator = &app->stackAllocator;
+	auto editor         = &app->texturePackState;
+	auto allocator      = &app->stackAllocator;
+	auto filenameLength = 0;
 
 	TEMPORARY_MEMORY_BLOCK( allocator ) {
-		auto dims = allocateArray( allocator, BinPackBatchDim,  );
-		auto rectsCount = getCapacityFor< regioni >( allocator ) / 2;
-		auto freeRects = allocateArray( allocator, regioni, rectsCount );
-		auto usedRects = allocateArray( allocator, regioni, rectsCount );
+		auto dimsCount = editor->uniqueTextureRegions.size();
+		auto dims      = allocateArray( allocator, BinPackBatchDim, dimsCount );
+		// fill in input structure for max rects algorithm
+		for( auto i = 0; i < dimsCount; ++i ) {
+			auto dest        = &dims[i];
+			auto src         = &editor->uniqueTextureRegions[i];
+			dest->dim.width  = width( src->rect ) + 1;
+			dest->dim.height = height( src->rect ) + 1;
+			dest->userData = toPtr( src->id );
+		}
+		auto results   = allocateArray( allocator, BinPackBatchResult, dimsCount );
 
-		auto bins =
-		    binPackCreateStatic( width, height, freeRects, rectsCount, usedRects, rectsCount );
-	}*/
+		MaxRectsFreeRectChoiceHeuristic bestHeuristic = MaxRectsBestShortSideFit;
+		int32 bestTextureSize                         = 0;
+		float bestFillingRatio                        = 0;
+
+		struct PackBinsResult {
+			int32 count;
+			int32 usedArea;
+			int32 textureSize;
+			recti bounds;
+		};
+		auto packBins = [&]( MaxRectsFreeRectChoiceHeuristic heuristic,
+		                     int32 initialTextureSize = 1 ) {
+			int32 count        = 0;
+			uint32 textureSize = (uint32)initialTextureSize;
+			int32 usedArea     = 0;
+			TEMPORARY_MEMORY_BLOCK( allocator ) {
+				auto rectsCount =
+				    safe_truncate< int32 >( getCapacityFor< regioni >( allocator ) / 2 );
+				auto freeRects = allocateArray( allocator, regioni, rectsCount );
+				auto usedRects = allocateArray( allocator, regioni, rectsCount );
+
+				for( ;; ) {
+					// try increasing powers of two until all rects are successfully packed
+					auto bins = binPackCreateStatic( (int32)textureSize, (int32)textureSize,
+					                                 freeRects, rectsCount, usedRects, rectsCount );
+					count =
+					    maxRectsInsertBatch( &bins, dims, results, dimsCount, heuristic, false );
+					if( count == dimsCount ) {
+						usedArea = bins.usedArea;
+						break;
+					}
+					textureSize <<= 1;
+				}
+			}
+			PackBinsResult result = {count, usedArea, (int32)textureSize};
+			for( auto i = 0; i < count; ++i ) {
+				auto entry    = &results[i];
+				result.bounds = RectBounding( result.bounds, Rect( entry->result.rect ) );
+			}
+			return result;
+		};
+
+		for( auto i = 0; i < 5; ++i ) {
+			auto heuristic = (MaxRectsFreeRectChoiceHeuristic)i;
+			auto textureSize = 0;
+			{
+				auto result = packBins( heuristic );
+				textureSize = result.textureSize;
+				auto area = width( result.bounds ) * height( result.bounds );
+				auto fillingRatio = result.usedArea / (float)area;
+				if( fillingRatio > bestFillingRatio ) {
+					bestHeuristic = heuristic;
+					bestTextureSize = result.textureSize;
+					bestFillingRatio = fillingRatio;
+				}
+			}
+			{
+				auto result = packBins( heuristic, (int32)( (uint32)textureSize << 1 ) );
+				auto area = width( result.bounds ) * height( result.bounds );
+				auto fillingRatio = result.usedArea / (float)area;
+				if( fillingRatio > bestFillingRatio ) {
+					bestHeuristic = heuristic;
+					bestTextureSize = result.textureSize;
+					bestFillingRatio = fillingRatio;
+				}
+			}
+		}
+		assert( bestTextureSize != 0 );
+		auto result = packBins( bestHeuristic, bestTextureSize );
+
+		// generate texture
+		auto textureWidth  = width( result.bounds );
+		auto textureHeight = height( result.bounds );
+		// rgba texture
+		auto texture = allocateArray( allocator, uint8, textureWidth * textureHeight * 4 );
+		zeroMemory( texture, textureWidth * textureHeight * 4 );
+
+		for( auto i = 0; i < result.count; ++i ) {
+			auto entry       = &results[i];
+			auto id          = fromPtr< int32 >( entry->userData );
+			auto source      = getTexturePackRegion( editor, id );
+			auto sourceInfo  = getTextureInfo( source->texture );
+			auto sourceImage = sourceInfo->image;
+
+			auto destRect = entry->result.rect;
+			--destRect.width;
+			--destRect.height;
+			source->destRect = Rect( destRect );
+			auto sourceRect  = source->rect;
+			copyRegion( texture, Rect( destRect ), textureWidth * 4, 4, sourceImage.data,
+			            sourceRect, sourceImage.width * 4 );
+		}
+
+		filenameLength = GlobalPlatformServices->getSaveFilename( "png\0*.png\0", "Data/Images",
+		                                                          filenameOut, filenameMaxLength );
+
+		if( filenameLength ) {
+			struct MemoryWriter {
+				char* data;
+				int32 size;
+				int32 capacity;
+			};
+			MemoryWriter writer = {};
+			writer.capacity     = safe_truncate< int32 >( remaining( allocator ) );
+			writer.data         = allocateArray( allocator, char, remaining( allocator ) );
+
+			auto memoryWriterCallback = []( void* context, void* data, int size ) {
+				auto writer = (MemoryWriter*)context;
+				auto len    = MIN( size, writer->capacity - writer->size );
+				memcpy( writer->data + writer->size, data, len );
+				writer->size += len;
+			};
+
+			stbi_write_png_to_func( memoryWriterCallback, &writer, textureWidth, textureHeight, 4,
+			                        texture, textureWidth * 4 );
+			GlobalPlatformServices->writeBufferToFile( {filenameOut, filenameLength}, writer.data,
+			                                           writer.size );
+		}
+	}
+	return filenameLength;
 }
 
 void doTexturePack( AppData* app, GameInputs* inputs, bool focus, float dt )
@@ -433,6 +579,10 @@ void doTexturePack( AppData* app, GameInputs* inputs, bool focus, float dt )
 		
 	}
 	if( imguiButton( "Save" ) ) {
+		char filename[260];
+		auto filenameLength = doBinPacking( app, filename, countof( filename ) );
+		replace( filename, filename + filenameLength, '\\', '/' );
+
 		auto allocator = &app->stackAllocator;
 		TEMPORARY_MEMORY_BLOCK( allocator ) {
 			auto bufferSize = safe_truncate< int32 >( remaining( allocator ) );
@@ -440,6 +590,10 @@ void doTexturePack( AppData* app, GameInputs* inputs, bool focus, float dt )
 			auto writer = makeJsonWriter( buffer, bufferSize );
 			writer.builder.format.precision = 9;
 
+			writeStartObject( &writer );
+			// TODO: write the relative path instead
+			writeProperty( &writer, "texture", StringView{filename, filenameLength} );
+			writePropertyName( &writer, "mapping" );
 			writeStartArray( &writer );
 			FOR( textureMap : editor->textureMaps ) {
 				writeStartObject( &writer );
@@ -451,19 +605,36 @@ void doTexturePack( AppData* app, GameInputs* inputs, bool focus, float dt )
 							writeStartObject( &writer );
 							for( auto i = 0; i < VF_Count; ++i ) {
 								writePropertyName( &writer, VoxelFaceStrings[i] );
-								writeStartArray( &writer );
-								/*for( auto j = 0; j < 4; ++j ) {
-									// TODO: recalculate texture coordinates
-							        writeValue( &writer, frame.faces[i].texCoords.elements[j] );
-						        }*/
-						        writeEndArray( &writer );
-							}
-							writeEndObject( &writer );
+
+						        auto face          = &frame.faces[i];
+						        auto id            = face->regionId;
+						        auto textureRegion = getTexturePackRegion( editor, id );
+						        if( textureRegion ) {
+									writeStartArray( &writer );
+							        // TODO: do we normalize textures before saving them to file?
+#if 0
+							        auto info          = getTextureInfo( textureRegion->texture );
+							        auto rect = scale( textureRegion->destRect, 1.0f / info->width,
+							                           1.0f / info->height );
+#else
+							        auto rect = Rect< float >( textureRegion->destRect );
+#endif
+							        auto texCoords = texturePackGetTexCoords( rect, face->orientation );
+							        for( auto j = 0; j < 4; ++j ) {
+								        writeValue( &writer, texCoords.elements[j] );
+							        }
+							        writeEndArray( &writer );
+						        } else {
+						        	writeValue( &writer, null );
+						        }
+					        }
+					        writeEndObject( &writer );
 						}
 					writeEndArray( &writer );
 				writeEndObject( &writer );
 			}
 			writeEndArray( &writer );
+			writeEndObject( &writer );
 
 			app->platform.writeBufferToFile( "../builds/test.json", buffer, writer.builder.size() );
 		}

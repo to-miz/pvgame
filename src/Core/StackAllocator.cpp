@@ -52,12 +52,12 @@ size_t remaining( StackAllocator* allocator )
 size_t remaining( StackAllocator* allocator, uint32 alignment )
 {
 	assert( isValid( allocator ) );
-	auto ret       = allocator->capacity - allocator->size;
+	auto result = allocator->capacity - allocator->size;
 	auto offset = getAlignmentOffset( allocator, alignment );
-	if( ret <= offset ) {
-		ret -= offset;
+	if( result <= offset ) {
+		result -= offset;
 	}
-	return offset;
+	return result;
 }
 
 void* allocate( StackAllocator* allocator, size_t size, uint32 alignment )

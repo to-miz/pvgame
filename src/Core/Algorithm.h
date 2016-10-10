@@ -3,6 +3,14 @@
 #ifndef _ALGORITHM_H_INCLUDED_
 #define _ALGORITHM_H_INCLUDED_
 
+template < class T >
+T exchange( T& value, const T& newValue )
+{
+	T oldValue = value;
+	value      = newValue;
+	return oldValue;
+}
+
 template< class Iterator, class ValueType >
 size_t count( Iterator first, Iterator last, ValueType value )
 {
@@ -266,6 +274,17 @@ void insertion_sort_last_elem( RandomAccessIterator first, RandomAccessIterator 
 	--last;
 	auto elem = *last;
 	std::rotate( std::upper_bound( first, last, elem, cmp ), last, last + 1 );
+}
+
+template < class ForwardIterator, class T >
+void replace( ForwardIterator first, ForwardIterator last, const T& old_value, const T& new_value )
+{
+	while( first != last ) {
+		if( *first == old_value ) {
+			*first = new_value;
+		}
+		++first;
+	}
 }
 
 #ifdef ACHE_USE_STD
