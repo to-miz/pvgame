@@ -1,21 +1,4 @@
 typedef UArray< char > string;
-void copyToString( string* a, const char* b )
-{
-	auto len = (int32)strlen( b );
-	if( len > a->capacity() ) {
-		len = a->capacity();
-	}
-	a->assign( b, b + len );
-}
-int32 copyToString( char* buffer, int32 bufferLen, const char* b )
-{
-	auto len = (int32)strlen( b );
-	if( len > bufferLen ) {
-		len = bufferLen;
-	}
-	memcpy( buffer, b, len );
-	return len;
-}
 
 struct StringView {
 	const char* ptr = nullptr;
@@ -186,7 +169,7 @@ StringView trimLeftNonNumeric( StringView str );
 int32 copyTrimmedString( StringView str, char* buffer, int32 len );
 StringView nextToken( StringView* string, StringView delimeters );
 
-int32 copy( StringView str, char* dest, int32 destSize );
+int32 copyToString( StringView str, char* dest, int32 destSize );
 // copies str into buffer with escaped sequences like \n replaced with newline etc
 int32 copyUnescapedString( StringView str, char* buffer, int32 size );
 
@@ -209,7 +192,7 @@ StringView substr( StringView str, int32 pos, int32 len )
 	pos = clamp( pos, 0, str.sz );
 	return StringView( str.ptr + pos, clamp( len, 0, str.sz - pos ) );
 }
-int32 copy( StringView str, char* dest, int32 destSize )
+int32 copyToString( StringView str, char* dest, int32 destSize )
 {
 	assert( dest || destSize == 0 );
 	auto minSize = MIN( destSize, str.sz );

@@ -99,6 +99,9 @@ struct TexturePackState {
 
 	int32 regionIds;
 	UArray< TexturePackRegion > uniqueTextureRegions;
+
+	char stringPool[300];
+	StringView front, left, back, right, top, bottom;
 };
 
 #endif // _TEXTUREPACK_H_INCLUDED_

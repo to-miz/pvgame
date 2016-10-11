@@ -97,6 +97,10 @@ struct string_builder {
 		sz += len;
 		return *this;
 	}
+	string_builder& operator<<( string str )
+	{
+		return operator<<( StringView( str ) );
+	}
 
 	template < class... Types >
 	string_builder& print( const char* format, Types... args )

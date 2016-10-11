@@ -34,6 +34,7 @@
 
 #include <Core/ArrayView.cpp>
 #include <Core/StringView.cpp>
+#include <Core/String.cpp>
 #include <Core/Unicode.cpp>
 #include <tm_conversion_wrapper.cpp>
 

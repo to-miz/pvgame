@@ -126,6 +126,10 @@ void writeValue( JsonWriter* writer, StringView value )
 	}
 	writer->builder << '"';
 }
+void writeValue( JsonWriter* writer, const string& value )
+{
+	writeValue( writer, StringView( value ) );
+}
 void writeNull( JsonWriter* writer )
 {
 	writeComma( writer );
@@ -152,6 +156,19 @@ void writeValue( JsonWriter* writer, vec2arg v )
 	writer->minimal = true;
 	writeProperty( writer, "x", v.x );
 	writeProperty( writer, "y", v.y );
+	writeEndObject( writer );
+	writer->minimal = prev;
+}
+
+void writeValue( JsonWriter* writer, rectiarg rect )
+{
+	writeStartObject( writer );
+	auto prev       = writer->minimal;
+	writer->minimal = true;
+	writeProperty( writer, "left", rect.left );
+	writeProperty( writer, "top", rect.top );
+	writeProperty( writer, "right", rect.right );
+	writeProperty( writer, "bottom", rect.bottom );
 	writeEndObject( writer );
 	writer->minimal = prev;
 }

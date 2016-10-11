@@ -4,7 +4,7 @@ Made by Tolga Mizrak 2016
 This project is actively developed on my twitch stream with archives on youtube:
 https://www.twitch.tv/cranky12
 https://www.youtube.com/channel/UCWjZxCUt6wJFJu3tJqtpE5Q
-Follow me on twitter @crankybyday for updates and stream notifications.
+Follow me on twitter @crankybyday https://www.twitter.com/crankybyday for updates and stream notifications.
 
 To get the newest builds: https://cranky12.itch.io/pvgame
 Source Code: https://github.com/to-miz/pvgame

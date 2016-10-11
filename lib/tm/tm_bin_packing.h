@@ -1,5 +1,5 @@
 /*
-tm_bin_packing.h v1.0b - public domain
+tm_bin_packing.h v1.0.1 - public domain
 written by Tolga Mizrak 2016
 
 no warranty; use at your own risk
@@ -209,6 +209,7 @@ SAMPLES
 		}
 
 HISTORY
+	v1.0.1	11.10.16 fixed a bug in batch insertion functions using the wrong index
 	v1.0b   09.10.16 fixed a typo
 	v1.0a   07.10.16 removed using forced unsigned arithmetic when tmbp_size_t is signed
 	v1.0	20.07.16 initial commit

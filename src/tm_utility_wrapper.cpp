@@ -34,4 +34,5 @@ using utility::MinMaxPair;
 using utility::minmax;
 using utility::median;
 
+// c++17 for as macro
 #define FOR( x ) for( auto&& x )

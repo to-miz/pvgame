@@ -49,6 +49,29 @@ QuadTexCoords texturePackGetTexCoords( rectfarg rect, TexturePackOrientation ori
 	}
 	return texCoords;
 }
+TexturePackRegion* texturePackAddUniqueTextureRegion( AppData* app, rectiarg rect,
+                                                      TextureId source )
+{
+	auto editor = &app->texturePackState;
+
+	int32 regionId = -1;
+	auto textureRegion =
+	    find_first_where( editor->uniqueTextureRegions,
+	                      it.texture == source && memcmp( &it.rect, &rect, sizeof( recti ) ) == 0 );
+
+	if( !textureRegion ) {
+		regionId = ++editor->regionIds;
+		if( !editor->uniqueTextureRegions.remaining() ) {
+			LOG( ERROR, "out of memory for unique texture regions" );
+		} else {
+			editor->uniqueTextureRegions.push_back( {regionId, rect, source} );
+			textureRegion = &editor->uniqueTextureRegions.back();
+		}
+	} else {
+		regionId = textureRegion->id;
+	}
+	return textureRegion;
+}
 
 bool doTextureDisplay( AppData* app, TexturePackSource* source )
 {
@@ -111,30 +134,23 @@ bool doTextureDisplay( AppData* app, TexturePackSource* source )
 
 	renderer->color = Color::White;
 	if( imguiButton( "Assign" ) ) {
-		auto rect        = Rect< int32 >( textureDisplay->selectedRegion );
-		auto orientation = editor->orientation;
-		auto sourceIndex = indexof( editor->textureSources.items, *source );
+		auto sourceIndex   = indexof( editor->textureSources.items, *source );
+		auto orientation   = editor->orientation;
+		auto rect          = Rect< int32 >( textureDisplay->selectedRegion );
+		auto textureRegion = texturePackAddUniqueTextureRegion( app, rect, source->id );
 
-		int32 regionId     = -1;
-		auto textureRegion = find_first_where(
-		    editor->uniqueTextureRegions,
-		    it.texture == source->id && memcmp( &it.rect, &rect, sizeof( recti ) ) == 0 );
-
-		if( !textureRegion ) {
-			regionId = ++editor->regionIds;
-			if( !editor->uniqueTextureRegions.remaining() ) {
-				LOG( ERROR, "out of memory for unique texture regions" );
-			} else {
-				editor->uniqueTextureRegions.push_back( {regionId, rect, source->id} );
-				textureRegion = &editor->uniqueTextureRegions.back();
-			}
-		} else {
-			regionId = textureRegion->id;
+		StringView assignedNames[] = {editor->front, editor->left, editor->back,
+		                              editor->right, editor->top,  editor->bottom};
+		FOR( entry : assignedNames ) {
+			entry.pop_back();
 		}
 
-		if( regionId >= 0 ) {
+		if( textureRegion ) {
 			if( editor->bulkMode ) {
 				FOR( textureMap : editor->textureMaps ) {
+					if( !textureMap.expanded ) {
+						continue;
+					}
 					FOR( frame : makeArrayView( textureMap.frames, textureMap.framesCount ) ) {
 						frame.source = sourceIndex;
 						for( auto i = 0; i < VF_Count; ++i ) {
@@ -145,16 +161,23 @@ bool doTextureDisplay( AppData* app, TexturePackSource* source )
 										--prev->referenceCount;
 									}
 								}
-								face->regionId    = regionId;
+								face->regionId    = textureRegion->id;
 								face->orientation = orientation;
 								++textureRegion->referenceCount;
+								frame.textureMapItems[i].text = assignedNames[i];
 							}
 						}
 					}
 				}
 			} else {
 				FOR( textureMap : editor->textureMaps ) {
+					if( !textureMap.expanded ) {
+						continue;
+					}
 					FOR( frame : makeArrayView( textureMap.frames, textureMap.framesCount ) ) {
+						if( !frame.expanded ) {
+							continue;
+						}
 						frame.source = sourceIndex;
 						for( auto i = 0; i < VF_Count; ++i ) {
 							auto item = &frame.textureMapItems[i];
@@ -165,9 +188,10 @@ bool doTextureDisplay( AppData* app, TexturePackSource* source )
 										--prev->referenceCount;
 									}
 								}
-								face->regionId    = regionId;
+								face->regionId    = textureRegion->id;
 								face->orientation = orientation;
 								++textureRegion->referenceCount;
+								frame.textureMapItems[i].text = assignedNames[i];
 							}
 						}
 					}
@@ -246,6 +270,38 @@ bool doTextureDisplay( AppData* app, TexturePackSource* source )
 	return false;
 }
 
+TextureId texturePackAddTextureSource( AppData* app, StringView filename )
+{
+	auto editor         = &app->texturePackState;
+	auto textureSources = &editor->textureSources;
+	if( !textureSources->items.remaining() ) {
+		return {};
+	}
+
+	auto item = textureSources->items.emplace_back();
+	auto text = makeUninitializedArrayView( item->textStorage );
+	copyToString( "Unnamed", &text );
+	item->textLength  = text.size();
+	item->lb.text     = text;
+	item->lb.selected = false;
+	item->id          = app->platform.loadTexture( filename );
+	if( item->id ) {
+		auto info         = getTextureInfo( item->id );
+		item->width       = info->width;
+		item->height      = info->height;
+		item->regions.min = editor->textureRegions.size();
+		auto slice        = makeUninitializedArrayView( editor->textureRegions.end(),
+		                                         editor->textureRegions.remaining() );
+		imageFindRects( slice, info->image, {}, 0, false );
+		item->regions.max = item->regions.min + slice.size();
+		editor->textureRegions.resize( editor->textureRegions.size() + slice.size() );
+		return item->id;
+	} else {
+		textureSources->items.pop_back();
+	}
+	return {};
+}
+
 TexturePackSource* doTexturePackSources( AppData* app )
 {
 	auto editor   = &app->texturePackState;
@@ -270,26 +326,7 @@ TexturePackSource* doTexturePackSources( AppData* app )
 			auto len = app->platform.getOpenFilename( nullptr, "Data/Images", false, filename,
 													  countof( filename ) );
 			if( len ) {
-				auto item = textureSources->items.emplace_back();
-				auto text = makeUninitializedArrayView( item->textStorage );
-				copyToString( &text, "Unnamed" );
-				item->textLength  = text.size();
-				item->lb.text     = text;
-				item->lb.selected = false;
-				item->id          = app->platform.loadTexture( {filename, len} );
-				if( item->id ) {
-					auto info         = getTextureInfo( item->id );
-					item->width       = info->width;
-					item->height      = info->height;
-					item->regions.min = editor->textureRegions.size();
-					auto slice        = makeUninitializedArrayView( editor->textureRegions.end(),
-															 editor->textureRegions.remaining() );
-					imageFindRects( slice, info->image, {}, 0, false );
-					item->regions.max = item->regions.min + slice.size();
-					editor->textureRegions.resize( editor->textureRegions.size() + slice.size() );
-				} else {
-					textureSources->items.pop_back();
-				}
+				texturePackAddTextureSource( app, {filename, len} );
 			}
 		}
 	}
@@ -319,7 +356,8 @@ void doTexturePackEntries( AppData* app )
 	auto textureMaps = &editor->textureMaps;
 	imguiText( "Texture Maps" );
 	const ImGuiListboxItem entries[] = {
-		{"Front"}, {"Left"}, {"Back"}, {"Right"}, {"Top"}, {"Bottom"},
+	    {editor->front}, {editor->left}, {editor->back},
+	    {editor->right}, {editor->top},  {editor->bottom},
 	};
 	if( imguiButton( "Add#1" ) ) {
 		if( textureMaps->remaining() ) {
@@ -327,7 +365,7 @@ void doTexturePackEntries( AppData* app )
 			*entry = {};
 			entry->expanded = false;
 			entry->textLength =
-				copyToString( entry->textStorage, countof( entry->textStorage ), "Unnamed" );
+			    copyToString( "Unnamed", entry->textStorage, countof( entry->textStorage ) );
 			copy( entry->bulkModeItems, entries, countof( entries ) );
 		}
 	}
@@ -366,8 +404,17 @@ void doTexturePackEntries( AppData* app )
 					auto frame       = &entry.frames[i];
 					auto indexString = toNumberString( i );
 					if( imguiBeginDropGroup( indexString, &frame->expanded ) ) {
-						imguiListbox( &frame->scrollPos, makeArrayView( frame->textureMapItems ),
-						              150, 6 * stringHeight( ImGui->font ), true );
+						auto selected = imguiListbox( &frame->scrollPos,
+						                              makeArrayView( frame->textureMapItems ), 150,
+						                              6 * stringHeight( ImGui->font ), true );
+						if( selected >= 0 ) {
+							auto regionId = frame->faces[selected].regionId;
+							if( auto region = getTexturePackRegion( editor, regionId ) ) {
+								auto textureDisplay            = &editor->textureDisplay;
+								textureDisplay->selectedIndex  = 0;
+								textureDisplay->selectedRegion = Rect< float >( region->rect );
+							}
+						}
 						if( imguiButton( "Remove Frame" ) ) {
 							auto removeFrame = &set_variant( editor->removeVariant, removeFrame );
 							removeFrame->entryIndex = indexof( *textureMaps, entry );
@@ -385,11 +432,10 @@ void doTexturePackEntries( AppData* app )
 	imguiEndScrollableRegion( &editor->textureMapsGuiRegion, &regionState );
 }
 
-int32 doBinPacking( AppData* app, char* filenameOut, int32 filenameMaxLength )
+void doBinPacking( AppData* app, StringView outputTextureFilename )
 {
 	auto editor         = &app->texturePackState;
 	auto allocator      = &app->stackAllocator;
-	auto filenameLength = 0;
 
 	TEMPORARY_MEMORY_BLOCK( allocator ) {
 		auto dimsCount = editor->uniqueTextureRegions.size();
@@ -497,33 +543,204 @@ int32 doBinPacking( AppData* app, char* filenameOut, int32 filenameMaxLength )
 			            sourceRect, sourceImage.width * 4 );
 		}
 
-		filenameLength = GlobalPlatformServices->getSaveFilename( "png\0*.png\0", "Data/Images",
-		                                                          filenameOut, filenameMaxLength );
+		struct MemoryWriter {
+			char* data;
+			int32 size;
+			int32 capacity;
+		};
+		MemoryWriter writer = {};
+		writer.capacity     = safe_truncate< int32 >( remaining( allocator ) );
+		writer.data         = allocateArray( allocator, char, remaining( allocator ) );
 
-		if( filenameLength ) {
-			struct MemoryWriter {
-				char* data;
-				int32 size;
-				int32 capacity;
-			};
-			MemoryWriter writer = {};
-			writer.capacity     = safe_truncate< int32 >( remaining( allocator ) );
-			writer.data         = allocateArray( allocator, char, remaining( allocator ) );
+		auto memoryWriterCallback = []( void* context, void* data, int size ) {
+			auto writer = (MemoryWriter*)context;
+			auto len    = MIN( size, writer->capacity - writer->size );
+			memcpy( writer->data + writer->size, data, len );
+			writer->size += len;
+		};
 
-			auto memoryWriterCallback = []( void* context, void* data, int size ) {
-				auto writer = (MemoryWriter*)context;
-				auto len    = MIN( size, writer->capacity - writer->size );
-				memcpy( writer->data + writer->size, data, len );
-				writer->size += len;
-			};
+		stbi_write_png_to_func( memoryWriterCallback, &writer, textureWidth, textureHeight, 4,
+		                        texture, textureWidth * 4 );
+		GlobalPlatformServices->writeBufferToFile( outputTextureFilename, writer.data,
+		                                           writer.size );
+	}
+}
 
-			stbi_write_png_to_func( memoryWriterCallback, &writer, textureWidth, textureHeight, 4,
-			                        texture, textureWidth * 4 );
-			GlobalPlatformServices->writeBufferToFile( {filenameOut, filenameLength}, writer.data,
-			                                           writer.size );
+void clear( TexturePackState* editor )
+{
+	editor->uniqueTextureRegions.clear();
+	editor->textureMaps.clear();
+	editor->textureRegions.clear();
+	editor->textureScale                = 1;
+	editor->valuesExpanded              = false;
+	editor->bulkMode                    = false;
+	editor->orientationExpanded         = false;
+	editor->orientation                 = {};
+	editor->textureSources.lastSelected = -1;
+
+	FOR( item : editor->textureSources.items ) {
+		GlobalPlatformServices->deleteTexture( item.id );
+	}
+	editor->textureSources.items.clear();
+}
+
+void texturePackLoad( AppData* app )
+{
+	assert( app );
+
+	auto editor = &app->texturePackState;
+
+	char filenameBuffer[260];
+	auto filenameLength = GlobalPlatformServices->getOpenFilename(
+	    "json\0*.json\0", "Data/Images", false, filenameBuffer, countof( filenameBuffer ) );
+	if( !filenameLength ) {
+		return;
+	}
+	StringView filename = {filenameBuffer, filenameLength};
+
+	auto allocator = &app->stackAllocator;
+	TEMPORARY_MEMORY_BLOCK( allocator ) {
+		int32 jsonMaxSize = megabytes( 1 );
+		auto jsonData = allocateArray( allocator, char, jsonMaxSize );
+
+		auto jsonSize = GlobalPlatformServices->readFileToBuffer( filename, jsonData, jsonMaxSize );
+		if( !jsonSize ) {
+			return;
+		}
+
+		JsonStackAllocator jsonAlloc = {allocateArray( allocator, char, jsonMaxSize ), 0,
+		                                (size_t)jsonMaxSize};
+		auto doc = jsonMakeDocument( &jsonAlloc, jsonData, (int32)jsonSize, JSON_READER_STRICT );
+		if( !doc ) {
+			return;
+		}
+		auto root = doc.root;
+		clear( editor );
+
+		auto texture = texturePackAddTextureSource( app, root["texture"].getString() );
+		if( !texture ) {
+			return;
+		}
+
+		auto mapping = root["mapping"].getArray();
+		FOR( entry : mapping ) {
+			if( !editor->textureMaps.remaining() ) {
+				break;
+			}
+			auto dest = editor->textureMaps.emplace_back();
+			*dest = {};
+
+			auto animation = entry.getObject();
+			auto frames = animation["frames"].getArray();
+
+			dest->textLength = copyToString( animation["name"].getString(), dest->textStorage,
+			                                 countof( dest->textStorage ) );
+			dest->framesCount = min( frames.size(), countof( dest->frames ) );
+
+			for( auto i = 0; i < dest->framesCount; ++i ) {
+				auto frame = frames[i].getObject();
+				auto destFrame = &dest->frames[i];
+				for( auto j = 0; j < VF_Count; ++j ) {
+					auto face = frame[VoxelFaceStrings[j]].getObject();
+					if( !face ) {
+						continue;
+					}
+					auto rectObject = face["rect"].getObject();
+					recti rect      = {
+					    rectObject["left"].getInt(), rectObject["top"].getInt(),
+					    rectObject["right"].getInt(), rectObject["bottom"].getInt(),
+					};
+					auto textureRegion = texturePackAddUniqueTextureRegion( app, rect, texture );
+					destFrame->faces[j].regionId = textureRegion->id;
+					destFrame->faces[j].orientation =
+					    (TexturePackOrientation)clamp( face["orientation"].getInt(), 0, 5 );
+				}
+			}
 		}
 	}
-	return filenameLength;
+}
+
+void texturePackSave( AppData* app )
+{
+	auto editor = &app->texturePackState;
+
+	char filenameBuffer[260];
+	auto filenameLength = GlobalPlatformServices->getSaveFilename(
+	    nullptr, "Data/Images", filenameBuffer, countof( filenameBuffer ) );
+	if( !filenameLength ) {
+		return;
+	}
+	replace( filenameBuffer, filenameBuffer + filenameLength, '\\', '/' );
+	StringView filename = {filenameBuffer, filenameLength};
+
+	auto allocator = &app->stackAllocator;
+	TEMPORARY_MEMORY_BLOCK( allocator ) {
+		auto textureFilename = snprint( allocator, "{}.png", filename );
+		auto jsonFilename = snprint( allocator, "{}.json", filename );
+
+		doBinPacking( app, textureFilename );
+
+	// output json
+		auto bufferSize = safe_truncate< int32 >( remaining( allocator ) );
+		auto buffer = allocateArray( allocator, char, bufferSize );
+		auto writer = makeJsonWriter( buffer, bufferSize );
+		writer.builder.format.precision = 9;
+
+		writeStartObject( &writer );
+		// TODO: write the relative path instead
+		writeProperty( &writer, "texture", textureFilename );
+		writePropertyName( &writer, "mapping" );
+		writeStartArray( &writer );
+		FOR( textureMap : editor->textureMaps ) {
+			writeStartObject( &writer );
+				auto name = StringView{textureMap.textStorage, textureMap.textLength};
+				writeProperty( &writer, "name", name );
+				writePropertyName( &writer, "frames" );
+				writeStartArray( &writer );
+					FOR( frame : makeArrayView( textureMap.frames, textureMap.framesCount ) ) {
+						writeStartObject( &writer );
+						for( auto i = 0; i < VF_Count; ++i ) {
+							writePropertyName( &writer, VoxelFaceStrings[i] );
+
+					        auto face          = &frame.faces[i];
+					        auto id            = face->regionId;
+					        auto textureRegion = getTexturePackRegion( editor, id );
+					        if( textureRegion ) {
+								writeStartObject( &writer );
+						        // TODO: do we normalize textures before saving them to file?
+#if 0
+						        auto info          = getTextureInfo( textureRegion->texture );
+						        auto rect = scale( textureRegion->destRect, 1.0f / info->width,
+						                           1.0f / info->height );
+#else
+						        auto rect = Rect< float >( textureRegion->destRect );
+#endif
+						        auto texCoords = texturePackGetTexCoords( rect, face->orientation );
+						        writePropertyName( &writer, "texCoords" );
+						        writeStartArray( &writer );
+							        for( auto j = 0; j < 4; ++j ) {
+								        writeValue( &writer, texCoords.elements[j] );
+							        }
+						        writeEndArray( &writer );
+
+						        writeProperty( &writer, "orientation", (int32)face->orientation );
+						        writeProperty( &writer, "rect", textureRegion->destRect );
+
+						        writeEndObject( &writer );
+					        } else {
+					        	writeValue( &writer, null );
+					        }
+				        }
+				        writeEndObject( &writer );
+					}
+				writeEndArray( &writer );
+			writeEndObject( &writer );
+		}
+		writeEndArray( &writer );
+		writeEndObject( &writer );
+
+		app->platform.writeBufferToFile( jsonFilename, buffer, writer.builder.size() );
+	}
 }
 
 void doTexturePack( AppData* app, GameInputs* inputs, bool focus, float dt )
@@ -554,6 +771,23 @@ void doTexturePack( AppData* app, GameInputs* inputs, bool focus, float dt )
 		editor->textureMaps                  = makeUArray( allocator, TexturePackEntry, 100 );
 		editor->uniqueTextureRegions         = makeUArray( allocator, TexturePackRegion, 200 );
 		editor->textureDisplay.selectedIndex = -1;
+
+		auto pool = editor->stringPool;
+		auto poolSize = countof( editor->stringPool );
+		auto copyToPool = [&]( const char* str ) {
+			auto start = pool;
+			auto len   = copyToString( str, pool, poolSize );
+			pool += len;
+			poolSize -= len;
+			return StringView( start, len );
+		};
+		editor->front  = copyToPool( "Front*" );
+		editor->left   = copyToPool( "Le  ft*" );
+		editor->back   = copyToPool( "Back*" );
+		editor->right  = copyToPool( "Right*" );
+		editor->top    = copyToPool( "Top*" );
+		editor->bottom = copyToPool( "Bottom*" );
+
 		editor->initialized                  = true;
 	}
 	setProjection( renderer, ProjectionType::Orthogonal );
@@ -564,8 +798,8 @@ void doTexturePack( AppData* app, GameInputs* inputs, bool focus, float dt )
 	rectf guiBounds = {0, 0, app->width, app->height};
 	imguiBind( gui, renderer, font, inputs, app->stackAllocator.ptr, guiBounds );
 
-	auto layout       = imguiBeginColumn( 150 );
-	
+	auto layout = imguiBeginColumn( 150 );
+
 	auto lastSelected = doTexturePackSources( app );
 
 	doTexturePackEntries( app );
@@ -576,68 +810,10 @@ void doTexturePack( AppData* app, GameInputs* inputs, bool focus, float dt )
 
 	imguiNextColumn( &layout, 400 );
 	if( imguiButton( "Load" ) ) {
-		
+		texturePackLoad( app );
 	}
 	if( imguiButton( "Save" ) ) {
-		char filename[260];
-		auto filenameLength = doBinPacking( app, filename, countof( filename ) );
-		replace( filename, filename + filenameLength, '\\', '/' );
-
-		auto allocator = &app->stackAllocator;
-		TEMPORARY_MEMORY_BLOCK( allocator ) {
-			auto bufferSize = safe_truncate< int32 >( remaining( allocator ) );
-			auto buffer = allocateArray( allocator, char, bufferSize );
-			auto writer = makeJsonWriter( buffer, bufferSize );
-			writer.builder.format.precision = 9;
-
-			writeStartObject( &writer );
-			// TODO: write the relative path instead
-			writeProperty( &writer, "texture", StringView{filename, filenameLength} );
-			writePropertyName( &writer, "mapping" );
-			writeStartArray( &writer );
-			FOR( textureMap : editor->textureMaps ) {
-				writeStartObject( &writer );
-					auto name = StringView{textureMap.textStorage, textureMap.textLength};
-					writeProperty( &writer, "name", name );
-					writePropertyName( &writer, "frames" );
-					writeStartArray( &writer );
-						FOR( frame : makeArrayView( textureMap.frames, textureMap.framesCount ) ) {
-							writeStartObject( &writer );
-							for( auto i = 0; i < VF_Count; ++i ) {
-								writePropertyName( &writer, VoxelFaceStrings[i] );
-
-						        auto face          = &frame.faces[i];
-						        auto id            = face->regionId;
-						        auto textureRegion = getTexturePackRegion( editor, id );
-						        if( textureRegion ) {
-									writeStartArray( &writer );
-							        // TODO: do we normalize textures before saving them to file?
-#if 0
-							        auto info          = getTextureInfo( textureRegion->texture );
-							        auto rect = scale( textureRegion->destRect, 1.0f / info->width,
-							                           1.0f / info->height );
-#else
-							        auto rect = Rect< float >( textureRegion->destRect );
-#endif
-							        auto texCoords = texturePackGetTexCoords( rect, face->orientation );
-							        for( auto j = 0; j < 4; ++j ) {
-								        writeValue( &writer, texCoords.elements[j] );
-							        }
-							        writeEndArray( &writer );
-						        } else {
-						        	writeValue( &writer, null );
-						        }
-					        }
-					        writeEndObject( &writer );
-						}
-					writeEndArray( &writer );
-				writeEndObject( &writer );
-			}
-			writeEndArray( &writer );
-			writeEndObject( &writer );
-
-			app->platform.writeBufferToFile( "../builds/test.json", buffer, writer.builder.size() );
-		}
+		texturePackSave( app );
 	}
 
 	if( imguiDialog( "Remove", editor->removeConfirm ) ) {

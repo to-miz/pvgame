@@ -41,6 +41,7 @@
 
 #include <Core/ArrayView.cpp>
 #include <Core/StringView.cpp>
+#include <Core/String.cpp>
 #include <Core/Unicode.cpp>
 #include <tm_conversion_wrapper.cpp>
 #include <tm_bin_packing_wrapper.cpp>
@@ -1794,6 +1795,38 @@ struct VoxelCollection {
 	Array< FrameInfo > frameInfos;
 	Array< Animation > animations;
 };
+
+bool loadVoxelCollection( StackAllocator* allocator, StringView collectionName,
+                          VoxelCollection* out )
+{
+#if 0
+	assert( out );
+	auto partition         = StackAllocatorPartition::ratio( allocator, 1 );
+
+	auto primary = partition.primary();
+	auto scrap   = partition.scrap();
+
+	auto jsonFilename = snprint( scrap, "{}.json", collectionName );
+
+	auto jsonDataMaxSize = megabytes( 1 );
+	auto jsonData = allocateArray( scrap, char, jsonDataMaxSize );
+	auto jsonDataSize =
+	    GlobalPlatformServices->readFileToBuffer( collectionName, jsonData, jsonDataMaxSize );
+
+	auto jsonDocSize = megabytes( 1 );
+	JsonStackAllocatorStruct jsonAllocator = {allocateArray( scrap, char, jsonDocSize ), 0,
+	                                          jsonDocSize};
+	auto doc = jsonMakeDocument( &jsonAllocator, jsonData, jsonDataSize, JSON_READER_STRICT );
+	if( !doc ) {
+		return false;
+	}
+	auto root = doc.root;
+	
+
+	partition.commit();
+#endif
+	return true;
+}
 
 static void doVoxelGui( AppData* app, GameInputs* inputs, bool focus, float dt )
 {
