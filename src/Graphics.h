@@ -788,6 +788,18 @@ void addRenderCommandMesh( RenderCommands* renderCommands, const Mesh& mesh )
 	body->mesh = mesh;
 	body->size = 0;
 }
+void addRenderCommandMeshTransformed( RenderCommands* renderCommands, const Mesh& mesh )
+{
+	auto body = addRenderCommandMeshImpl< RenderCommandMesh >( renderCommands, mesh.verticesCount,
+	                                                           mesh.indicesCount );
+	auto& current = currentMatrix( renderCommands->matrixStack );
+	auto vertices = body->mesh.vertices;
+	for( auto i = 0, count = mesh.verticesCount; i < count; ++i ) {
+		vertices[i]          = mesh.vertices[i];
+		vertices[i].position = transformVector( current, mesh.vertices[i].position );
+	}
+	copy( body->mesh.indices, mesh.indices, body->mesh.indicesCount );
+}
 
 RenderCommandStaticMesh* addRenderCommandMesh( RenderCommands* renderCommands, MeshId meshId )
 {

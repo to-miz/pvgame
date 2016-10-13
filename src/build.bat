@@ -54,7 +54,7 @@ if "%2" == "" goto :full_build
 if "%2" == "dll" goto :dll_build
 
 :full_build
-cl %platform_defines% %defines% %cl_switches% /W4 /Oi %includes% /FC /EHsc- %project_path%/src/platform/win32/win32main.cpp /link user32.lib gdi32.lib opengl32.lib Comdlg32.lib /SUBSYSTEM:WINDOWS /OUT:game.exe /INCREMENTAL:NO /nologo
+cl %platform_defines% %defines% %cl_switches% /W4 /Oi %includes% /FC /EHsc- %project_path%/src/platform/win32/win32main.cpp /link user32.lib gdi32.lib opengl32.lib Comdlg32.lib Shlwapi.lib /SUBSYSTEM:WINDOWS /OUT:game.exe /INCREMENTAL:NO /nologo
 if "%2" == "exe" goto :end
 
 :dll_build

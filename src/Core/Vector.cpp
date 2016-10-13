@@ -82,7 +82,8 @@ vec2 rotateAround( vec2arg v, vec2arg origin, float sin, float cos )
 }
 
 vec2 floor( vec2arg v ) { return {floor( v.x ), floor( v.y )}; }
-vec2 ceil( vec2arg v ) { return {floor( v.x ), floor( v.y )}; }
+vec2 ceil( vec2arg v ) { return {ceil( v.x ), ceil( v.y )}; }
+vec2 round( vec2arg v ) { return {round( v.x ), round( v.y )}; }
 vec2 floorCentered( float x, float width )
 {
 	auto hw = floor( width * 0.5f );
@@ -286,7 +287,7 @@ vec4 safeNormalize( vec4arg v, float* outLength, vec4arg def /* = {}*/ )
 vec4 multiplyQuaternions( vec4arg a, vec4arg b )
 {
 	return {a.x * b.w + a.y * b.z - a.z * b.y + a.w * b.x,
-			-a.x * b.z + a.y * b.w + a.z * b.x + a.w * b.y,
-			a.x * b.y - a.y * b.x + a.z * b.w + a.w * b.z,
-			-a.x * b.x - a.y * b.y - a.z * b.z + a.w * b.w};
+	        -a.x * b.z + a.y * b.w + a.z * b.x + a.w * b.y,
+	        a.x * b.y - a.y * b.x + a.z * b.w + a.w * b.z,
+	        -a.x * b.x - a.y * b.y - a.z * b.z + a.w * b.w};
 }

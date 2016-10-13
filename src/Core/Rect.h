@@ -146,8 +146,8 @@ template< class T > trect< T > sweep( trectarg< T > r, tvec2< T > delta );
 template< class T > trect< T >
 swizzle( trectarg< T > r, intmax left, intmax top, intmax right, intmax bottom );
 
-template < class T >
-tvec2< T > clamp( tvec2arg< T > v, trectarg< T > r );
+template < class T > tvec2< T > clamp( tvec2arg< T > v, trectarg< T > r );
+template <class T > trect< T > correct( trectarg< T > r );
 
 rectf alignVerticalCenter( rectfarg bounds, float height );
 rectf alignHorizontalCenter( rectfarg bounds, float width );
@@ -501,10 +501,15 @@ swizzle( trectarg< T > r, intmax left, intmax top, intmax right, intmax bottom )
 {
 	return {r.elements[left], r.elements[top], r.elements[right], r.elements[bottom]};
 }
-template < class T >
-tvec2< T > clamp( tvec2arg< T > v, trectarg< T > r )
+template < class T > tvec2< T > clamp( tvec2arg< T > v, trectarg< T > r )
 {
 	return clamp( v, r.leftTop, r.rightBottom );
+}
+template <class T > trect< T > correct( trectarg< T > r )
+{
+	auto lr = minmax( r.left, r.right );
+	auto tb = minmax( r.top, r.bottom );
+	return {lr.min, tb.min, lr.max, tb.max};
 }
 
 rectf alignVerticalCenter( rectfarg bounds, float height )

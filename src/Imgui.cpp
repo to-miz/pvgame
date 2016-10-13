@@ -376,6 +376,12 @@ ImGuiHandle imguiMakeHandle( void* ptr, ImGuiControlType type )
 {
 	return {( uint32 )( (uintptr)ptr - (uintptr)ImGui->base ), 0, type, ImGui->container};
 }
+ImGuiHandle imguiMakeHandle( void* ptr, ImGuiControlType type, int32 index )
+{
+	ImGuiHandle result = imguiMakeHandle( ptr, type );
+	result.shortIndex = (uint8)index;
+	return result;
+}
 ImGuiHandle imguiSetCurrentContainer( ImGuiContainerState* container )
 {
 	assert( container >= ImGui->containers && container < ImGui->containers + ImGuiMaxContainers );
@@ -1373,7 +1379,8 @@ static bool imguiPaddle( ImGuiHandle handle, float* value, float min, float max,
 			*value      = max;
 			*innerValue = innerMax;
 		}
-		*value = clamp( *value, min, max );
+		auto mm = minmax( min, max );
+		*value = clamp( *value, mm.min, mm.max );
 		return true;
 	}
 	return false;
@@ -1402,7 +1409,8 @@ bool imguiSlider( StringView name, float* value, float min, float max )
 
 	auto sliderArea = inner;
 	sliderArea.left += stringWidth( font, name ) + style->innerPadding;
-	*value = clamp( *value, min, max );
+	auto mm = minmax( min, max );
+	*value = clamp( *value, mm.min, mm.max );
 	auto paddleWidth = ::width( style->rects[SliderKnob] );
 	sliderArea.right -= paddleWidth;
 	float paddlePosition = ( ( *value - min ) / ( max - min ) ) * ::width( sliderArea );
@@ -1528,9 +1536,10 @@ bool imguiScrollbar( float* pos, float min, float max, float pageSize, float ste
 	return changed;
 }
 
-static rectf imguiGetPointRect( float valueX, float valueY, rectfarg valueDomain, rectfarg rect )
+static rectf imguiGetPointRect( float valueX, float valueY, rectfarg valueDomain, rectfarg rect,
+                                rectfarg pointBounds = {-5, -5, 5, 5} )
 {
-	float innerWidth = width( rect );
+	float innerWidth  = width( rect );
 	float innerHeight = height( rect );
 	float rangeWidth  = width( valueDomain );
 	float rangeHeight = height( valueDomain );
@@ -1539,15 +1548,16 @@ static rectf imguiGetPointRect( float valueX, float valueY, rectfarg valueDomain
 	vec2 offset       = {tx * innerWidth, ty * innerHeight};
 
 	auto point   = rect.leftTop + offset;
-	return RectHalfSize( point, 5, 5 );
+	return translate( pointBounds, point );
 }
 bool imguiPoint( ImGuiHandle handle, float* valueX, float* valueY, rectfarg valueDomain,
-                 rectfarg rect, bool doInput, rectf* pointRect )
+                 rectfarg rect, bool doInput, rectf* pointRect,
+                 rectfarg pointBounds = {-5, -5, 5, 5} )
 {
 	auto inputs  = ImGui->inputs;
 	auto changed = false;
-	*pointRect   = imguiGetPointRect( *valueX, *valueY, valueDomain, rect );
-	vec2 point   = {pointRect->left + 5, pointRect->top + 5};
+	*pointRect   = imguiGetPointRect( *valueX, *valueY, valueDomain, rect, pointBounds );
+	vec2 point   = {pointRect->left - pointBounds.left, pointRect->top - pointBounds.top};
 
 	if( doInput ) {
 		if( isKeyPressed( inputs, KC_LButton ) && imguiIsHover( handle )
@@ -1561,23 +1571,24 @@ bool imguiPoint( ImGuiHandle handle, float* valueX, float* valueY, rectfarg valu
 		if( imguiPaddle( handle, valueX, valueDomain.left, valueDomain.right, &point.x, rect.left,
 		                 rect.right, VectorComponent_X, ImGui->mouseOffset.x ) ) {
 			changed          = true;
-			pointRect->left  = point.x - 5;
-			pointRect->right = point.x + 5;
+			pointRect->left  = point.x + pointBounds.left;
+			pointRect->right = point.x + pointBounds.right;
 		}
 		if( imguiPaddle( handle, valueY, valueDomain.top, valueDomain.bottom, &point.y, rect.top,
 		                 rect.bottom, VectorComponent_Y, ImGui->mouseOffset.y ) ) {
 			changed           = true;
-			pointRect->top    = point.y - 5;
-			pointRect->bottom = point.y + 5;
+			pointRect->top    = point.y + pointBounds.top;
+			pointRect->bottom = point.y + pointBounds.bottom;
 		}
 	}
 	return changed;
 }
 
-bool imguiPoint( vec2* value, rectfarg valueDomain, rectfarg rect )
+bool imguiPoint( vec2* value, rectfarg valueDomain, rectfarg rect,
+                 rectfarg pointBounds = {-5, -5, 5, 5}, rectf* pointRectOut = nullptr )
 {
 	auto handle = imguiMakeHandle( value, ImGuiControlType::Point );
-	*value      = clamp( *value, valueDomain );
+	*value      = clamp( *value, correct( valueDomain ) );
 	rectf pointRect;
 #if 0
 	auto doInput =
@@ -1585,14 +1596,17 @@ bool imguiPoint( vec2* value, rectfarg valueDomain, rectfarg rect )
 #else
 	auto doInput = true;
 #endif
-	auto result =
-	    imguiPoint( handle, &value->x, &value->y, valueDomain, rect, doInput, &pointRect );
+	auto result = imguiPoint( handle, &value->x, &value->y, valueDomain, rect, doInput, &pointRect,
+	                          pointBounds );
 
 	auto renderer = ImGui->renderer;
 	setTexture( renderer, 0, null );
 	LINE_MESH_STREAM_BLOCK( stream, renderer ) {
-		stream->color = multiply( renderer->color, Color::Black );
+		// stream->color = multiply( renderer->color, Color::White );
 		pushQuadOutline( stream, pointRect );
+	}
+	if( pointRectOut ) {
+		*pointRectOut = pointRect;
 	}
 	return result;
 }
@@ -1904,6 +1918,21 @@ void imguiEndScrollableRegion( ImGuiScrollableRegion* region, ImGuiScrollableReg
 	region->dim.y          = containerHeight;
 	container->rect        = state->prevRect;
 	container->addPosition = container->rect.leftTop;
+}
+
+void imguiSeperator()
+{
+	auto renderer = imguiRenderer();
+	auto container = imguiCurrentContainer();
+
+	auto innerPadding = ImGui->style.innerPadding;
+	auto rect = imguiAddItem( width( container->rect ) - innerPadding * 2, innerPadding * 2 );
+	setTexture( renderer, 0, null );
+	LINE_MESH_STREAM_BLOCK( stream, renderer ) {
+		stream->color = multiply( stream->color, Color::White );
+		pushLine( stream, {rect.left + innerPadding, rect.top + innerPadding},
+		          {rect.right - innerPadding, rect.top + innerPadding} );
+	}
 }
 
 void imguiFinalize()

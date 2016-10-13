@@ -42,6 +42,7 @@
 
 #include <Windows.h>
 #include <Windowsx.h>
+#include <Shlwapi.h>
 #undef far
 #undef near
 
@@ -63,10 +64,12 @@ struct WindowData {
 
 struct OpenGlContext;
 struct TextureMap;
+struct PlatformInfo;
 struct Win32AppContextData {
 	WindowData window;
 	OpenGlContext* openGlContext;
 	TextureMap* textureMap;
+	PlatformInfo* info;
 };
 
 extern global Win32AppContextData Win32AppContext;
@@ -79,11 +82,11 @@ extern global Win32AppContextData Win32AppContext;
 #include <QuadTexCoords.cpp>
 #include <Graphics.h>
 #include <Graphics/Font.h>
+#include <TextureMap.cpp>
+#include <GameDeclarations.h>
+
 #include "win32_opengl.cpp"
 #include "win32FontGeneration.cpp"
-#include <TextureMap.cpp>
-
-#include <GameDeclarations.h>
 
 extern global TextureMap* GlobalTextureMap;
 #include "win32PlatformServices.cpp"
@@ -424,7 +427,8 @@ int CALLBACK WinMain( HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdL
 	                                     &win32WriteBufferToFile, &win32ReadFileToBuffer,
 	                                     &win32UploadMeshToGpu,   &win32GetOpenFilename,
 	                                     &win32GetSaveFilename,   &win32GetKeyboardKeyName};
-	PlatformInfo info = {};
+	PlatformInfo info    = {};
+	Win32AppContext.info = &info;
 	auto initializeResult =
 	    initializeApp( memory, memorySize, platformServices, &info, (float)width, (float)height );
 	if( !initializeResult.success ) {
@@ -523,6 +527,7 @@ int CALLBACK WinMain( HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdL
 	    VirtualAlloc( nullptr, memorySize, MEM_COMMIT | MEM_RESERVE, PAGE_READWRITE );
 
 	RenderCommands* renderCommands = nullptr;
+
 	while( running ) {
 		if( win32LoadGameDll( &dll ) ) {
 			auto remapInfo = reloadApp( memory, memorySize );

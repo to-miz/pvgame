@@ -7,6 +7,7 @@ struct TexturePackTextureDisplay {
 	vec2 scrollPos;
 	int32 selectedIndex;
 	rectf selectedRegion;
+	bool textureRegionExpanded;
 };
 
 enum class TexturePackOrientation {
@@ -27,6 +28,7 @@ struct TexturePackFrame {
 	float scrollPos;
 	ImGuiListboxItem textureMapItems[VF_Count];
 	int32 source;
+	vec2 offset;
 };
 struct TexturePackEntry {
 	char textStorage[20];
@@ -90,7 +92,11 @@ struct TexturePackState {
 	bool valuesExpanded;
 	bool bulkMode;
 	bool orientationExpanded;
+	bool offsetExpanded;
 	TexturePackOrientation orientation;
+	vec2 offset;
+
+	int32 cellBorder;
 
 	UArray< recti > textureRegions;
 

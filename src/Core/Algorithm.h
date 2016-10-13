@@ -287,6 +287,12 @@ void replace( ForwardIterator first, ForwardIterator last, const T& old_value, c
 	}
 }
 
+template < class Container >
+typename Container::pointer queryElement( Container& container, int32 index )
+{
+	return ( index >= 0 && index < container.size() ) ? ( &container[index] ) : ( nullptr );
+}
+
 #ifdef ACHE_USE_STD
 template < class Container >
 void insertion_sort_last_elem( Container& container )

@@ -1,3 +1,7 @@
+todo:
+	update hero meshes and use animations
+	refactor write voxel saving to file system using voxels field of json
+
 bugs:
 	fix lighting (screenDepthOffset probably causing lighting errors)
 

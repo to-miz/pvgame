@@ -100,7 +100,7 @@ int32 win32OpenFilenameInternal( const char* filter, const char* initialDir, boo
 		// TODO: do we halt here?
 	}
 
-	wchar_t internalBuffer[260];
+	wchar_t internalBuffer[MAX_PATH];
 	internalBuffer[0] = 0;
 	OPENFILENAMEW ofn;
 	zeroMemory( &ofn, 1 );
@@ -128,12 +128,18 @@ int32 win32OpenFilenameInternal( const char* filter, const char* initialDir, boo
 		dialogResult = ( GetSaveFileNameW( &ofn ) == TRUE );
 	}
 	if( dialogResult ) {
-		static_assert(
-		    sizeof( wchar_t ) == sizeof( uint16 ) && alignof( wchar_t ) == alignof( uint16 ),
-		    "Can't cast wchar_t to uint16 like this" );
+		wchar_t internalRelativeBuffer[MAX_PATH];
+		wchar_t* internalRelative = internalRelativeBuffer;
+		if( !PathRelativePathToW( internalRelative, currentDir, FILE_ATTRIBUTE_DIRECTORY,
+		                          ofn.lpstrFile, FILE_ATTRIBUTE_NORMAL ) ) {
+			LOG( ERROR, "Failed to get relative path." );
+		}
+		if( internalRelative[0] == '.' && internalRelative[1] == '\\' ) {
+			internalRelative += 2;
+		}
 
-		result = utf8::convertUtf16ToUtf8( (uint16*)ofn.lpstrFile,
-		                                   safe_truncate< int32 >( wcslen( ofn.lpstrFile ) ),
+		result = utf8::convertUtf16ToUtf8( internalRelative,
+		                                   safe_truncate< int32 >( wcslen( internalRelative ) ),
 		                                   filenameBuffer, filenameBufferSize );
 	}
 
@@ -156,6 +162,9 @@ int32 win32OpenFilenameInternal( const char* filter, const char* initialDir, boo
 #endif
 
 	delete[] currentDir;
+
+	replace( filenameBuffer, filenameBuffer + result, '\\', '/' );
+
 	return result;
 }
 

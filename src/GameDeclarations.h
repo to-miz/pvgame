@@ -60,6 +60,10 @@ struct PlatformInfo {
 	bool recordingInputs;
 	bool replayingInputs;
 	int32 recordingFrame;
+
+	int32 vertices;
+	int32 indices;
+	int32 drawCalls;
 };
 
 #ifdef GAME_DLL

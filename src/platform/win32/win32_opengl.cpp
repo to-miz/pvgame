@@ -571,6 +571,10 @@ static void win32RenderBuffers( OpenGlContext* context, mat4* projections, GLenu
 	glDrawElementsBaseVertex( mode, vb->indicesCount, GL_UNSIGNED_SHORT,
 	                          BUFFER_OFFSET( vb->lastIndicesCount * sizeof( uint16 ) ),
 	                          vb->lastVerticesCount );
+
+	++Win32AppContext.info->drawCalls;
+	Win32AppContext.info->vertices += vb->verticesCount;
+	Win32AppContext.info->indices += vb->indicesCount;
 }
 static void win32RenderAndFlushBuffers( OpenGlContext* context, mat4* projections, GLenum mode )
 {
@@ -917,6 +921,10 @@ void openGlClear( Color clearColor )
 	glClearDepth( -1000 );
 	glClearColor( c.r, c.g, c.b, c.a );
 	glClear( GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT );
+
+	Win32AppContext.info->drawCalls = 0;
+	Win32AppContext.info->vertices = 0;
+	Win32AppContext.info->indices = 0;
 }
 
 void openGlPrepareIngameRender( OpenGlContext* context )

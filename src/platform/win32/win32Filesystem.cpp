@@ -113,7 +113,7 @@ void win32WriteBufferToFile( StringView filename, void* buffer, size_t bufferSiz
 	auto file      = CreateFileW( wfilename, GENERIC_WRITE, 0, nullptr, CREATE_ALWAYS,
 	                         FILE_ATTRIBUTE_NORMAL, nullptr );
 	if( file == INVALID_HANDLE_VALUE ) {
-		LOG( ERROR, "Failed to open file: {}", filename );
+		LOG( ERROR, "Failed to create file: {}", filename );
 	} else {
 		DWORD bytesWritten;
 		DWORD truncatedBufferSize = (DWORD)bufferSize;

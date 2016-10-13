@@ -211,57 +211,20 @@ vec3 center( Camera* camera )
 	return {camera->position.x, camera->position.y + 50.0f, camera->position.z};
 }
 
-#define CELL_MAX_X 32
-#define CELL_MAX_Y 32
-#define CELL_MAX_Z 32
-#define CELL_MAX_IN_PLANE ( CELL_MAX_X * CELL_MAX_Y )
-#define CELL_MAX_COUNT ( CELL_MAX_X * CELL_MAX_Y * CELL_MAX_Z )
+struct GameSettings {
+	float mouseSensitivity;
+	bool mouseInvertY;
 
-#define EDITOR_CELL_WIDTH 32.0f
-#define EDITOR_CELL_HEIGHT 32.0f
-#define EDITOR_CELL_DEPTH 32.0f
-
-const vec3 EditorVoxelCellSize = {EDITOR_CELL_WIDTH, EDITOR_CELL_HEIGHT, EDITOR_CELL_DEPTH};
-
-#define CELL_WIDTH 1.0f
-#define CELL_HEIGHT 1.0f
-#define CELL_DEPTH 1.0f
-
-const vec3 VoxelCellSize = {CELL_WIDTH, CELL_HEIGHT, CELL_DEPTH};
-
-#define TILE_CELLS_X 16
-#define TILE_CELLS_Y 16
-#define TILE_CELLS_Z 16
-#define TILE_WIDTH ( CELL_WIDTH * TILE_CELLS_X )
-#define TILE_HEIGHT ( CELL_HEIGHT * TILE_CELLS_Y )
-#define TILE_DEPTH ( CELL_DEPTH * TILE_CELLS_Z )
-
-#define CELL_ONE_OVER_WIDTH ( 1.0f / EDITOR_CELL_WIDTH )
-#define CELL_ONE_OVER_HEIGHT ( 1.0f / EDITOR_CELL_HEIGHT )
-#define CELL_ONE_OVER_DEPTH ( 1.0f / EDITOR_CELL_DEPTH )
-
-#define SET_VOXEL_FACE( front, left, back, right, top, bottom )                              \
-	( ( ( (VoxelCell)front + 1 ) << ( 0 * 4 ) ) | ( ( (VoxelCell)left + 1 ) << ( 1 * 4 ) )   \
-	  | ( ( (VoxelCell)back + 1 ) << ( 2 * 4 ) ) | ( ( (VoxelCell)right + 1 ) << ( 3 * 4 ) ) \
-	  | ( ( (VoxelCell)top + 1 ) << ( 4 * 4 ) ) | ( ( (VoxelCell)bottom + 1 ) << ( 5 * 4 ) ) )
-
-typedef uint32 VoxelCell;
-constexpr const VoxelCell EmptyCell   = {0};
-constexpr const VoxelCell DefaultCell = {SET_VOXEL_FACE( 0, 1, 2, 3, 4, 5 )};
-struct VoxelGrid {
-	VoxelCell data[CELL_MAX_COUNT];
-	union {
-		struct {
-			int32 width;
-			int32 height;
-			int32 depth;
-		};
-		vec3i dim;
-	};
-
-	int32 size() { return width * height * depth; }
-	int32 max_size() { return CELL_MAX_COUNT; }
+	bool cameraTurning;
 };
+GameSettings makeDefaultGameSettings()
+{
+	GameSettings result     = {};
+	result.mouseSensitivity = 0.0025f;
+	result.mouseInvertY     = true;
+	return result;
+}
+
 enum VoxelFaceValues : uint32 {
 	VF_Front,
 	VF_Left,
@@ -280,143 +243,40 @@ static const char* VoxelFaceStrings[] = {
 	"top",
 	"bottom",
 };
-inline vec2i getTexelPlaneByFace( int32 face )
-{
-	constexpr vec2i texelPlaneByFace[] = {
-		{VectorComponent_X, VectorComponent_Y},
-		{VectorComponent_Z, VectorComponent_Y},
-		{VectorComponent_X, VectorComponent_Y},
-		{VectorComponent_Z, VectorComponent_Y},
-		{VectorComponent_X, VectorComponent_Z},
-		{VectorComponent_X, VectorComponent_Z},
-	};
-	assert( face >= 0 && face < countof( texelPlaneByFace ) );
-	return texelPlaneByFace[face];
-}
 
-uint32 getVoxelFaceTexture( VoxelCell cell, VoxelFaceValues face )
-{
-	auto value = valueof( face );
-	auto textureIndex = ( ( cell >> ( value * 4 ) ) & 0xFu ) - 1;
-	return textureIndex;
-}
-VoxelCell setVoxelFaceTexture( VoxelCell cell, VoxelFaceValues face, int32 index )
-{
-	uint32 shiftAmount = ( valueof( face ) * 4 );
-	VoxelCell masked   = ( ( VoxelCell )( ( index + 1 ) & 0xFu ) ) << shiftAmount;
-	return ( ( cell & ~( 0xFu << shiftAmount ) ) | masked );
-}
-
-bool isPointInsideVoxelBounds( VoxelGrid* grid, int32 x, int32 y, int32 z )
-{
-	return ( x >= 0 && x < grid->width ) && ( y >= 0 && y < grid->height )
-	       && ( z >= 0 && z < grid->depth );
-}
-bool isPointInsideVoxelBounds( VoxelGrid* grid, vec3iarg position )
-{
-	return ( position.x >= 0 && position.x < grid->width )
-	       && ( position.y >= 0 && position.y < grid->height )
-	       && ( position.z >= 0 && position.z < grid->depth );
-}
-VoxelCell& getCell( VoxelGrid* grid, int32 x, int32 y, int32 z )
-{
-	assert( isPointInsideVoxelBounds( grid, x, y, z ) );
-	int32 index = x + y * grid->width + z * grid->width * grid->height;
-	return grid->data[index];
-}
-VoxelCell& getCell( VoxelGrid* grid, vec3iarg position )
-{
-	assert( isPointInsideVoxelBounds( grid, position ) );
-	int32 index =
-	    position.x + position.y * grid->width + position.z * grid->width * grid->height;
-	return grid->data[index];
-}
-
-struct GameSettings {
-	float mouseSensitivity;
-	bool mouseInvertY;
-
-	bool cameraTurning;
-};
-GameSettings makeDefaultGameSettings()
-{
-	GameSettings result     = {};
-	result.mouseSensitivity = 0.0025f;
-	result.mouseInvertY     = true;
-	return result;
-}
-
-enum class EditMode {
-	Build,
-	Select,
-
-	Count
-};
-static const char* EditModeStrings[] = {
-    "Build", "Select",
-};
-
-enum class SelectedAxis { None, xAxis, yAxis, zAxis };
-enum class DragAction {
-	None,
-	DragSelection,
-	MoveSelection,
-	MoveVoxels,
-};
-
-enum class VoxelFocus {
-	Voxel,
-	Gui
-};
-struct VoxelGuiState {
-	int32 editMode;
-	int32 rendering;
-	int32 textureIndex;
-	float fadeProgress;
-	bool initialized;
-
-	bool lightingChecked;
-	bool noLightingChecked;
-
-	bool fileExpanded;
-	bool sizesExpanded;
-	bool texturesExpanded;
-
-	int32 mappingType;
-};
 struct VoxelGridTextureMap {
 	TextureId texture;
 	struct Entry {
 		QuadTexCoords texCoords;
 	};
-	Entry entries[6];
+	Entry entries[VF_Count];
 };
 
-struct VoxelState {
-	vec3 position;
-	Camera camera;
-	MeshStream meshStream;
-	VoxelGrid voxels;
-	VoxelGrid voxelsMoving;
-	VoxelGrid voxelsCombined;
-	VoxelCell placingCell;
-	bool lighting;
-	bool initialized;
+struct VoxelCollection {
+	struct Frame {
+		VoxelGridTextureMap textureMap;
+		MeshId mesh;
+		vec2 offset;
+	};
 
-	VoxelFocus focus;
-	EditMode editMode;
-	aabbi selection;
-	VoxelGuiState gui;
+	struct FrameInfo {
+		recti textureRegion[VF_Count];
+	};
 
-	bool isFaceSelected;
-	vec3i selectionNormal;
-	vec3 selectionOrigin;
-	aabb selectionWorld;
-	DragAction dragAction;
-	vec3 lastAxisPosition;
+	struct Animation {
+		string name;
+		rangei range;
+	};
 
-	VoxelGridTextureMap textureMap;
+	TextureId texture;
+	Array< Frame > frames;
+	Array< FrameInfo > frameInfos;
+	Array< Animation > animations;
+	string voxelsFilename;
 };
+
+#include "VoxelGrid.cpp"
+#include "VoxelEditor.h"
 
 struct CountdownTimer {
 	float value;
@@ -754,42 +614,14 @@ void fillVoxelGridFromImage( VoxelGrid* grid, ImageData image )
 	}
 }
 
-void generateMeshFromVoxelGridNaive( MeshStream* stream, VoxelGrid* grid )
-{
-	assert( isValid( stream ) );
-	assert( grid );
-
-	stream->color = 0xFF000000;
-	auto yStart   = grid->height * EDITOR_CELL_HEIGHT;
-
-	for( intmax z = 0; z < grid->depth; ++z ) {
-		for( intmax y = 0; y < grid->height; ++y ) {
-			for( intmax x = 0; x < grid->width; ++x ) {
-				intmax index = ( x ) + ( y * grid->width ) + ( z * grid->width * grid->height );
-				intmax cell  = grid->data[index];
-				if( cell != EmptyCell ) {
-					stream->color = 0xFF000000;
-					float left   = x * EDITOR_CELL_WIDTH;
-					float bottom = yStart - y * EDITOR_CELL_HEIGHT - EDITOR_CELL_HEIGHT;
-					float near   = z * EDITOR_CELL_DEPTH;
-					float right  = left + EDITOR_CELL_WIDTH;
-					float top    = bottom + EDITOR_CELL_HEIGHT;
-					float far    = near + EDITOR_CELL_DEPTH;
-					pushAabb( stream, left, bottom, near, right, top, far );
-				}
-			}
-		}
-	}
-}
-
 VoxelGridTextureMap makeDefaultVoxelGridTextureMap( TextureId texture )
 {
-	VoxelGridTextureMap result = {};
-	result.texture = texture;
+	VoxelGridTextureMap result   = {};
+	result.texture               = texture;
 	const float subdivisionWidth = 1.0f / 6.0f;
 	for( intmax i = 0; i < 6; ++i ) {
-		auto entry = &result.entries[i];
-		auto left = i * subdivisionWidth;
+		auto entry       = &result.entries[i];
+		auto left        = i * subdivisionWidth;
 		entry->texCoords = makeQuadTexCoords( rectf{left, 0, left + subdivisionWidth, 1} );
 	}
 	return result;
@@ -811,276 +643,6 @@ VoxelGridTextureMap makeHeroVoxelGridTextureMap( TextureId texture )
 	result.entries[4].texCoords = makeQuadTexCoordsCw90( result.entries[1].texCoords );
 	result.entries[5]           = result.entries[4];
 	return result;
-}
-void generateMeshFromVoxelGrid( MeshStream* stream, VoxelGrid* grid, VoxelGridTextureMap* textures,
-                                vec3arg cellSize )
-{
-	assert( isValid( stream ) );
-	assert( grid );
-
-	uint8 map[CELL_MAX_IN_PLANE];
-
-	struct FindFirstQuadResult {
-		bool found;
-		vec3i position;
-	};
-	struct PlaneDescriptor {
-		vec3 hAxis;
-		vec3 vAxis;
-		vec3 zAxis;
-		vec3 origin;
-		int8 hComponent;
-		int8 vComponent;
-		int8 zComponent;
-		float hSize;
-		float vSize;
-		float zSize;
-		int32 hCellCount;
-		int32 vCellCount;
-		int32 zCount;
-		int8 frontOffset;
-		Normal normal;
-		bool isBackFacing;
-
-		VoxelFaceValues face;
-	};
-	auto findFirstUnprocessedQuad = []( VoxelGrid* grid, uint8* map, PlaneDescriptor* plane,
-	                                    int32 layer ) -> FindFirstQuadResult {
-		// assume we are searching on the xy plane
-		for( int32 y = 0; y < plane->vCellCount; ++y ) {
-			for( int32 x = 0; x < plane->hCellCount; ++x ) {
-				auto mapIndex = x + y * plane->hCellCount;
-				vec3i currentCell;
-				currentCell.elements[plane->hComponent] = x;
-				currentCell.elements[plane->vComponent] = y;
-				currentCell.elements[plane->zComponent] = layer;
-				vec3i frontCell                         = currentCell;
-				frontCell.elements[plane->zComponent] += plane->frontOffset;
-
-				if( getCell( grid, currentCell ) != EmptyCell && map[mapIndex] == 0 ) {
-					// does the quad we are currently at need to be generated?
-					if( !isPointInsideVoxelBounds( grid, frontCell )
-					    || getCell( grid, frontCell ) == EmptyCell ) {
-						FindFirstQuadResult result;
-						result.found                                = true;
-						result.position.elements[plane->hComponent] = x;
-						result.position.elements[plane->vComponent] = y;
-						result.position.elements[plane->zComponent] = layer;
-						return result;
-					}
-				}
-			}
-		}
-		return {false};
-	};
-
-	auto isGeneratingQuad = []( VoxelGrid* grid, PlaneDescriptor* plane, uint8* map, int32 x,
-	                            int32 y, int32 z, uint32 textureIndex ) {
-		auto mapIndex = x + y * plane->hCellCount;
-		vec3i currentCell;
-		currentCell.elements[plane->hComponent] = x;
-		currentCell.elements[plane->vComponent] = y;
-		currentCell.elements[plane->zComponent] = z;
-		vec3i frontCell                         = currentCell;
-		frontCell.elements[plane->zComponent] += plane->frontOffset;
-
-		return getCell( grid, currentCell ) != EmptyCell
-		       && getVoxelFaceTexture( getCell( grid, currentCell ), plane->face ) == textureIndex
-		       && map[mapIndex] == 0 && ( !isPointInsideVoxelBounds( grid, frontCell )
-		                                  || getCell( grid, frontCell ) == EmptyCell );
-	};
-
-	auto processPlane = [findFirstUnprocessedQuad, isGeneratingQuad](
-	    MeshStream* stream, VoxelGrid* grid, VoxelGridTextureMap* textures, PlaneDescriptor* plane,
-	    uint8* map, size_t mapSize ) {
-
-		for( int32 z = 0; z < plane->zCount; ++z ) {
-			memset( map, 0, mapSize * sizeof( uint8 ) );
-			for( ;; ) {
-				auto first = findFirstUnprocessedQuad( grid, map, plane, z );
-				if( first.found ) {
-					auto position = swizzle( first.position, plane->hComponent, plane->vComponent,
-					                         plane->zComponent );
-					auto dim = swizzle( grid->dim, plane->hComponent, plane->vComponent,
-					                    plane->zComponent );
-					auto textureIndex =
-					    getVoxelFaceTexture( getCell( grid, first.position ), plane->face );
-					map[position.x + position.y * plane->hCellCount] = 1;
-
-					vec3 startVertex = plane->hAxis * ( plane->hSize * position.x )
-					                   + plane->vAxis * ( plane->vSize * position.y )
-					                   + plane->zAxis * ( plane->zSize * position.z )
-					                   + plane->origin;
-					assert( textureIndex < (uint32)countof( textures->entries ) );
-					auto textureEntry = &textures->entries[textureIndex];
-					auto texelPlane   = getTexelPlaneByFace( textureIndex );
-					auto tw           = getAxisAlignedWidth( textureEntry->texCoords );
-					auto th           = getAxisAlignedHeight( textureEntry->texCoords );
-					auto texelWidth  = tw / grid->dim[texelPlane.x];
-					auto texelHeight = th / grid->dim[texelPlane.y];
-					auto tu          = first.position[texelPlane.x] * texelWidth
-					          + textureEntry->texCoords.elements[0].u;
-					auto tv = first.position[texelPlane.y] * texelHeight
-					          + textureEntry->texCoords.elements[0].v;
-					Vertex quad[4] = {
-					    {startVertex, 0xFFFFFFFF, tu, tv, plane->normal},
-					    {startVertex + plane->hAxis * plane->hSize, 0xFFFFFFFF, tu + texelWidth, tv,
-					     plane->normal},
-					    {startVertex + plane->vAxis * plane->vSize, 0xFFFFFFFF, tu,
-					     tv + texelHeight, plane->normal},
-					    {startVertex + plane->vAxis * plane->vSize + plane->hAxis * plane->hSize,
-					     0xFFFFFFFF, tu + texelWidth, tv + texelHeight, plane->normal}};
-					if( plane->face != textureIndex ) {
-						// plane face doesn't match texture index
-						// that means that the voxel face plane doesn't match the texelPlane
-						// (ie the right face of the voxel taking the texture of the front face)
-						// in that case we just repeat the quad over and over since the texture
-						// doesn't depend on our current position in the plane
-						
-						// we end up outputting a single quad for each voxel that is like this
-					} else {
-						// texture coordinates depends on our current position in the plane
-						// we greedily adjust the quad and texture coordinates as we move
-						int32 y    = position.y;
-						int32 xEnd = position.x + 1;
-						for( int32 x = position.x + 1; x < plane->hCellCount; ++x ) {
-							if( isGeneratingQuad( grid, plane, map, x, y, z, textureIndex ) ) {
-								quad[1].position += plane->hAxis * plane->hSize;
-								quad[1].texCoords.x += texelWidth;
-								quad[3].position += plane->hAxis * plane->hSize;
-								quad[3].texCoords.x += texelWidth;
-								map[x + y * plane->hCellCount] = 1;
-								++xEnd;
-							} else {
-								break;
-							}
-						}
-						// we expanded the quad as much as we can in the x direction
-						// now we expand in y
-						++y;
-						for( ; y < plane->vCellCount; ++y ) {
-							bool generating = true;
-							for( int32 x = position.x; x < xEnd; ++x ) {
-								if( !isGeneratingQuad( grid, plane, map, x, y, z, textureIndex ) ) {
-									generating = false;
-									break;
-								}
-							}
-							if( generating ) {
-								for( int32 x = position.x; x < xEnd; ++x ) {
-									map[x + y * plane->hCellCount] = 1;
-								}
-								quad[2].position += plane->vAxis * plane->vSize;
-								quad[2].texCoords.y += texelHeight;
-								quad[3].position += plane->vAxis * plane->vSize;
-								quad[3].texCoords.y += texelHeight;
-							} else {
-								break;
-							}
-						}
-					}
-
-					if( plane->isBackFacing ) {
-						// swap positions of 1 and 2 so that quad is ccw winded
-						swap( quad[1], quad[2] );
-					}
-					pushQuad( stream, quad );
-				} else {
-					break;
-				}
-			}
-		}
-	};
-
-	PlaneDescriptor plane;
-	// front face
-	plane.hAxis        = {1, 0, 0};
-	plane.vAxis        = {0, -1, 0};
-	plane.zAxis        = {0, 0, 1};
-	plane.hComponent   = VectorComponent_X;
-	plane.vComponent   = VectorComponent_Y;
-	plane.zComponent   = VectorComponent_Z;
-	plane.hSize        = cellSize.x;
-	plane.vSize        = cellSize.y;
-	plane.zSize        = cellSize.y;
-	plane.hCellCount   = grid->width;
-	plane.vCellCount   = grid->height;
-	plane.zCount       = grid->depth;
-	plane.frontOffset  = -1;
-	plane.origin       = {0, grid->height * cellSize.y, 0};
-	plane.face         = VF_Front;
-	plane.normal       = normal_neg_z_axis;
-	plane.isBackFacing = false;
-
-	stream->color = 0xFFFF0000;
-	processPlane( stream, grid, textures, &plane, map, countof( map ) );
-	// back face
-	plane.frontOffset  = 1;
-	plane.origin       = {0, grid->height * cellSize.y, cellSize.y};
-	stream->color      = 0xFF00FF00;
-	plane.face         = VF_Back;
-	plane.normal       = normal_pos_z_axis;
-	plane.isBackFacing = true;
-	processPlane( stream, grid, textures, &plane, map, countof( map ) );
-
-	// right face
-	plane.hAxis        = {0, 0, 1};
-	plane.vAxis        = {0, -1, 0};
-	plane.zAxis        = {1, 0, 0};
-	plane.hComponent   = VectorComponent_Z;
-	plane.vComponent   = VectorComponent_Y;
-	plane.zComponent   = VectorComponent_X;
-	plane.hSize        = cellSize.y;
-	plane.vSize        = cellSize.y;
-	plane.zSize        = cellSize.x;
-	plane.hCellCount   = grid->depth;
-	plane.vCellCount   = grid->height;
-	plane.zCount       = grid->width;
-	plane.frontOffset  = 1;
-	plane.origin       = {cellSize.x, grid->height * cellSize.y, 0};
-	plane.face         = VF_Right;
-	stream->color      = 0xFF0000FF;
-	plane.normal       = normal_pos_x_axis;
-	plane.isBackFacing = false;
-	processPlane( stream, grid, textures, &plane, map, countof( map ) );
-	// left face
-	plane.frontOffset  = -1;
-	plane.origin       = {0, grid->height * cellSize.y, 0};
-	stream->color      = 0xFFFF00FF;
-	plane.face         = VF_Left;
-	plane.normal       = normal_neg_x_axis;
-	plane.isBackFacing = true;
-	processPlane( stream, grid, textures, &plane, map, countof( map ) );
-
-	// top face
-	plane.hAxis        = {1, 0, 0};
-	plane.vAxis        = {0, 0, 1};
-	plane.zAxis        = {0, -1, 0};
-	plane.hComponent   = VectorComponent_X;
-	plane.vComponent   = VectorComponent_Z;
-	plane.zComponent   = VectorComponent_Y;
-	plane.hSize        = cellSize.x;
-	plane.vSize        = cellSize.y;
-	plane.zSize        = cellSize.y;
-	plane.hCellCount   = grid->width;
-	plane.vCellCount   = grid->depth;
-	plane.zCount       = grid->height;
-	plane.frontOffset  = -1;
-	plane.face         = VF_Top;
-	plane.origin       = {0, grid->height * cellSize.y, 0};
-	stream->color      = 0xFFFFFF00;
-	plane.normal       = normal_pos_y_axis;
-	plane.isBackFacing = true;
-	processPlane( stream, grid, textures, &plane, map, countof( map ) );
-
-	// bottom face
-	plane.frontOffset  = 1;
-	plane.origin       = {0, grid->height * cellSize.y - cellSize.y, 0};
-	stream->color      = 0xFF00FFFF;
-	plane.face         = VF_Bottom;
-	plane.normal       = normal_neg_y_axis;
-	plane.isBackFacing = false;
-	processPlane( stream, grid, textures, &plane, map, countof( map ) );
 }
 
 GAME_STORAGE PlatformRemapInfo initializeApp( void* memory, size_t size,
@@ -1146,884 +708,86 @@ RELOAD_APP( reloadApp )
 	return result;
 }
 
-struct ShortestLineBetweenLinesResult {
-	float tA, tB;
-};
-ShortestLineBetweenLinesResult shortestLineBetweenLines( vec3arg aStart, vec3arg aDir,
-                                                         vec3arg bStart, vec3arg bDir )
-{
-	ShortestLineBetweenLinesResult result;
-	auto diffStart = aStart - bStart;
-	auto aa        = dot( aDir, aDir );
-	auto ab        = dot( aDir, bDir );
-	auto bb        = dot( bDir, bDir );
-	auto pa        = dot( aDir, diffStart );
-	auto pb        = dot( bDir, diffStart );
+#include "PhysicsHitTest.cpp"
 
-	auto denom = 1.0f / ( aa * bb - ab * ab );
-	result.tA  = ( ab * pb - bb * pa ) * denom;
-	result.tB  = ( aa * pb - ab * pa ) * denom;
-	return result;
-}
-bool testRayVsPlane( vec3arg rayOrigin, vec3arg rayDir, vec3arg planeOrigin, vec3arg planeNormal,
-                     float* t = nullptr )
-{
-	auto denom = dot( rayDir, planeNormal );
-	if( denom == 0 ) {
-		auto projection = dot( planeOrigin - rayOrigin, planeNormal );
-		if( projection > -0.0001f && projection < 0.0001f ) {
-			if( t ) {
-				*t = 0;
-			}
-			return true;
-		}
-		return false;
-	}
-
-	auto relative = planeOrigin - rayOrigin;
-	auto t_       = dot( relative, planeNormal ) / denom;
-	if( t_ >= 0 ) {
-		if( t ) {
-			*t = t_;
-		}
-		return true;
-	}
-	return false;
-}
-bool testRayVsAabb( vec3arg rayOrigin, vec3arg rayDir, aabbarg box, float* t = nullptr )
-{
-	auto oneOverDirX = 1.0f / rayDir.x;
-	auto oneOverDirY = 1.0f / rayDir.y;
-	auto oneOverDirZ = 1.0f / rayDir.z;
-
-	auto tMinX = ( box.min.x - rayOrigin.x ) * oneOverDirX;
-	auto tMinY = ( box.min.y - rayOrigin.y ) * oneOverDirY;
-	auto tMinZ = ( box.min.z - rayOrigin.z ) * oneOverDirZ;
-
-	auto tMaxX = ( box.max.x - rayOrigin.x ) * oneOverDirX;
-	auto tMaxY = ( box.max.y - rayOrigin.y ) * oneOverDirY;
-	auto tMaxZ = ( box.max.z - rayOrigin.z ) * oneOverDirZ;
-
-	auto mmX  = minmax( tMinX, tMaxX );
-	auto mmY  = minmax( tMinY, tMaxY );
-	auto mmZ  = minmax( tMinZ, tMaxZ );
-	auto tMin = max( mmX.min, mmY.min, mmZ.min );
-	auto tMax = min( mmX.max, mmY.max, mmZ.max );
-
-	if( t ) {
-		*t = tMin;
-	}
-	return tMin <= tMax;
-}
-
-struct TestRayVsAabbOption {
-	float t;
-	vec3i normal;
-};
-static bool operator<( const TestRayVsAabbOption& a, const TestRayVsAabbOption& b )
-{
-	return a.t < b.t;
-}
-struct TestRayVsAabbResult {
-	TestRayVsAabbOption enter; // intersection with aabb when entering
-	TestRayVsAabbOption leave; // intersection with aabb when leaving
-};
-bool testRayVsAabb( vec3arg rayOrigin, vec3arg rayDir, aabbarg box, TestRayVsAabbResult* out )
+bool loadVoxelCollection( StackAllocator* allocator, StringView filename, VoxelCollection* out )
 {
 	assert( out );
-
-	auto oneOverDirX = 1.0f / rayDir.x;
-	auto oneOverDirY = 1.0f / rayDir.y;
-	auto oneOverDirZ = 1.0f / rayDir.z;
-
-	TestRayVsAabbOption tMinX = {( box.min.x - rayOrigin.x ) * oneOverDirX, {-1, 0, 0}};
-	TestRayVsAabbOption tMinY = {( box.min.y - rayOrigin.y ) * oneOverDirY, {0, -1, 0}};
-	TestRayVsAabbOption tMinZ = {( box.min.z - rayOrigin.z ) * oneOverDirZ, {0, 0, -1}};
-
-	TestRayVsAabbOption tMaxX = {( box.max.x - rayOrigin.x ) * oneOverDirX, {1, 0, 0}};
-	TestRayVsAabbOption tMaxY = {( box.max.y - rayOrigin.y ) * oneOverDirY, {0, 1, 0}};
-	TestRayVsAabbOption tMaxZ = {( box.max.z - rayOrigin.z ) * oneOverDirZ, {0, 0, 1}};
-
-	auto mmX  = minmax( tMinX, tMaxX );
-	auto mmY  = minmax( tMinY, tMaxY );
-	auto mmZ  = minmax( tMinZ, tMaxZ );
-	auto tMin = max( mmX.min, mmY.min, mmZ.min );
-	auto tMax = min( mmX.max, mmY.max, mmZ.max );
-
-	out->enter.t      = tMin.t;
-	out->enter.normal = tMin.normal;
-	out->leave.t      = tMax.t;
-	out->leave.normal = tMax.normal;
-	return tMin.t <= tMax.t;
-}
-
-struct RayCastResult {
-	bool found;
-	vec3i position;
-	vec3i normal;
-	vec3 intersection;
-};
-
-// raycasting into 3d grid algorithm based on this paper:
-// http://www.cse.yorku.ca/~amana/research/grid.pdf
-RayCastResult raycastIntoVoxelGrid( VoxelGrid* grid, vec3arg rayOrigin, vec3 rayDir, float tMax )
-{
-	assert( grid );
-	RayCastResult result = {};
-
-	// find first grid intersection point
-	aabb gridBoundingBox = {0,
-	                        0,
-	                        0,
-	                        grid->width * EDITOR_CELL_WIDTH,
-	                        grid->height * EDITOR_CELL_HEIGHT,
-	                        grid->depth * EDITOR_CELL_DEPTH};
-
-	auto originalDir = rayDir;
-	TestRayVsAabbResult rayIntersection;
-	if( !testRayVsAabb( rayOrigin, rayDir, gridBoundingBox, &rayIntersection ) ) {
-		return result;
-	}
-	auto rayIntersectionT = rayIntersection.enter.t;
-	result.normal = rayIntersection.enter.normal;
-
-	vec3 start;
-	if( rayIntersectionT >= 0 ) {
-		start = rayOrigin + rayDir * rayIntersectionT;
-	} else {
-		rayIntersectionT = 0;
-		start            = rayOrigin;
-	}
-	start.y = grid->height * EDITOR_CELL_HEIGHT - start.y;
-	start.x = clamp( start.x, gridBoundingBox.min.x, gridBoundingBox.max.x - 1 );
-	start.y = clamp( start.y, gridBoundingBox.min.y, gridBoundingBox.max.y - 1 );
-	start.z = clamp( start.z, gridBoundingBox.min.z, gridBoundingBox.max.z - 1 );
-
-	result.normal.y = -result.normal.y;
-	rayDir.y        = -rayDir.y;
-
-	int32 stepX = ( rayDir.x >= 0 ) ? ( 1 ) : ( -1 );
-	int32 stepY = ( rayDir.y >= 0 ) ? ( 1 ) : ( -1 );
-	int32 stepZ = ( rayDir.z >= 0 ) ? ( 1 ) : ( -1 );
-
-	int32 x = (int32)floor( start.x * CELL_ONE_OVER_WIDTH );
-	int32 y = (int32)floor( start.y * CELL_ONE_OVER_HEIGHT );
-	int32 z = (int32)floor( start.z * CELL_ONE_OVER_DEPTH );
-
-	float nextVoxelX = ( x + stepX ) * EDITOR_CELL_WIDTH;
-	float nextVoxelY = ( y + stepY ) * EDITOR_CELL_HEIGHT;
-	float nextVoxelZ = ( z + stepZ ) * EDITOR_CELL_DEPTH;
-	if( rayDir.x < 0 ) {
-		nextVoxelX += EDITOR_CELL_WIDTH;
-	}
-	if( rayDir.y < 0 ) {
-		nextVoxelY += EDITOR_CELL_HEIGHT;
-	}
-	if( rayDir.z < 0 ) {
-		nextVoxelZ += EDITOR_CELL_DEPTH;
-	}
-
-	auto oneOverRayDirX = 1.0f / rayDir.x;
-	auto oneOverRayDirY = 1.0f / rayDir.y;
-	auto oneOverRayDirZ = 1.0f / rayDir.z;
-
-	float tMaxX = ( rayDir.x != 0 ) ? ( ( nextVoxelX - start.x ) * oneOverRayDirX ) : ( FLOAT_MAX );
-	float tMaxY = ( rayDir.y != 0 ) ? ( ( nextVoxelY - start.y ) * oneOverRayDirY ) : ( FLOAT_MAX );
-	float tMaxZ = ( rayDir.z != 0 ) ? ( ( nextVoxelZ - start.z ) * oneOverRayDirZ ) : ( FLOAT_MAX );
-
-	float tDeltaX =
-	    ( rayDir.x != 0 ) ? ( EDITOR_CELL_WIDTH * oneOverRayDirX * stepX ) : ( FLOAT_MAX );
-	float tDeltaY =
-	    ( rayDir.y != 0 ) ? ( EDITOR_CELL_HEIGHT * oneOverRayDirY * stepY ) : ( FLOAT_MAX );
-	float tDeltaZ =
-	    ( rayDir.z != 0 ) ? ( EDITOR_CELL_DEPTH * oneOverRayDirZ * stepZ ) : ( FLOAT_MAX );
-
-	result.intersection = rayOrigin + originalDir * rayIntersectionT;
-	if( getCell( grid, x, y, z ) != EmptyCell ) {
-		result.position = {x, y, z};
-		result.found    = true;
-	} else {
-		float prevT = 0;
-		float t     = 0;
-		while( t < tMax ) {
-			if( !isPointInsideVoxelBounds( grid, x, y, z ) ) {
-				result.found = false;
-				break;
-			}
-
-			if( getCell( grid, x, y, z ) != EmptyCell ) {
-				result.intersection = rayOrigin + originalDir * ( t + rayIntersectionT );
-				result.position     = {(int32)x, (int32)y, (int32)z};
-				result.found        = true;
-				break;
-			}
-
-			prevT = t;
-			if( tMaxX < tMaxY ) {
-				if( tMaxX < tMaxZ ) {
-					// tMaxX was smallest
-					x += stepX;
-					t             = tMaxX;
-					result.normal = {-stepX, 0, 0};
-					tMaxX += tDeltaX;
-				} else {
-					// tMaxZ was smallest
-					z += stepZ;
-					t             = tMaxZ;
-					result.normal = {0, 0, -stepZ};
-					tMaxZ += tDeltaZ;
-				}
-			} else {
-				if( tMaxY < tMaxZ ) {
-					// tMaxY was smallest
-					y += stepY;
-					t             = tMaxY;
-					result.normal = {0, -stepY, 0};
-					tMaxY += tDeltaY;
-				} else {
-					// tMaxZ was smallest
-					z += stepZ;
-					t             = tMaxZ;
-					result.normal = {0, 0, -stepZ};
-					tMaxZ += tDeltaZ;
-				}
-			}
-		}
-	}
-
-	return result;
-}
-
-static void processBuildMode( AppData* app, GameInputs* inputs, bool focus, float dt )
-{
-	auto voxel  = &app->voxelState;
-	auto camera = &voxel->camera;
-	// auto renderer     = &app->renderer;
-	auto cameraCenter = center( camera );
-
-	auto generateVoxelMesh = false;
-	if( isKeyPressed( inputs, KC_LButton ) ) {
-		auto result = raycastIntoVoxelGrid( &voxel->voxels, cameraCenter, camera->look, 10000 );
-		if( result.found ) {
-			auto destinationCell = result.position + result.normal;
-			if( isPointInsideVoxelBounds( &voxel->voxels, destinationCell ) ) {
-				getCell( &voxel->voxels, destinationCell ) = voxel->placingCell;
-				generateVoxelMesh = true;
-			}
-		}
-	}
-	if( isKeyPressed( inputs, KC_RButton ) ) {
-		auto result = raycastIntoVoxelGrid( &voxel->voxels, cameraCenter, camera->look, 10000 );
-		if( result.found ) {
-			auto destinationCell = result.position;
-			if( isPointInsideVoxelBounds( &voxel->voxels, destinationCell ) ) {
-				getCell( &voxel->voxels, destinationCell ) = EmptyCell;
-				generateVoxelMesh = true;
-			}
-		}
-	}
-
-	if( generateVoxelMesh ) {
-		clear( &voxel->meshStream );
-		generateMeshFromVoxelGrid( &voxel->meshStream, &voxel->voxels, &voxel->textureMap,
-		                           EditorVoxelCellSize );
-	}
-}
-
-aabb calculateSelectionWorld( VoxelState* voxel )
-{
-	auto grid             = &voxel->voxels;
-	auto selectionWorld   = AabbScaled( voxel->selection, EditorVoxelCellSize );
-	auto voxelGridTop     = EDITOR_CELL_HEIGHT * grid->height;
-	selectionWorld        = translate( selectionWorld, {0, voxelGridTop, 0} );
-	selectionWorld.bottom = voxelGridTop * 2 - selectionWorld.bottom;
-	selectionWorld.top    = voxelGridTop * 2 - selectionWorld.top;
-	swap( selectionWorld.bottom, selectionWorld.top );
-	return selectionWorld;
-}
-
-aabbi getSelection( VoxelState* state )
-{
-	aabbi result;
-	auto grid    = &state->voxels;
-	result.min.x = max( min( state->selection.min.x, state->selection.max.x ), 0 );
-	result.max.x = min( max( state->selection.min.x, state->selection.max.x ), grid->width );
-
-	result.min.y = max( min( state->selection.min.y, state->selection.max.y ), 0 );
-	result.max.y = min( max( state->selection.min.y, state->selection.max.y ), grid->height );
-
-	result.min.z = max( min( state->selection.min.z, state->selection.max.z ), 0 );
-	result.max.z = min( max( state->selection.min.z, state->selection.max.z ), grid->depth );
-	return result;
-}
-static void processSelectMode( AppData* app, GameInputs* inputs, bool focus, float dt )
-{
-	auto voxel        = &app->voxelState;
-	auto camera       = &voxel->camera;
-	auto cameraCenter = center( camera );
-	auto grid         = &voxel->voxels;
-
-	if( isKeyPressed( inputs, KC_MButton ) ) {
-		auto result = raycastIntoVoxelGrid( &voxel->voxels, cameraCenter, camera->look, 10000 );
-		if( result.found ) {
-			voxel->selection = AabbWHD( result.position, 1, 1, 1 );
-		}
-	}
-
-	if( isKeyPressed( inputs, KC_Key_J ) ) {
-		swap( voxel->selection.min.x, voxel->selection.max.x );
-		swap( voxel->selection.min.y, voxel->selection.max.y );
-		swap( voxel->selection.min.z, voxel->selection.max.z );
-	}
-	if( voxel->dragAction == DragAction::None ) {
-		auto& selectionWorld = voxel->selectionWorld = calculateSelectionWorld( voxel );
-		TestRayVsAabbResult result;
-		voxel->isFaceSelected =
-		    testRayVsAabb( cameraCenter, camera->look, selectionWorld, &result );
-		if( voxel->isFaceSelected ) {
-			TestRayVsAabbOption* option;
-			if( isKeyDown( inputs, KC_Alt ) ) {
-				option = &result.leave;
-			} else {
-				option = &result.enter;
-			}
-			voxel->selectionOrigin = cameraCenter + camera->look * option->t;
-			voxel->selectionNormal = option->normal;
-		}
-	}
-
-	auto generateVoxelMesh = false;
-	switch( voxel->dragAction ) {
-		case DragAction::None: {
-			break;
-		}
-		case DragAction::DragSelection: {
-			if( isKeyUp( inputs, KC_LButton ) ) {
-				voxel->dragAction = DragAction::None;
-			}
-			break;
-		}
-		case DragAction::MoveVoxels: {
-			if( isKeyUp( inputs, KC_RButton ) ) {
-				voxel->dragAction = DragAction::None;
-				auto selection    = getSelection( voxel );
-				for( int32 z = selection.min.z; z < selection.max.z; ++z ) {
-					for( int32 y = selection.min.y; y < selection.max.y; ++y ) {
-						for( int32 x = selection.min.x; x < selection.max.x; ++x ) {
-							auto& cell     = getCell( &voxel->voxels, x, y, z );
-							auto& selected = getCell( &voxel->voxelsMoving, x - selection.min.x,
-							                          y - selection.min.y, z - selection.min.z );
-							if( selected != EmptyCell ) {
-								cell = selected;
-							}
-							selected = EmptyCell;
-						}
-					}
-				}
-				generateVoxelMesh = true;
-			}
-			break;
-		}
-		InvalidDefaultCase;
-	}
-
-	auto startedDragging = ( voxel->dragAction == DragAction::None );
-	if( voxel->dragAction == DragAction::None && voxel->isFaceSelected ) {
-		if( isKeyPressed( inputs, KC_LButton ) ) {
-			voxel->dragAction = DragAction::DragSelection;
-		} else if( isKeyPressed( inputs, KC_RButton ) ) {
-			voxel->dragAction = DragAction::MoveVoxels;
-		}
-	}
-
-	if( voxel->dragAction != DragAction::None ) {
-		vec3 axisOrigin          = voxel->selectionOrigin;
-		vec3 axisDir             = {};
-		intmax componentAabbMin  = 0;
-		intmax componentAabbMax  = 0;
-		intmax componentIndexMin = 0;
-		intmax componentIndexMax = 0;
-		intmax componentVec      = 0;
-		float scale              = 0;
-		float offset             = 0;
-		auto selectionNormal     = voxel->selectionNormal;
-		if( selectionNormal.x != 0 ) {
-			axisDir = {1, 0, 0};
-			if( selectionNormal.x < 0 ) {
-				componentAabbMin  = 0;
-				componentIndexMin = 0;
-				componentAabbMax  = 3;
-				componentIndexMax = 3;
-			} else {
-				componentAabbMin  = 3;
-				componentIndexMin = 3;
-				componentAabbMax  = 0;
-				componentIndexMax = 0;
-			}
-			componentVec = 0;
-			scale        = CELL_ONE_OVER_WIDTH;
-		} else if( selectionNormal.y != 0 ) {
-			axisDir = {0, 1, 0};
-			if( selectionNormal.y < 0 ) {
-				componentAabbMin  = 1;
-				componentIndexMin = 4;
-				componentAabbMax  = 4;
-				componentIndexMax = 1;
-			} else {
-				componentAabbMin  = 4;
-				componentIndexMin = 1;
-				componentAabbMax  = 1;
-				componentIndexMax = 4;
-			}
-			componentVec = 1;
-			scale        = -CELL_ONE_OVER_HEIGHT;
-			offset       = -EDITOR_CELL_HEIGHT * grid->height;
-		} else if( selectionNormal.z != 0 ) {
-			axisDir = {0, 0, 1};
-			if( selectionNormal.z < 0 ) {
-				componentAabbMin  = 2;
-				componentIndexMin = 2;
-				componentAabbMax  = 5;
-				componentIndexMax = 5;
-			} else {
-				componentAabbMin  = 5;
-				componentIndexMin = 5;
-				componentAabbMax  = 2;
-				componentIndexMax = 2;
-			}
-			componentVec = 2;
-			scale        = CELL_ONE_OVER_DEPTH;
-		} else {
-			InvalidCodePath();
-		}
-
-		auto result = shortestLineBetweenLines( cameraCenter, camera->look, axisOrigin, axisDir );
-		auto axisResult = axisOrigin + axisDir * result.tB;
-		if( startedDragging ) {
-			voxel->lastAxisPosition = axisResult;
-		}
-		switch( voxel->dragAction ) {
-			case DragAction::DragSelection: {
-				if( !startedDragging ) {
-					auto delta = ( axisResult - voxel->lastAxisPosition ).elements[componentVec];
-					voxel->selectionWorld.elements[componentAabbMin] += delta;
-					auto index = (int32)floor(
-					    ( voxel->selectionWorld.elements[componentAabbMin] + offset ) * scale );
-					voxel->selection.elements[componentIndexMin] = index;
-				}
-				break;
-			}
-			case DragAction::MoveVoxels: {
-				if( startedDragging ) {
-					auto duplicate = isKeyDown( inputs, KC_Shift );
-					auto selection = getSelection( voxel );
-					for( int32 z = selection.min.z; z < selection.max.z; ++z ) {
-						for( int32 y = selection.min.y; y < selection.max.y; ++y ) {
-							for( int32 x = selection.min.x; x < selection.max.x; ++x ) {
-								auto& cell = getCell( &voxel->voxels, x, y, z );
-								auto& selected =
-								    getCell( &voxel->voxelsMoving, x - selection.min.x,
-								             y - selection.min.y, z - selection.min.z );
-								selected = cell;
-								if( !duplicate ) {
-									cell = EmptyCell;
-								}
-							}
-						}
-					}
-					generateVoxelMesh = true;
-				} else {
-					auto delta = ( axisResult - voxel->lastAxisPosition ).elements[componentVec];
-					voxel->selectionWorld.elements[componentAabbMin] += delta;
-					voxel->selectionWorld.elements[componentAabbMax] += delta;
-					auto indexMin = (int32)floor(
-					    ( voxel->selectionWorld.elements[componentAabbMin] + offset ) * scale );
-					auto indexMax = (int32)floor(
-					    ( voxel->selectionWorld.elements[componentAabbMax] + offset ) * scale );
-					if( voxel->selection.min.elements[componentVec] != indexMin
-					    || voxel->selection.max.elements[componentVec] != indexMax ) {
-						generateVoxelMesh = true;
-					}
-					voxel->selection.min.elements[componentVec] = indexMin;
-					voxel->selection.max.elements[componentVec] = indexMax;
-				}
-				break;
-			}
-			InvalidDefaultCase;
-		}
-		voxel->lastAxisPosition = axisResult;
-	}
-
-	if( isKeyPressed( inputs, KC_Delete ) ) {
-		generateVoxelMesh = true;
-		auto selection    = getSelection( voxel );
-		for( int32 z = selection.min.z; z < selection.max.z; ++z ) {
-			for( int32 y = selection.min.y; y < selection.max.y; ++y ) {
-				for( int32 x = selection.min.x; x < selection.max.x; ++x ) {
-					getCell( &voxel->voxels, x, y, z ) = EmptyCell;
-				}
-			}
-		}
-	}
-
-	if( generateVoxelMesh ) {
-		auto selection = getSelection( voxel );
-		voxel->voxelsCombined = voxel->voxels;
-		for( int32 z = selection.min.z; z < selection.max.z; ++z ) {
-			for( int32 y = selection.min.y; y < selection.max.y; ++y ) {
-				for( int32 x = selection.min.x; x < selection.max.x; ++x ) {
-					auto src = getCell( &voxel->voxelsMoving, x - selection.min.x,
-					                    y - selection.min.y, z - selection.min.z );
-					auto& dest = getCell( &voxel->voxelsCombined, x, y, z );
-					if( src != EmptyCell ) {
-						dest = src;
-					}
-				}
-			}
-		}
-		clear( &voxel->meshStream );
-		generateMeshFromVoxelGrid( &voxel->meshStream, &voxel->voxelsCombined, &voxel->textureMap,
-		                           EditorVoxelCellSize );
-	}
-}
-static void processEditMode( AppData* app, GameInputs* inputs, bool focus, float dt )
-{
-	auto voxel = &app->voxelState;
-
-	switch( voxel->editMode ) {
-		case EditMode::Build: {
-			processBuildMode( app, inputs, focus, dt );
-			break;
-		}
-		case EditMode::Select: {
-			processSelectMode( app, inputs, focus, dt );
-			break;
-		}
-		InvalidDefaultCase;
-	}
-}
-
-void saveVoxelGridToFile( PlatformServices* platform, StringView filename, VoxelGrid* grid )
-{
-	assert( platform );
-	assert( grid );
-	// TODO: write the path to the used texture map also to the file
-	platform->writeBufferToFile( filename, grid, sizeof( VoxelGrid ) );
-}
-bool loadVoxelGridFromFile( PlatformServices* platform, StringView filename, VoxelGrid* grid )
-{
-	auto bytesToRead = sizeof( VoxelGrid );
-	if( platform->readFileToBuffer( filename, grid, bytesToRead ) != bytesToRead ) {
-		LOG( ERROR, "Failed to load voxel grid from file {}", filename );
-		return false;
-	}
-	return true;
-}
-VoxelGrid getVoxelGridFromTextureMap( VoxelGridTextureMap* map, Color colorkey )
-{
-	assert( map );
-	VoxelGrid result = {};
-	auto info        = getTextureInfo( map->texture );
-	auto tw          = getAxisAlignedWidth( map->entries[VF_Front].texCoords );
-	auto th          = getAxisAlignedHeight( map->entries[VF_Front].texCoords );
-	auto td          = getAxisAlignedWidth( map->entries[VF_Right].texCoords );
-
-	// convert texture coordinates to pixel coordinates to calculate grid dimensions
-	result.width  = (int32)round( tw * info->image.width );
-	result.height = (int32)round( th * info->image.height );
-	result.depth  = (int32)round( td * info->image.width );
-
-	auto isEmpty = [info, map, &colorkey, &result]( vec3iarg index, uint32 face ) {
-		auto plane     = getTexelPlaneByFace( face );
-		auto texCoords = &map->entries[face].texCoords;
-		float tx       = index.elements[plane.x] / (float)result.dim[plane.x];
-		float ty       = index.elements[plane.y] / (float)result.dim[plane.y];
-		auto textureX  = ( intmax )( lerp( tx, texCoords->elements[0].u, texCoords->elements[1].u )
-		                            * info->image.width );
-		auto textureY = ( intmax )( lerp( ty, texCoords->elements[0].v, texCoords->elements[2].v )
-		                            * info->image.height );
-		auto pixel = getPixelColor( info->image, textureX, textureY );
-		return ( getAlpha( pixel ) == 0 || pixel == colorkey );
-	};
-
-	int32 strideY = result.width;
-	int32 strideZ = result.width * result.height;
-	for( vec3i pos = {}; pos.z < result.depth; ++pos.z ) {
-		for( pos.y = 0; pos.y < result.height; ++pos.y ) {
-			for( pos.x = 0; pos.x < result.width; ++pos.x ) {
-				int32 index = pos.x + pos.y * strideY + pos.z * strideZ;
-				auto& cell   = result.data[index];
-				cell         = DefaultCell;
-
-				for( uint32 face = 0; face < VF_Count; ++face ) {
-					if( isEmpty( pos, face ) ) {
-						cell = EmptyCell;
-						break;
-					}
-				}
-			}
-		}
-	}
-	return result;
-}
-VoxelGrid getVoxelGridFromTextureMapTopLeftColorKey( VoxelGridTextureMap* map )
-{
-	assert( map );
-	assert( map->texture );
-	auto info = getTextureInfo( map->texture );
-	return getVoxelGridFromTextureMap( map, getPixelColor( info->image, 0, 0 ) );
-}
-
-struct VoxelCollection {
-	struct Frame {
-		VoxelGridTextureMap textureMap;
-		MeshId mesh;
-		vec2 offset;
-	};
-
-	struct FrameInfo {
-		recti textureRegion[VF_Count];
-	};
-
-	struct Animation {
-		string name;
-		rangei range;
-	};
-
-	TextureId texture;
-	Array< Frame > frames;
-	Array< FrameInfo > frameInfos;
-	Array< Animation > animations;
-};
-
-bool loadVoxelCollection( StackAllocator* allocator, StringView collectionName,
-                          VoxelCollection* out )
-{
-#if 0
-	assert( out );
-	auto partition         = StackAllocatorPartition::ratio( allocator, 1 );
+	auto partition = StackAllocatorPartition::ratio( allocator, 1 );
 
 	auto primary = partition.primary();
 	auto scrap   = partition.scrap();
 
-	auto jsonFilename = snprint( scrap, "{}.json", collectionName );
-
-	auto jsonDataMaxSize = megabytes( 1 );
-	auto jsonData = allocateArray( scrap, char, jsonDataMaxSize );
+	auto jsonDataMaxSize = kilobytes( 200 );
+	auto jsonData        = allocateArray( scrap, char, jsonDataMaxSize );
 	auto jsonDataSize =
-	    GlobalPlatformServices->readFileToBuffer( collectionName, jsonData, jsonDataMaxSize );
+	    GlobalPlatformServices->readFileToBuffer( filename, jsonData, jsonDataMaxSize );
 
-	auto jsonDocSize = megabytes( 1 );
+	size_t jsonDocSize                     = kilobytes( 200 );
 	JsonStackAllocatorStruct jsonAllocator = {allocateArray( scrap, char, jsonDocSize ), 0,
 	                                          jsonDocSize};
-	auto doc = jsonMakeDocument( &jsonAllocator, jsonData, jsonDataSize, JSON_READER_STRICT );
-	if( !doc ) {
+	auto doc =
+	    jsonMakeDocument( &jsonAllocator, jsonData, (int32)jsonDataSize, JSON_READER_STRICT );
+	if( !doc || !doc.root.getObject() ) {
 		return false;
 	}
-	auto root = doc.root;
-	
+	auto root = doc.root.getObject();
+
+	*out         = {};
+	out->texture = GlobalPlatformServices->loadTexture( root["texture"].getString() );
+	if( !out->texture ) {
+		return false;
+	}
+	auto textureInfo = getTextureInfo( out->texture );
+	auto itw         = 1.0f / textureInfo->width;
+	auto ith         = 1.0f / textureInfo->height;
+
+	auto mapping      = root["mapping"].getArray();
+	int32 framesCount = 0;
+	FOR( animationVal : mapping ) {
+		auto animation = animationVal.getObject();
+		framesCount += animation["frames"].getArray().size();
+	}
+
+	out->frames     = makeArray( primary, VoxelCollection::Frame, framesCount );
+	out->frameInfos = makeArray( primary, VoxelCollection::FrameInfo, framesCount );
+	out->animations = makeArray( primary, VoxelCollection::Animation, mapping.size() );
+
+	int32 currentFrame = 0;
+	for( int32 i = 0, count = mapping.size(); i < count; ++i ) {
+		auto animation  = mapping[i].getObject();
+		auto dest       = &out->animations[i];
+		dest->name      = makeString( primary, animation["name"].getString() );
+		dest->range.min = currentFrame;
+
+		FOR( frameVal : animation["frames"].getArray() ) {
+			auto frame     = frameVal.getObject();
+			auto destFrame = &out->frames[currentFrame];
+			auto destInfo  = &out->frameInfos[currentFrame];
+			++currentFrame;
+
+			*destFrame = {};
+
+			for( auto face = 0; face < VF_Count; ++face ) {
+				auto faceObject = frame[VoxelFaceStrings[face]].getObject();
+
+				destFrame->textureMap.texture = out->texture;
+				serialize( faceObject["rect"], destInfo->textureRegion[face] );
+				serialize( faceObject["texCoords"], destFrame->textureMap.entries[face].texCoords );
+				FOR( vert : destFrame->textureMap.entries[face].texCoords.elements ) {
+					vert.x *= itw;
+					vert.y *= ith;
+				}
+			}
+			serialize( frame["offset"], destFrame->offset );
+		}
+
+		dest->range.max = currentFrame;
+	}
+	out->voxelsFilename = makeString( primary, root["voxels"].getString() );
 
 	partition.commit();
-#endif
 	return true;
-}
-
-static void doVoxelGui( AppData* app, GameInputs* inputs, bool focus, float dt )
-{
-	auto voxel     = &app->voxelState;
-	auto gui       = &voxel->gui;
-	auto renderer  = &app->renderer;
-	auto font      = &app->font;
-	auto fadeSpeed = 0.25f * dt;
-	if( !focus && gui->fadeProgress <= 0 ) {
-		return;
-	}
-	gui->fadeProgress = clamp( gui->fadeProgress + fadeSpeed * ( ( focus ) ? ( 1 ) : ( -1 ) ) );
-
-	if( !gui->initialized ) {
-		gui->editMode  = imguiGenerateContainer( &app->guiState );
-		gui->rendering = imguiGenerateContainer( &app->guiState, {ImGui->style.containerWidth} );
-		gui->textureIndex =
-		    imguiGenerateContainer( &app->guiState, {ImGui->style.containerWidth, 200} );
-		gui->noLightingChecked = true;
-		gui->initialized       = true;
-	}
-	if( isKeyPressed( inputs, KC_Key_K ) ) {
-		imguiGetContainer( gui->editMode )->setHidden( false );
-		imguiGetContainer( gui->rendering )->setHidden( false );
-		imguiGetContainer( gui->textureIndex )->setHidden( false );
-	}
-
-	setProjection( renderer, ProjectionType::Orthogonal );
-	/*setTexture( renderer, 0, voxel->textureMap );
-	MESH_STREAM_BLOCK( stream, renderer ) {
-	    stream->color    = 0xFFFFFFFF;
-	    vec3 vertices[4] = {{0, 0, 0}, {100, 0, 0}, {0, 100, 0}, {100, 100, 0}};
-	    pushQuad( stream, vertices );
-	}*/
-	renderer->color = setAlpha( 0xFFFFFFFF, gui->fadeProgress );
-
-	rectf guiBounds = {0, 0, app->width, app->height};
-	imguiBind( &app->guiState, renderer, font, inputs, app->stackAllocator.ptr, guiBounds, focus );
-	if( imguiDialog( "EditMode", gui->editMode ) ) {
-		char buffer[200];
-		string_builder builder( buffer, 200 );
-		builder.print( "Current: {}", EditModeStrings[valueof( voxel->editMode )] );
-		imguiText( asStringView( builder ) );
-		imguiSameLine( 3 );
-		for( intmax i = 0; i < valueof( EditMode::Count ); ++i ) {
-			if( imguiButton( EditModeStrings[i], 16, 16 ) ) {
-				voxel->editMode = (EditMode)i;
-			}
-		}
-		
-		auto generateVoxelMesh = false;
-		if( imguiButton( "New" ) ) {
-			fill( voxel->voxels.data, DefaultCell, voxel->voxels.max_size() );
-			generateVoxelMesh = true;
-		}
-
-		if( imguiBeginDropGroup( "Sizes", &gui->sizesExpanded ) ) {
-			if( imguiEditbox( "Width", &voxel->voxels.width ) ) {
-				voxel->voxels.width = clamp( voxel->voxels.width, 0, CELL_MAX_X );
-				generateVoxelMesh = true;
-			}
-			if( imguiEditbox( "Height", &voxel->voxels.height ) ) {
-				voxel->voxels.height = clamp( voxel->voxels.height, 0, CELL_MAX_X );
-				generateVoxelMesh = true;
-			}
-			if( imguiEditbox( "Depth", &voxel->voxels.depth ) ) {
-				voxel->voxels.depth = clamp( voxel->voxels.depth, 0, CELL_MAX_X );
-				generateVoxelMesh   = true;
-			}
-			imguiEndDropGroup();
-		}
-
-		if( imguiBeginDropGroup( "Textures & Mapping", &gui->texturesExpanded ) ) {
-			imguiSameLine( 2 );
-			if( imguiButton( "Load Texture" ) ) {
-				char filenameBuffer[260];
-				auto filenameSize = app->platform.getOpenFilename(
-				    "All\0*.*\0", nullptr, false, filenameBuffer, countof( filenameBuffer ) );
-				if( filenameSize ) {
-					voxel->textureMap.texture =
-					    app->platform.loadTexture( {filenameBuffer, filenameSize} );
-				}
-			}
-			if( imguiButton( "Generate Grid" ) ) {
-				voxel->voxels     = getVoxelGridFromTextureMapTopLeftColorKey( &voxel->textureMap );
-				generateVoxelMesh = true;
-			}
-#if 1
-			auto combo = imguiCombo( "Mapping Type", &gui->mappingType );
-			if( imguiComboEntry( combo, "Hero Mapping" ) ) {
-				voxel->textureMap = makeHeroVoxelGridTextureMap( voxel->textureMap.texture );
-				generateVoxelMesh = true;
-			}
-			if( imguiComboEntry( combo, "TileMapping" ) ) {
-				voxel->textureMap = makeDefaultVoxelGridTextureMap( voxel->textureMap.texture );
-				generateVoxelMesh = true;
-			}
-#else
-			imguiSameLine( 2 );
-			if( imguiButton( "Hero Mapping" ) ) {
-				voxel->textureMap = makeHeroVoxelGridTextureMap( voxel->textureMap.texture );
-				generateVoxelMesh = true;
-			}
-			if( imguiButton( "Tile Mapping" ) ) {
-				voxel->textureMap = makeDefaultVoxelGridTextureMap( voxel->textureMap.texture );
-				generateVoxelMesh = true;
-			}
-#endif
-			imguiEndDropGroup();
-		}
-
-		if( imguiBeginDropGroup( "Save & Load", &gui->fileExpanded ) ) {
-			imguiSameLine( 2 );
-			if( imguiButton( "Save" ) ) {
-				char filenameBuffer[260];
-				auto filenameSize = app->platform.getSaveFilename(
-				    "All\0*.*\0", nullptr, filenameBuffer, countof( filenameBuffer ) );
-				if( filenameSize ) {
-					saveVoxelGridToFile( &app->platform, {filenameBuffer, filenameSize},
-					                     &voxel->voxels );
-				}
-			}
-
-			if( imguiButton( "Load" ) ) {
-				char filenameBuffer[260];
-				auto filenameSize = app->platform.getOpenFilename(
-				    "All\0*.*\0", nullptr, false, filenameBuffer, countof( filenameBuffer ) );
-				if( filenameSize ) {
-					loadVoxelGridFromFile( &app->platform, {filenameBuffer, filenameSize},
-					                       &voxel->voxels );
-					generateVoxelMesh = true;
-				}
-			}
-			imguiEndDropGroup();
-		}
-
-		if( generateVoxelMesh ) {
-			voxel->voxelsCombined = voxel->voxels;
-			voxel->voxelsMoving.width = voxel->voxels.width;
-			voxel->voxelsMoving.height = voxel->voxels.height;
-			voxel->voxelsMoving.depth = voxel->voxels.depth;
-			clear( &voxel->meshStream );
-			generateMeshFromVoxelGrid( &voxel->meshStream, &voxel->voxels, &voxel->textureMap,
-			                           EditorVoxelCellSize );
-		}
-	}
-
-	if( imguiDialog( "Rendering Settings", gui->rendering ) ) {
-		if( imguiRadiobox( "Lighting", &gui->lightingChecked ) ) {
-			voxel->lighting = gui->lightingChecked;
-		}
-		if( imguiRadiobox( "No Lighting", &gui->noLightingChecked ) ) {
-			voxel->lighting = !gui->noLightingChecked;
-		}
-	}
-
-	auto doButtons = [voxel]( StringView faceLabel, VoxelFaceValues face ) {
-		imguiSameLine( 7 );
-		imguiText( faceLabel, 35, 16 );
-		int32 index = -1;
-		if( imguiButton( "front", 16, 16 ) ) {
-			index = 0;
-		}
-		if( imguiButton( "left", 16, 16 ) ) {
-			index = 1;
-		}
-		if( imguiButton( "back", 16, 16 ) ) {
-			index = 2;
-		}
-		if( imguiButton( "right", 16, 16 ) ) {
-			index = 3;
-		}
-		if( imguiButton( "top", 16, 16 ) ) {
-			index = 4;
-		}
-		if( imguiButton( "bottom", 16, 16 ) ) {
-			index = 5;
-		}
-		if( index >= 0 ) {
-			voxel->placingCell = setVoxelFaceTexture( voxel->placingCell, face, index );
-		}
-	};
-	if( imguiDialog( "Voxel Texture Index", gui->textureIndex ) ) {
-		doButtons( "front", VF_Front );
-		doButtons( "left", VF_Left );
-		doButtons( "back", VF_Back );
-		doButtons( "right", VF_Right );
-		doButtons( "top", VF_Top );
-		doButtons( "bottom", VF_Bottom );
-		if( imguiButton( "Reset" ) ) {
-			voxel->placingCell = DefaultCell;
-		}
-	}
-
-	imguiUpdate( dt );
-
-	imguiFinalize();
 }
 
 static void processCamera( GameInputs* inputs, GameSettings* settings, Camera* camera, float dt )
@@ -2059,108 +823,7 @@ static void processCamera( GameInputs* inputs, GameSettings* settings, Camera* c
 	updateCamera( camera, cameraDelta );
 }
 
-static MeshId loadVoxelMeshFromFile( PlatformServices* platform, StackAllocator* allocator,
-                                     VoxelGridTextureMap* textures, StringView filename )
-{
-	// TODO: implement loading of texture maps too
-	MeshId result = {};
-	VoxelGrid grid;
-	if( loadVoxelGridFromFile( platform, filename, &grid ) ) {
-		TEMPORARY_MEMORY_BLOCK( allocator ) {
-			auto meshStream = makeMeshStream( allocator, 10000, 40000, nullptr );
-			generateMeshFromVoxelGrid( &meshStream, &grid, textures, VoxelCellSize );
-			result = platform->uploadMesh( toMesh( &meshStream ) );
-		}
-	}
-	return result;
-}
-
-static void doVoxel( AppData* app, GameInputs* inputs, bool focus, float dt )
-{
-	auto voxel    = &app->voxelState;
-	auto camera   = &voxel->camera;
-	auto renderer = &app->renderer;
-	// auto allocator = &app->stackAllocator;
-	auto settings = &app->settings;
-
-	if( !focus ) {
-		return;
-	}
-	if( !voxel->initialized ) {
-		auto textureMapId = app->platform.loadTexture( "Data/Images/texture_map.png" );
-		voxel->textureMap = makeDefaultVoxelGridTextureMap( textureMapId );
-
-		voxel->placingCell = DefaultCell;
-		// initial voxel grid size
-		voxel->voxels.width = 16;
-		voxel->voxels.height = 16;
-		voxel->voxels.depth = 16;
-		voxel->initialized = true;
-	}
-
-	// movement
-	if( isKeyPressed( inputs, KC_Tab ) ) {
-		if( voxel->focus == VoxelFocus::Gui ) {
-			voxel->focus = VoxelFocus::Voxel;
-		} else {
-			voxel->focus = VoxelFocus::Gui;
-		}
-	}
-	
-	// mouse lock
-	if( isKeyPressed( inputs, KC_Key_L ) ) {
-		app->mouseLocked = !app->mouseLocked;
-	}
-	if( voxel->focus == VoxelFocus::Voxel ) {
-		inputs->mouse.locked = app->mouseLocked;
-	}
-
-	if( voxel->focus == VoxelFocus::Voxel ) {
-		processCamera( inputs, settings, &voxel->camera, dt );
-		voxel->position = camera->position;
-		processEditMode( app, inputs, focus, dt );
-	}
-
-	setProjection( renderer, ProjectionType::Perspective );
-	auto cameraTranslation = matrixTranslation( 0, -50, 0 );
-	renderer->view         = cameraTranslation * getViewMatrix( camera );
-
-	setTexture( renderer, 0, null );
-
-	if( isKeyPressed( inputs, KC_Key_U ) ) {
-		clear( &voxel->meshStream );
-		generateMeshFromVoxelGridNaive( &voxel->meshStream, &voxel->voxels );
-	}
-
-	LINE_MESH_STREAM_BLOCK( stream, renderer ) {
-		auto grid     = &voxel->voxels;
-		stream->color = 0xFF0000FF;
-		aabb box      = {0,
-		            0,
-		            0,
-		            grid->width * EDITOR_CELL_WIDTH,
-		            grid->height * EDITOR_CELL_HEIGHT,
-		            grid->depth * EDITOR_CELL_DEPTH};
-		pushAabbOutline( stream, box );
-	}
-
-	setRenderState( renderer, RenderStateType::Lighting, voxel->lighting );
-	setTexture( renderer, 0, voxel->textureMap.texture );
-	addRenderCommandMesh( renderer, toMesh( &voxel->meshStream ) );
-
-	if( voxel->editMode == EditMode::Select ) {
-		setTexture( renderer, 0, null );
-		setRenderState( renderer, RenderStateType::DepthTest, false );
-		LINE_MESH_STREAM_BLOCK( stream, renderer ) {
-			auto selectionWorld = calculateSelectionWorld( voxel );
-			stream->color       = Color::Blue;
-			pushAabbOutline( stream, selectionWorld );
-		}
-		setRenderState( renderer, RenderStateType::DepthTest, true );
-	}
-
-	doVoxelGui( app, inputs, voxel->focus == VoxelFocus::Gui, dt );
-}
+#include "VoxelEditor.cpp"
 
 #define GAME_MAP_WIDTH 16
 #define GAME_MAP_HEIGHT 16
@@ -2535,21 +1198,31 @@ static StringView detailedDebugOutput( AppData* app, char* buffer, int32 size )
 	auto builder  = string_builder( buffer, size );
 	auto renderer = &app->renderer;
 
-	builder << "FrameTime: " << app->platformInfo->frameTime
-	        << "\nAverage FrameTime:" << app->platformInfo->averageFrameTime
-	        << "\nMin FrameTime: " << app->platformInfo->minFrameTime
-	        << "\nMax FrameTime: " << app->platformInfo->maxFrameTime
-	        << "\nFPS: " << app->platformInfo->fps
-	        << "\nAverage Fps:" << app->platformInfo->averageFps
-	        << "\nMin Fps: " << app->platformInfo->minFps
-	        << "\nMax Fps: " << app->platformInfo->maxFps
+	auto info = app->platformInfo;
+
+	builder << "FrameTime: " << info->frameTime
+	        << "\nAverage FrameTime:" << info->averageFrameTime
+	        << "\nMin FrameTime: " << info->minFrameTime
+	        << "\nMax FrameTime: " << info->maxFrameTime;
+
+	builder << "\n\n";
+	builder.println( "Draw Calls: {}\nVertices: {}\nIndices: {}", info->drawCalls, info->vertices,
+	                 info->indices );
+
+	builder << '\n'
+	        << "\nFPS: " << info->fps
+	        << "\nAverage Fps:" << info->averageFps
+	        << "\nMin Fps: " << info->minFps
+	        << "\nMax Fps: " << info->maxFps;
+
+	builder << '\n'
 	        << "\nLight Position: " << renderer->lightPosition.x << ", "
 	        << renderer->lightPosition.y << ", " << renderer->lightPosition.z;
-	if( app->platformInfo->recordingInputs ) {
-		builder << "\nRecording Inputs: " << app->platformInfo->recordingFrame;
+	if( info->recordingInputs ) {
+		builder << "\nRecording Inputs: " << info->recordingFrame;
 	}
-	if( app->platformInfo->replayingInputs ) {
-		builder << "\nReplaying Inputs: " << app->platformInfo->recordingFrame;
+	if( info->replayingInputs ) {
+		builder << "\nReplaying Inputs: " << info->recordingFrame;
 	}
 
 	builder << "\njumpHeight: " << app->gameState.jumpHeight
@@ -2574,6 +1247,13 @@ static StringView detailedDebugOutput( AppData* app, char* buffer, int32 size )
 
 	return asStringView( builder );
 }
+
+#define TILE_CELLS_X 16
+#define TILE_CELLS_Y 16
+#define TILE_CELLS_Z 16
+#define TILE_WIDTH ( CELL_WIDTH * TILE_CELLS_X )
+#define TILE_HEIGHT ( CELL_HEIGHT * TILE_CELLS_Y )
+#define TILE_DEPTH ( CELL_DEPTH * TILE_CELLS_Z )
 
 static void showGameDebugGui( AppData* app, GameInputs* inputs, bool focus, float dt )
 {
@@ -2920,13 +1600,13 @@ UPDATE_AND_RENDER( updateAndRender )
 		renderer->wireframe = !renderer->wireframe;
 	}
 
-	if( isHotkeyPressed( inputs, KC_Key_1, KC_Control ) ) {
+	if( isKeyPressed( inputs, KC_F1 ) ) {
 		app->focus = AppFocus::Game;
 	}
-	if( isHotkeyPressed( inputs, KC_Key_2, KC_Control ) ) {
+	if( isKeyPressed( inputs, KC_F2 ) ) {
 		app->focus = AppFocus::Voxel;
 	}
-	if( isHotkeyPressed( inputs, KC_Key_3, KC_Control ) ) {
+	if( isKeyPressed( inputs, KC_F3 ) ) {
 		app->focus = AppFocus::TexturePack;
 	}
 	if( isHotkeyPressed( inputs, KC_Key_R, KC_Control ) ) {
@@ -2976,32 +1656,9 @@ UPDATE_AND_RENDER( updateAndRender )
 	RENDER_COMMANDS_STATE_BLOCK( renderer ) {
 		renderer->color = Color::Black;
 		char buffer[500];
-		string_builder builder = string_builder( buffer, countof( buffer ) );
-		builder << "FrameTime: " << app->platformInfo->frameTime
-		        << "\nAverage FrameTime:" << app->platformInfo->averageFrameTime
-		        << "\nMin FrameTime: " << app->platformInfo->minFrameTime
-		        << "\nMax FrameTime: " << app->platformInfo->maxFrameTime
-		        << "\nFPS: " << app->platformInfo->fps
-		        << "\nAverage Fps:" << app->platformInfo->averageFps
-		        << "\nMin Fps: " << app->platformInfo->minFps
-		        << "\nMax Fps: " << app->platformInfo->maxFps
-		        << "\nLight Position: " << renderer->lightPosition.x << ", "
-		        << renderer->lightPosition.y << ", " << renderer->lightPosition.z;
-		if( app->platformInfo->recordingInputs ) {
-			builder << "\nRecording Inputs: " << app->platformInfo->recordingFrame;
-		}
-		if( app->platformInfo->replayingInputs ) {
-			builder << "\nReplaying Inputs: " << app->platformInfo->recordingFrame;
-		}
+		auto str = detailedDebugOutput( app, buffer, countof( buffer ) );
 
-		builder << "\njumpHeight: " << app->gameState.jumpHeight
-				<< "\nmaxJumpHeight: " << app->gameState.maxJumpHeight
-				<< "\nJumpHeightError: " << app->gameState.jumpHeightError;
-
-		builder << "\nWallJumpTimer: " << app->gameState.player->walljumpWindow.value
-		        << "\nWallJumpDuration: " << app->gameState.player->walljumpDuration.value;
-
-		renderText( renderer, font, asStringView( builder ), {300, 0, 0, 0} );
+		renderText( renderer, font, str, {300, 0, 0, 0} );
 	}
 #endif
 

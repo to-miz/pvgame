@@ -58,6 +58,7 @@ vec2 rotateAround( vec2arg v, vec2arg origin, float sin, float cos );
 
 vec2 floor( vec2arg v );
 vec2 ceil( vec2arg v );
+vec2 round( vec2arg v );
 vec2 floorCentered( float x, float width );
 
 template< class T > tvec2< T > swizzle( tvec2arg< T > v, intmax x, intmax y );
