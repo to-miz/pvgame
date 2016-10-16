@@ -18,8 +18,9 @@ float sqrt( float x );
 float rsqrt( float x );
 float fast_rsqrt( float x );
 
-const float Pi32 = 3.1415926535897932384626433832795f;
-const float TwoPi32 = 2 * 3.1415926535897932384626433832795f;
+constexpr const float HalfPi32 = 3.1415926535897932384626433832795f / 2.0f;
+constexpr const float Pi32     = 3.1415926535897932384626433832795f;
+constexpr const float TwoPi32  = 2 * 3.1415926535897932384626433832795f;
 
 float degreesToRadians( float d );
 float radiansToDegrees( float r );
@@ -29,4 +30,4 @@ float ceil( float x );
 float round( float x );
 float abs( float x );
 
-#endif // _MATHS_H_INCLUDED_
+#endif  // _MATHS_H_INCLUDED_

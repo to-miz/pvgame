@@ -102,6 +102,33 @@ mat4 matrixRotationZ( float angle )
 	result.m[5] = c;
 	return result;
 }
+mat4 matrixRotationZOrigin( float angle, float originx, float originy )
+{
+	mat4 result;
+	float s, c;
+	sincos( angle, &s, &c );
+	auto a = -originx * c + originy * s + originx;
+	auto b = -originx * s - originy * c + originy;
+
+	result.m[0]  = c;
+	result.m[1]  = s;
+	result.m[2]  = 0;
+	result.m[3]  = 0;
+	result.m[4]  = -s;
+	result.m[5]  = c;
+	result.m[6]  = 0;
+	result.m[7]  = 0;
+	result.m[8]  = 0;
+	result.m[9]  = 0;
+	result.m[10] = 1;
+	result.m[11] = 0;
+	result.m[12] = a;
+	result.m[13] = b;
+	result.m[14] = 0;
+	result.m[15] = 1;
+
+	return result;
+}
 
 mat4 matrixOrthogonalProjection( float left, float top, float right, float bottom, float nearPlane,
                                  float farPlane )

@@ -557,8 +557,8 @@ static void win32UnmapBuffers( OpenGlVertexBuffer* vb )
 	DEBUG_WRAP( auto result1 = ) glUnmapBuffer( GL_ELEMENT_ARRAY_BUFFER );
 	assert( result0 != GL_FALSE && result1 != GL_FALSE );
 	vb->mappedBuffers = false;
-	vb->vertices = nullptr;
-	vb->indices = nullptr;
+	vb->vertices      = nullptr;
+	vb->indices       = nullptr;
 }
 static void win32RenderBuffers( OpenGlContext* context, mat4* projections, GLenum mode )
 {
@@ -568,6 +568,7 @@ static void win32RenderBuffers( OpenGlContext* context, mat4* projections, GLenu
 	glUniformMatrix4fv( context->worldViewProj, 1, GL_FALSE, current->m );
 	auto identity = matrixIdentity();
 	glUniformMatrix4fv( context->model, 1, GL_FALSE, identity.m );
+	glUniform1f( context->screenDepthOffset, 0 );
 	glDrawElementsBaseVertex( mode, vb->indicesCount, GL_UNSIGNED_SHORT,
 	                          BUFFER_OFFSET( vb->lastIndicesCount * sizeof( uint16 ) ),
 	                          vb->lastVerticesCount );
@@ -1138,6 +1139,10 @@ static void win32ProcessRenderCommands( OpenGlContext* context, RenderCommands* 
 					glUniform1f( context->screenDepthOffset, body->screenDepthOffset );
 					glDrawElements( GL_TRIANGLES, mesh->indicesCount, GL_UNSIGNED_SHORT, nullptr );
 					glBindVertexArray( vb->vertexArrayObjectId );
+
+					++Win32AppContext.info->drawCalls;
+					Win32AppContext.info->vertices += mesh->verticesCount;
+					Win32AppContext.info->indices += mesh->indicesCount;
 				}
 				break;
 			}

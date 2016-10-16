@@ -713,6 +713,7 @@ void texturePackLoad( AppData* app )
 					    rectObject["right"].getInt(), rectObject["bottom"].getInt(),
 					};
 					auto textureRegion = texturePackAddUniqueTextureRegion( app, rect, texture );
+					++textureRegion->referenceCount;
 					destFrame->faces[j].regionId = textureRegion->id;
 					destFrame->faces[j].orientation =
 					    (TexturePackOrientation)clamp( face["orientation"].getInt(), 0, 5 );

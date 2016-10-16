@@ -127,6 +127,7 @@ template< class T > tvec3< T > swizzle( tvec3arg< T > v, intmax x, intmax y, int
 template< class A, class B, class C, class D > tvec3< D > Vec3( A a, B b, C c );
 template< class T, class A > tvec3< T > Vec3( tvec2arg< T > v, A a );
 template< class T, class A > tvec3< T > Vec3( A a, tvec2arg< T > v );
+template< class T, class U > tvec3< T > Vec3( tvec3arg< U > v );
 
 vec3 cross( vec3arg a, vec3arg b );
 float dot( vec3arg a, vec3arg b );
@@ -145,6 +146,10 @@ tvec3< T > multiplyComponents( tvec3arg< T > a, tvec3arg< T > b )
 {
 	return {a.x * b.x, a.y * b.y, a.z * b.z};
 }
+
+vec3 floor( vec3arg v );
+vec3 ceil( vec3arg v );
+vec3 round( vec3arg v );
 
 // vec4
 template < class T >
@@ -231,6 +236,10 @@ template < class T, class A > tvec3< T > Vec3( A a, tvec2arg< T > v )
 {
 	static_assert( std::is_convertible< A, T >::value, "Values not implicitly convertible" );
 	return {(T)a, v.x, v.y};
+}
+template< class T, class U > tvec3< T > Vec3( tvec3arg< U > v )
+{
+	return {(T)v.x, (T)v.y, (T)v.z};
 }
 
 template< class T > tvec2< T > swizzle( tvec2arg< T > v, intmax x, intmax y )

@@ -58,13 +58,15 @@ out vec4 fragNormal;
 
 void main()
 {
-	vec4 screenPos = worldViewProj * vec4( position, 1 );
-	fragPos = ( model * screenPos ).xyz;
+	vec4 posW = vec4( position, 1 );
+	vec4 screenPos = worldViewProj * posW;
 	screenPos.z -= screenDepthOffset;
 	gl_Position = screenPos;
+
+	fragPos = ( model * posW ).xyz;
 	fragColor = color;
 	fragTexCoords0 = texCoords0;
-	fragNormal = normal0;
+	fragNormal = model * normal0;
 }
 )";
 static const char* ingameFragmentShaderSource = R"(

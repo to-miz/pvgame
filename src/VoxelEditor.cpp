@@ -489,18 +489,6 @@ void saveVoxelGridToFile( PlatformServices* platform, StringView filename, Voxel
 	// TODO: write the path to the used texture map also to the file
 	platform->writeBufferToFile( filename, grid, sizeof( VoxelGrid ) );
 }
-bool loadVoxelGridsFromFile( PlatformServices* platform, StringView filename,
-                             Array< VoxelGrid > grids )
-{
-	auto bytesToRead = grids.size() * sizeof( VoxelGrid );
-	if( !bytesToRead ) {
-		return false;
-	}
-	if( platform->readFileToBuffer( filename, grids.data(), bytesToRead ) != bytesToRead ) {
-		return false;
-	}
-	return true;
-}
 void saveVoxelGridsToFile( PlatformServices* platform, StringView filename,
                            Array< VoxelGrid > grids )
 {
@@ -587,7 +575,7 @@ static void doVoxelGui( AppData* app, GameInputs* inputs, bool focus, float dt )
 	if( !gui->initialized ) {
 		gui->editMode         = imguiGenerateContainer( imgui );
 		gui->rendering        = imguiGenerateContainer( imgui, {ImGui->style.containerWidth} );
-		gui->textureIndex     = imguiGenerateContainer( imgui, {ImGui->style.containerWidth, 200} );
+		gui->textureIndex     = imguiGenerateContainer( imgui, RectWH( ImGui->style.containerWidth, 200, 240, 200 ) );
 		gui->textureMapDialog = imguiGenerateContainer( imgui, {0, 300} );
 		gui->noLightingChecked = true;
 
@@ -697,8 +685,9 @@ static void doVoxelGui( AppData* app, GameInputs* inputs, bool focus, float dt )
 					*collection         = {};
 					voxel->currentFrame = -1;
 					gui->animations.clear();
-					if( loadVoxelCollection( &voxel->collectionArena,
-					                         {filenameBuffer, filenameLength}, collection ) ) {
+					if( loadVoxelCollectionTextureMapping( &voxel->collectionArena,
+					                                       {filenameBuffer, filenameLength},
+					                                       collection ) ) {
 						gui->animations.resize( collection->animations.size() );
 						auto framesCount = collection->frames.size();
 						voxel->frameVoxels =
@@ -706,7 +695,7 @@ static void doVoxelGui( AppData* app, GameInputs* inputs, bool focus, float dt )
 						if( !loadVoxelGridsFromFile( &app->platform, collection->voxelsFilename,
 						                             voxel->frameVoxels ) ) {
 							for( auto frame = 0; frame < framesCount; ++frame ) {
-								auto textureMap = &collection->frames[frame].textureMap;
+								auto textureMap = &collection->frameInfos[frame].textureMap;
 								auto voxels     = &voxel->frameVoxels[frame];
 								*voxels = getVoxelGridFromTextureMapTopLeftColorKey( textureMap );
 							}
@@ -769,7 +758,7 @@ static void doVoxelGui( AppData* app, GameInputs* inputs, bool focus, float dt )
 						    imguiMakeHandle( entry->name.data(), ImGuiControlType::Button, frame );
 						if( imguiButton( handle, str, ImGui->style.buttonWidth,
 						                 ImGui->style.buttonHeight ) ) {
-							voxel->textureMap   = collection->frames[frameIndex].textureMap;
+							voxel->textureMap   = collection->frameInfos[frameIndex].textureMap;
 							voxel->voxels       = voxel->frameVoxels[frameIndex];
 							voxel->currentFrame = frameIndex;
 							generateVoxelMesh   = true;
@@ -793,30 +782,43 @@ static void doVoxelGui( AppData* app, GameInputs* inputs, bool focus, float dt )
 	}
 
 	auto doButtons = [voxel]( StringView faceLabel, VoxelFaceValues face ) {
-		imguiSameLine( 7 );
+		imguiSameLine( 8 );
 		imguiText( faceLabel, 35, 16 );
+		
+		auto innerHandle = imguiMakeHandle( &voxel->placingCell, ImGuiControlType::Button );
+		innerHandle.shortIndex = safe_truncate< uint8 >( valueof( face ) );
+		auto cell              = voxel->placingCell;
+		bool inner             = isVoxelFaceInner( cell, face );
+		bool front             = getVoxelFaceTexture( cell, face ) == VF_Front;
+		bool left              = getVoxelFaceTexture( cell, face ) == VF_Left;
+		bool back              = getVoxelFaceTexture( cell, face ) == VF_Back;
+		bool right             = getVoxelFaceTexture( cell, face ) == VF_Right;
+		bool top               = getVoxelFaceTexture( cell, face ) == VF_Top;
+		bool bottom            = getVoxelFaceTexture( cell, face ) == VF_Bottom;
+		imguiPushButton( "inner", &inner, 16, 16 );
 		int32 index = -1;
-		if( imguiButton( "front", 16, 16 ) ) {
+		if( imguiPushButton( "front", &front, 16, 16 ) && front ) {
 			index = 0;
 		}
-		if( imguiButton( "left", 16, 16 ) ) {
+		if( imguiPushButton( "left", &left, 16, 16 ) && left ) {
 			index = 1;
 		}
-		if( imguiButton( "back", 16, 16 ) ) {
+		if( imguiPushButton( "back", &back, 16, 16 ) && back ) {
 			index = 2;
 		}
-		if( imguiButton( "right", 16, 16 ) ) {
+		if( imguiPushButton( "right", &right, 16, 16 ) && right ) {
 			index = 3;
 		}
-		if( imguiButton( "top", 16, 16 ) ) {
+		if( imguiPushButton( "top", &top, 16, 16 ) && top ) {
 			index = 4;
 		}
-		if( imguiButton( "bottom", 16, 16 ) ) {
+		if( imguiPushButton( "bottom", &bottom, 16, 16 ) && bottom ) {
 			index = 5;
 		}
 		if( index >= 0 ) {
 			voxel->placingCell = setVoxelFaceTexture( voxel->placingCell, face, index );
 		}
+		voxel->placingCell = setVoxelFaceInner( voxel->placingCell, face, inner );
 	};
 	if( imguiDialog( "Voxel Texture Index", gui->textureIndex ) ) {
 		doButtons( "front", VF_Front );

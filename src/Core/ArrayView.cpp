@@ -6,16 +6,20 @@
 typedef int32 tma_size_t;
 typedef vec2i tma_point;
 #ifdef ARCHITECTURE_X64
-	#define TMA_INT64_ACCOSSORS
-	typedef intmax tma_index_t;
+#define TMA_INT64_ACCOSSORS
+typedef intmax tma_index_t;
 #endif
 #define TMA_EMPLACE_BACK_RETURNS_POINTER
 #include <tm_arrayview.h>
 
-template< class T > using Array = ArrayView< T >;
-template< class T > using UninitializedArray = UninitializedArrayView< T >;
-template< class T > using UArray = UninitializedArrayView< T >;
-template< class T > using Grid = GridView< T >;
+template < class T >
+using Array = ArrayView< T >;
+template < class T >
+using UninitializedArray = UninitializedArrayView< T >;
+template < class T >
+using UArray = UninitializedArrayView< T >;
+template < class T >
+using Grid = GridView< T >;
 
 template < class T >
 Array< T > makeArrayImpl( StackAllocator* allocator, int32 size )
@@ -29,9 +33,22 @@ UArray< T > makeUArrayImpl( StackAllocator* allocator, int32 size )
 	auto p = allocateArray( allocator, T, size );
 	return {p, 0, ( p ) ? ( size ) : ( 0 )};
 }
+template < class T >
+Grid< T > makeGridImpl( StackAllocator* allocator, int32 width, int32 height )
+{
+	auto size = width * height;
+	auto p    = allocateArray( allocator, T, size );
+	if( !p ) {
+		width  = 0;
+		height = 0;
+	}
+	return {p, width, height};
+}
 
 #define makeArray( allocator, type, size ) makeArrayImpl< type >( ( allocator ), ( size ) )
 #define makeUArray( allocator, type, size ) makeUArrayImpl< type >( ( allocator ), ( size ) )
+#define makeGrid( allocator, type, width, height ) \
+	makeGridImpl< type >( ( allocator ), ( width ), ( height ) )
 
 // consume all available memory from stack allocator
 #define beginVector( allocator, type ) beginVector_< type >( ( allocator ) )
@@ -68,16 +85,16 @@ struct SmallUninitializedArray : UninitializedArray< T > {
 	}
 };
 
-template < class Container >
-ArrayView< typename Container::value_type > makeRangeView( Container& container, rangei range )
+template < class Container, class T >
+ArrayView< typename Container::value_type > makeRangeView( Container& container, trange< T > range )
 {
 	TMA_ASSERT( range.min >= 0 );
 	TMA_ASSERT( range.max >= 0 );
 	if( range.min >= container.size() ) {
-		range.min = container.size();
+		range.min = safe_truncate< T >( container.size() );
 	}
 	if( range.max >= container.size() ) {
-		range.max = container.size();
+		range.max = safe_truncate< T >( container.size() );
 	}
 	TMA_ASSERT( range.min <= range.max );
 	return {container.data() + range.min, range.max - range.min};

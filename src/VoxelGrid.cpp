@@ -4,12 +4,43 @@
 #define CELL_MAX_IN_PLANE ( CELL_MAX_X * CELL_MAX_Y )
 #define CELL_MAX_COUNT ( CELL_MAX_X * CELL_MAX_Y * CELL_MAX_Z )
 
-#define SET_VOXEL_FACE( front, left, back, right, top, bottom )                              \
-	( ( ( (VoxelCell)front + 1 ) << ( 0 * 4 ) ) | ( ( (VoxelCell)left + 1 ) << ( 1 * 4 ) )   \
-	  | ( ( (VoxelCell)back + 1 ) << ( 2 * 4 ) ) | ( ( (VoxelCell)right + 1 ) << ( 3 * 4 ) ) \
-	  | ( ( (VoxelCell)top + 1 ) << ( 4 * 4 ) ) | ( ( (VoxelCell)bottom + 1 ) << ( 5 * 4 ) ) )
+enum VoxelFaceValues : uint32 {
+	VF_Front,
+	VF_Left,
+	VF_Back,
+	VF_Right,
+	VF_Top,
+	VF_Bottom,
+
+	VF_Count,
+};
+static const char* VoxelFaceStrings[] = {
+    "front", "left", "back", "right", "top", "bottom",
+};
+
+struct VoxelGridTextureMap {
+	TextureId texture;
+	struct Entry {
+		QuadTexCoords texCoords;
+	};
+	Entry entries[VF_Count];
+};
 
 typedef uint32 VoxelCell;
+enum VoxelCellFlags : VoxelCell {
+	VoxelCellInner           = 0x8u,
+	VoxelCellMask            = 0xFu,
+	VoxelCellFaceTextureMask = 0x7u,
+	VoxelCellBits            = 4
+};
+#define SET_VOXEL_FACE( front, left, back, right, top, bottom )      \
+	( ( ( (VoxelCell)front + 1 ) << ( VF_Front * VoxelCellBits ) )   \
+	  | ( ( (VoxelCell)left + 1 ) << ( VF_Left * VoxelCellBits ) )   \
+	  | ( ( (VoxelCell)back + 1 ) << ( VF_Back * VoxelCellBits ) )   \
+	  | ( ( (VoxelCell)right + 1 ) << ( VF_Right * VoxelCellBits ) ) \
+	  | ( ( (VoxelCell)top + 1 ) << ( VF_Top * VoxelCellBits ) )     \
+	  | ( ( (VoxelCell)bottom + 1 ) << ( VF_Bottom * VoxelCellBits ) ) )
+
 constexpr const VoxelCell EmptyCell   = {0};
 constexpr const VoxelCell DefaultCell = {SET_VOXEL_FACE( 0, 1, 2, 3, 4, 5 )};
 
@@ -36,7 +67,7 @@ const vec3 VoxelCellSize = {CELL_WIDTH, CELL_HEIGHT, CELL_DEPTH};
 
 inline vec2i getTexelPlaneByFace( int32 face )
 {
-	constexpr vec2i texelPlaneByFace[] = {
+	constexpr const vec2i texelPlaneByFace[] = {
 	    {VectorComponent_X, VectorComponent_Y}, {VectorComponent_Z, VectorComponent_Y},
 	    {VectorComponent_X, VectorComponent_Y}, {VectorComponent_Z, VectorComponent_Y},
 	    {VectorComponent_X, VectorComponent_Z}, {VectorComponent_X, VectorComponent_Z},
@@ -48,14 +79,32 @@ inline vec2i getTexelPlaneByFace( int32 face )
 uint32 getVoxelFaceTexture( VoxelCell cell, VoxelFaceValues face )
 {
 	auto value        = valueof( face );
-	auto textureIndex = ( ( cell >> ( value * 4 ) ) & 0xFu ) - 1;
+	auto textureIndex = ( ( cell >> ( value * VoxelCellBits ) ) & VoxelCellFaceTextureMask ) - 1;
 	return textureIndex;
+}
+bool isVoxelFaceInner( VoxelCell cell, VoxelFaceValues face )
+{
+	auto value        = valueof( face );
+	auto textureIndex = ( ( cell >> ( value * VoxelCellBits ) ) & VoxelCellInner );
+	return textureIndex != 0;
 }
 VoxelCell setVoxelFaceTexture( VoxelCell cell, VoxelFaceValues face, int32 index )
 {
-	uint32 shiftAmount = ( valueof( face ) * 4 );
-	VoxelCell masked   = ( ( VoxelCell )( ( index + 1 ) & 0xFu ) ) << shiftAmount;
-	return ( ( cell & ~( 0xFu << shiftAmount ) ) | masked );
+	uint32 shiftAmount = ( valueof( face ) * VoxelCellBits );
+	assert( shiftAmount < 32 );
+	VoxelCell masked = ( ( VoxelCell )( ( index + 1 ) & VoxelCellFaceTextureMask ) );
+	setFlagCond( masked, VoxelCellInner, isVoxelFaceInner( cell, face ) );
+	masked <<= shiftAmount;
+	return ( ( cell & ~( VoxelCellMask << shiftAmount ) ) | masked );
+}
+VoxelCell setVoxelFaceInner( VoxelCell cell, VoxelFaceValues face, bool inner )
+{
+	uint32 shiftAmount = ( valueof( face ) * VoxelCellBits );
+	assert( shiftAmount < 32 );
+	VoxelCell masked = ( cell >> shiftAmount ) & VoxelCellMask;
+	setFlagCond( masked, VoxelCellInner, inner );
+	masked <<= shiftAmount;
+	return ( ( cell & ~( VoxelCellMask << shiftAmount ) ) | masked );
 }
 
 bool isPointInsideVoxelBounds( VoxelGrid* grid, int32 x, int32 y, int32 z )
@@ -98,6 +147,7 @@ void generateMeshFromVoxelGrid( MeshStream* stream, VoxelGrid* grid, VoxelGridTe
 		vec3 hAxis;
 		vec3 vAxis;
 		vec3 zAxis;
+		vec3i faceNormal;
 		vec3 origin;
 		int8 hComponent;
 		int8 vComponent;
@@ -173,9 +223,17 @@ void generateMeshFromVoxelGrid( MeshStream* stream, VoxelGrid* grid, VoxelGridTe
 					                         plane->zComponent );
 					auto dim = swizzle( grid->dim, plane->hComponent, plane->vComponent,
 					                    plane->zComponent );
-					auto textureIndex =
-					    getVoxelFaceTexture( getCell( grid, first.position ), plane->face );
+					auto cell = getCell( grid, first.position );
+					auto textureIndex = getVoxelFaceTexture( cell, plane->face );
 					map[position.x + position.y * plane->hCellCount] = 1;
+
+					vec3i posOffset = {};
+					if( isVoxelFaceInner( cell, plane->face ) ) {
+						auto next  = first.position + plane->faceNormal;
+						if( isPointInsideVoxelBounds( grid, next ) ) {
+							posOffset = plane->faceNormal;
+						}
+					}
 
 					vec3 startVertex = plane->hAxis * ( plane->hSize * position.x )
 					                   + plane->vAxis * ( plane->vSize * position.y )
@@ -188,9 +246,10 @@ void generateMeshFromVoxelGrid( MeshStream* stream, VoxelGrid* grid, VoxelGridTe
 					auto th           = getAxisAlignedHeight( textureEntry->texCoords );
 					auto texelWidth   = tw / grid->dim[texelPlane.x];
 					auto texelHeight  = th / grid->dim[texelPlane.y];
-					auto tu           = first.position[texelPlane.x] * texelWidth
+					auto offsetedPos  = first.position + posOffset;
+					auto tu           = offsetedPos[texelPlane.x] * texelWidth
 					          + textureEntry->texCoords.elements[0].u;
-					auto tv = first.position[texelPlane.y] * texelHeight
+					auto tv = offsetedPos[texelPlane.y] * texelHeight
 					          + textureEntry->texCoords.elements[0].v;
 					Vertex quad[4] = {
 					    {startVertex, 0xFFFFFFFF, tu, tv, plane->normal},
@@ -267,6 +326,7 @@ void generateMeshFromVoxelGrid( MeshStream* stream, VoxelGrid* grid, VoxelGridTe
 	plane.hAxis        = {1, 0, 0};
 	plane.vAxis        = {0, -1, 0};
 	plane.zAxis        = {0, 0, 1};
+	plane.faceNormal = {0, 0, 1};
 	plane.hComponent   = VectorComponent_X;
 	plane.vComponent   = VectorComponent_Y;
 	plane.zComponent   = VectorComponent_Z;
@@ -285,6 +345,7 @@ void generateMeshFromVoxelGrid( MeshStream* stream, VoxelGrid* grid, VoxelGridTe
 	stream->color = 0xFFFF0000;
 	processPlane( stream, grid, textures, &plane, map, countof( map ) );
 	// back face
+	plane.faceNormal   = {0, 0, -1};
 	plane.frontOffset  = 1;
 	plane.origin       = {0, grid->height * cellSize.y, cellSize.y};
 	stream->color      = 0xFF00FF00;
@@ -297,6 +358,7 @@ void generateMeshFromVoxelGrid( MeshStream* stream, VoxelGrid* grid, VoxelGridTe
 	plane.hAxis        = {0, 0, 1};
 	plane.vAxis        = {0, -1, 0};
 	plane.zAxis        = {1, 0, 0};
+	plane.faceNormal   = {1, 0, 0};
 	plane.hComponent   = VectorComponent_Z;
 	plane.vComponent   = VectorComponent_Y;
 	plane.zComponent   = VectorComponent_X;
@@ -314,6 +376,7 @@ void generateMeshFromVoxelGrid( MeshStream* stream, VoxelGrid* grid, VoxelGridTe
 	plane.isBackFacing = false;
 	processPlane( stream, grid, textures, &plane, map, countof( map ) );
 	// left face
+	plane.faceNormal   = {-1, 0, 0};
 	plane.frontOffset  = -1;
 	plane.origin       = {0, grid->height * cellSize.y, 0};
 	stream->color      = 0xFFFF00FF;
@@ -326,6 +389,7 @@ void generateMeshFromVoxelGrid( MeshStream* stream, VoxelGrid* grid, VoxelGridTe
 	plane.hAxis        = {1, 0, 0};
 	plane.vAxis        = {0, 0, 1};
 	plane.zAxis        = {0, -1, 0};
+	plane.faceNormal   = {0, -1, 0};
 	plane.hComponent   = VectorComponent_X;
 	plane.vComponent   = VectorComponent_Z;
 	plane.zComponent   = VectorComponent_Y;
@@ -344,6 +408,7 @@ void generateMeshFromVoxelGrid( MeshStream* stream, VoxelGrid* grid, VoxelGridTe
 	processPlane( stream, grid, textures, &plane, map, countof( map ) );
 
 	// bottom face
+	plane.faceNormal   = {0, 1, 0};
 	plane.frontOffset  = 1;
 	plane.origin       = {0, grid->height * cellSize.y - cellSize.y, 0};
 	stream->color      = 0xFF00FFFF;

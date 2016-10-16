@@ -71,3 +71,5 @@ constexpr const Normal normal_neg_y_axis = {0, INT10_MIN, 0};
 constexpr const Normal normal_pos_z_axis = {0, 0, INT10_MAX};
 constexpr const Normal normal_neg_z_axis = {0, 0, INT10_MIN};
 #endif
+
+static_assert( sizeof( Normal ) == 4, "Normal must be a 32bit packed int" );

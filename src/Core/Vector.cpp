@@ -239,6 +239,10 @@ vec3 rotateAround( vec3arg v, vec3arg origin, float sin, float cos, vec3arg norm
 	return result;
 }
 
+vec3 floor( vec3arg v ) { return {floor( v.x ), floor( v.y ), floor( v.z )}; }
+vec3 ceil( vec3arg v ) { return {ceil( v.x ), ceil( v.y ), ceil( v.z )}; }
+vec3 round( vec3arg v ) { return {round( v.x ), round( v.y ), round( v.z )}; }
+
 // vec4
 
 float dot( vec4arg a, vec4arg b ) { return a.x * b.x + a.y * b.y + a.z * b.z + a.w * b.w; }

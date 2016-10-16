@@ -7,6 +7,7 @@ TODO:
 enum class ImGuiControlType : uint8 {
 	None,
 	Button,
+	PushButton,
 	Radiobox,
 	Checkbox,
 	Combobox,
@@ -812,6 +813,69 @@ bool imguiButton( StringView name, float width, float height )
 bool imguiButton( StringView name, float width )
 {
 	return imguiButton( name, width, ImGui->style.buttonHeight );
+}
+
+bool imguiPushButton( ImGuiHandle handle, StringView name, bool* pushed, float width, float height )
+{
+	assert( pushed );
+
+	auto renderer = ImGui->renderer;
+	auto font     = ImGui->font;
+
+	reset( font );
+	auto textWidth  = stringWidth( font, name ) + ImGui->style.innerPadding * 2;
+	auto textHeight = stringHeight( font, name ) + ImGui->style.innerPadding * 2;
+	width           = MAX( textWidth, width );
+	height          = MAX( textHeight, height );
+
+	bool changed  = false;
+	auto rect     = imguiAddItem( width, height );
+	vec2 offset   = {};
+	bool heldDown = imguiHasFocus( handle ) && isPointInside( rect, ImGui->inputs->mouse.position )
+	                && isKeyDown( ImGui->inputs, KC_LButton );
+	if( imguiButton( handle, rect ) ) {
+		*pushed = !*pushed;
+		changed = true;
+	}
+	bool pushVisual = ( ( *pushed ) != heldDown );
+	if( pushVisual ) {
+		offset = {1, 1};
+	}
+
+	RENDER_COMMANDS_STATE_BLOCK( renderer ) {
+		setTexture( renderer, 0, null );
+		if( pushVisual ) {
+			renderer->color = multiply( renderer->color, 0xFF808080 );
+		} else {
+			renderer->color = multiply( renderer->color, ImGui->style.buttonBg );
+		}
+		MESH_STREAM_BLOCK( stream, renderer ) {
+			pushQuad( stream, rect );
+		}
+		renderer->color = multiply( renderer->color, ImGui->style.buttonText );
+		auto textArea   = imguiInnerRect( rect );
+		textArea.leftTop += offset;
+		textArea.rightBottom += offset;
+		renderTextCenteredClipped( renderer, font, name, textArea );
+	}
+
+	return changed;
+}
+bool imguiPushButton( StringView name, bool* pushed )
+{
+	auto handle = imguiMakeHandle( pushed, ImGuiControlType::PushButton );
+	return imguiPushButton( handle, name, pushed, ImGui->style.buttonWidth,
+	                        ImGui->style.buttonHeight );
+}
+bool imguiPushButton( StringView name, bool* pushed, float width, float height )
+{
+	auto handle = imguiMakeHandle( pushed, ImGuiControlType::PushButton );
+	return imguiPushButton( handle, name, pushed, width, height );
+}
+bool imguiPushButton( StringView name, bool* pushed, float width )
+{
+	auto handle = imguiMakeHandle( pushed, ImGuiControlType::PushButton );
+	return imguiPushButton( handle, name, pushed, width, ImGui->style.buttonHeight );
 }
 
 bool imguiEditbox( ImGuiHandle handle, StringView name, char* data, int32* length, int32 size,

@@ -23,9 +23,9 @@
 #include <Core/Algorithm.h>
 
 #ifdef GAME_DEBUG
-	#define ARGS_AS_CONST_REF 1
+#define ARGS_AS_CONST_REF 1
 #else
-	#define ARGS_AS_CONST_REF 0
+#define ARGS_AS_CONST_REF 0
 #endif
 #include <Core/StackAllocator.cpp>
 #define VEC3_ARGS_AS_CONST_REF ARGS_AS_CONST_REF
@@ -105,7 +105,7 @@ global string_builder* debugPrinter = nullptr;
 	#define debugPrint( ... )
 	#define debugPrintln( ... )
 	#define debugPrintClear()
-	#define debugPrintGetString() StringView{}
+	#define debugPrintGetString() ( StringView{} )
 #endif
 
 StringView toString( VirtualKeyEnumValues key )
@@ -165,9 +165,9 @@ Camera cameraLookAt( const Camera& camera, vec3arg position )
 {
 	Camera result;
 	result.position = camera.position;
-	result.look = normalize( position - camera.position );
-	result.right = normalize( cross( camera.up, result.look ) );
-	result.up = cross( result.look, result.right );
+	result.look     = normalize( position - camera.position );
+	result.right    = normalize( cross( camera.up, result.look ) );
+	result.up       = cross( result.look, result.right );
 	return result;
 }
 Camera cameraLookDirection( const Camera& camera, vec3arg dir )
@@ -175,9 +175,9 @@ Camera cameraLookDirection( const Camera& camera, vec3arg dir )
 	assert( floatEqSoft( length( dir ), 1 ) );
 	Camera result;
 	result.position = camera.position;
-	result.look = dir;
-	result.right = normalize( cross( camera.up, dir ) );
-	result.up = cross( dir, result.right );
+	result.look     = dir;
+	result.right    = normalize( cross( camera.up, dir ) );
+	result.up       = cross( dir, result.right );
 	return result;
 }
 mat4 getViewMatrix( Camera* camera )
@@ -225,47 +225,22 @@ GameSettings makeDefaultGameSettings()
 	return result;
 }
 
-enum VoxelFaceValues : uint32 {
-	VF_Front,
-	VF_Left,
-	VF_Back,
-	VF_Right,
-	VF_Top,
-	VF_Bottom,
-
-	VF_Count,
-};
-static const char* VoxelFaceStrings[] = {
-	"front",
-	"left",
-	"back",
-	"right",
-	"top",
-	"bottom",
-};
-
-struct VoxelGridTextureMap {
-	TextureId texture;
-	struct Entry {
-		QuadTexCoords texCoords;
-	};
-	Entry entries[VF_Count];
-};
+#include "VoxelGrid.cpp"
 
 struct VoxelCollection {
 	struct Frame {
-		VoxelGridTextureMap textureMap;
 		MeshId mesh;
 		vec2 offset;
 	};
 
 	struct FrameInfo {
+		VoxelGridTextureMap textureMap;
 		recti textureRegion[VF_Count];
 	};
 
 	struct Animation {
 		string name;
-		rangei range;
+		rangeu16 range;
 	};
 
 	TextureId texture;
@@ -275,7 +250,25 @@ struct VoxelCollection {
 	string voxelsFilename;
 };
 
-#include "VoxelGrid.cpp"
+rangeu16 getAnimationRange( VoxelCollection* collection, StringView name )
+{
+	rangeu16 result;
+	if( auto animation = find_first_where( collection->animations, it.name == name ) ) {
+		result = animation->range;
+	} else {
+		result = {};
+	}
+	return result;
+}
+Array< VoxelCollection::Frame > getAnimationFrames( VoxelCollection* collection, rangeu16 range )
+{
+	return makeRangeView( collection->frames, range );
+}
+Array< VoxelCollection::Frame > getAnimationFrames( VoxelCollection* collection, StringView name )
+{
+	return makeRangeView( collection->frames, getAnimationRange( collection, name ) );
+}
+
 #include "VoxelEditor.h"
 
 struct CountdownTimer {
@@ -283,10 +276,7 @@ struct CountdownTimer {
 
 	inline explicit operator bool() const { return value > 0; }
 };
-bool isCountdownTimerExpired( CountdownTimer timer )
-{
-	return timer.value < Float::BigEpsilon;
-}
+bool isCountdownTimerExpired( CountdownTimer timer ) { return timer.value < Float::BigEpsilon; }
 CountdownTimer processCountdownTimer( CountdownTimer timer, float dt )
 {
 	CountdownTimer result = timer;
@@ -302,8 +292,8 @@ struct EntityHandle {
 
 	inline uint32 index() { return bits - 1; }
 	inline explicit operator bool() const { return bits != 0; }
-	inline bool operator == ( EntityHandle other ) const { return bits == other.bits; }
-	inline bool operator != ( EntityHandle other ) const { return bits != other.bits; }
+	inline bool operator==( EntityHandle other ) const { return bits == other.bits; }
+	inline bool operator!=( EntityHandle other ) const { return bits != other.bits; }
 };
 
 struct HandleManager {
@@ -328,9 +318,7 @@ enum class SpatialState {
 	Airborne,
 };
 static const char* SpatilStateStrings[] = {
-	"Grounded",
-	"FallingOff",
-	"Airborne",
+    "Grounded", "FallingOff", "Airborne",
 };
 
 struct CollidableComponent {
@@ -339,9 +327,9 @@ struct CollidableComponent {
 	rectf aab;
 	int32 groundedTile;
 
-	CountdownTimer walljumpWindow;       // time window in which we can perform a walljump
-	CountdownTimer walljumpDuration;     // how long the player can't move towards the wall
-	bool walljumpLeft;                   // whether we are doing a walljump to the left or right
+	CountdownTimer walljumpWindow;    // time window in which we can perform a walljump
+	CountdownTimer walljumpDuration;  // how long the player can't move towards the wall
+	bool walljumpLeft;                // whether we are doing a walljump to the left or right
 
 	SpatialState spatialState;
 	float spatialStateTimer;
@@ -351,8 +339,8 @@ struct CollidableComponent {
 void setSpatialState( CollidableComponent* collidable, SpatialState state )
 {
 	if( state != collidable->spatialState ) {
-		collidable->spatialState = state;
-		collidable->spatialStateTimer = 0;	
+		collidable->spatialState      = state;
+		collidable->spatialStateTimer = 0;
 		if( state != SpatialState::Grounded ) {
 			collidable->groundedTile = -1;
 		}
@@ -375,7 +363,8 @@ bool isSpatialStateJumpable( CollidableComponent* collidable )
 bool isSpatialStateWalljumpable( CollidableComponent* collidable )
 {
 	return /*collidable->spatialState == SpatialState::FallingOff
-	       ||*/ collidable->spatialState == SpatialState::Airborne;
+	       ||*/ collidable->spatialState
+	       == SpatialState::Airborne;
 }
 const char* getSpatialStateString( SpatialState state )
 {
@@ -502,7 +491,7 @@ struct GameCamera : Camera {
 };
 GameCamera makeGameCamera( vec3arg position, vec3arg look, vec3arg up )
 {
-	GameCamera result = {};
+	GameCamera result                = {};
 	static_cast< Camera& >( result ) = makeCamera( position, look, up );
 	return result;
 }
@@ -515,7 +504,131 @@ struct GameDebugGuiState {
 	float fadeProgress;
 	bool initialized;
 };
+
+struct GameTile {
+	uint8 collection;
+	uint8 rotation;
+	trange< uint8 > frames;
+	inline explicit operator bool() const { return length( frames ) != 0; }
+};
+
+enum RoomLayerValues {
+	RL_Main,
+	RL_Back,
+	RL_Front,
+
+	RL_Count
+};
+typedef Grid< GameTile > TileGrid;
+struct Room {
+	struct Layer {
+		TileGrid grid;
+	};
+	Layer layers[RL_Count];
+};
+
+#define GAME_MAP_WIDTH 16
+#define GAME_MAP_HEIGHT 16
+static int8 GameDebugMapMain[] = {
+    0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 2, 0, 
+    0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 0,
+    0, 0, 0, 3, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 2, 0, 
+    0, 0, 0, 3, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 0,
+    4, 0, 0, 3, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 0, 0, 
+    4, 0, 0, 3, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+    4, 4, 4, 4, 1, 1, 0, 0, 0, 1, 1, 1, 1, 1, 1, 0, 
+    4, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+    4, 0, 0, 0, 0, 0, 0, 0, 7, 0, 0, 0, 0, 0, 0, 1, 
+    4, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1,
+    4, 0, 0, 0, 0, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 
+    4, 0, 1, 0, 0, 0, 0, 0, 7, 0, 0, 0, 0, 0, 0, 1,
+    4, 0, 0, 0, 0, 0, 0, 0, 7, 0, 1, 0, 0, 0, 1, 1, 
+    4, 0, 0, 0, 0, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+    4, 0, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 
+    6, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1,
+};
+static int8 GameDebugMapFront[] = {
+    0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 
+    0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 
+    0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 
+    0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 
+    6, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+    4, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+    4, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+    4, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+    4, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+    4, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+    4, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+    4, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+    4, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+    4, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+    4, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+    6, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1,
+};
+Room makeRoom( StackAllocator* allocator, int32 width, int32 height )
+{
+	Room result = {};
+	FOR( layer : result.layers ) {
+		layer.grid = makeGrid( allocator, GameTile, width, height );
+		zeroMemory( layer.grid.data(), layer.grid.size() );
+	}
+	return result;
+}
+static Room debugGetRoom( StackAllocator* allocator )
+{
+	Room result = makeRoom( allocator, GAME_MAP_WIDTH, GAME_MAP_HEIGHT );
+	auto back   = result.layers[RL_Back].grid;
+	fill( back.data(), {0, 0, 2, 3}, back.size() );
+	auto processLayer = []( TileGrid grid, int8* map ) {
+		for( auto y = 0; y < GAME_MAP_HEIGHT; ++y ) {
+			for( auto x = 0; x < GAME_MAP_WIDTH; ++x ) {
+				auto index = x + y * GAME_MAP_WIDTH;
+				auto dest  = &grid[index];
+				switch( map[index] ) {
+					case 1: {
+						*dest = {0, 0, 0, 1};
+						break;
+					}
+					case 2: {
+						*dest = {0, 1, 0, 1};
+						break;
+					}
+					case 3: {
+						*dest = {0, 2, 0, 1};
+						break;
+					}
+					case 4: {
+						*dest = {0, 3, 0, 1};
+						break;
+					}
+					case 5: {
+						*dest = {0, 0, 1, 2};
+						break;
+					}
+					case 6: {
+						*dest = {0, 0, 3, 4};
+						break;
+					}
+					case 7: {
+						*dest = {0, 0, 4, 5};
+						break;
+					}
+					case 0:
+					default: {
+						*dest = {};
+						break;
+					}
+				}
+			}
+		}
+	};
+	processLayer( result.layers[RL_Main].grid, GameDebugMapMain );
+	processLayer( result.layers[RL_Front].grid, GameDebugMapFront );
+	return result;
+}
+
 struct GameState {
+	VoxelCollection tileSet;
 	MeshId tileMesh;
 	TextureId tileTexture;
 	MeshId heroMesh;
@@ -531,6 +644,8 @@ struct GameState {
 	rectf cameraFollowRegion;
 	bool useGameCamera;
 	bool lighting;
+
+	Room room;
 
 	// debug fields
 	GameDebugGuiState debugGui;
@@ -619,7 +734,7 @@ VoxelGridTextureMap makeDefaultVoxelGridTextureMap( TextureId texture )
 	VoxelGridTextureMap result   = {};
 	result.texture               = texture;
 	const float subdivisionWidth = 1.0f / 6.0f;
-	for( intmax i = 0; i < 6; ++i ) {
+	for( int32 i = 0; i < 6; ++i ) {
 		auto entry       = &result.entries[i];
 		auto left        = i * subdivisionWidth;
 		entry->texCoords = makeQuadTexCoords( rectf{left, 0, left + subdivisionWidth, 1} );
@@ -710,7 +825,8 @@ RELOAD_APP( reloadApp )
 
 #include "PhysicsHitTest.cpp"
 
-bool loadVoxelCollection( StackAllocator* allocator, StringView filename, VoxelCollection* out )
+bool loadVoxelCollectionTextureMapping( StackAllocator* allocator, StringView filename,
+                                        VoxelCollection* out )
 {
 	assert( out );
 	auto partition = StackAllocatorPartition::ratio( allocator, 1 );
@@ -758,7 +874,7 @@ bool loadVoxelCollection( StackAllocator* allocator, StringView filename, VoxelC
 		auto animation  = mapping[i].getObject();
 		auto dest       = &out->animations[i];
 		dest->name      = makeString( primary, animation["name"].getString() );
-		dest->range.min = currentFrame;
+		dest->range.min = safe_truncate< uint16 >( currentFrame );
 
 		FOR( frameVal : animation["frames"].getArray() ) {
 			auto frame     = frameVal.getObject();
@@ -771,10 +887,10 @@ bool loadVoxelCollection( StackAllocator* allocator, StringView filename, VoxelC
 			for( auto face = 0; face < VF_Count; ++face ) {
 				auto faceObject = frame[VoxelFaceStrings[face]].getObject();
 
-				destFrame->textureMap.texture = out->texture;
+				destInfo->textureMap.texture = out->texture;
 				serialize( faceObject["rect"], destInfo->textureRegion[face] );
-				serialize( faceObject["texCoords"], destFrame->textureMap.entries[face].texCoords );
-				FOR( vert : destFrame->textureMap.entries[face].texCoords.elements ) {
+				serialize( faceObject["texCoords"], destInfo->textureMap.entries[face].texCoords );
+				FOR( vert : destInfo->textureMap.entries[face].texCoords.elements ) {
 					vert.x *= itw;
 					vert.y *= ith;
 				}
@@ -782,11 +898,48 @@ bool loadVoxelCollection( StackAllocator* allocator, StringView filename, VoxelC
 			serialize( frame["offset"], destFrame->offset );
 		}
 
-		dest->range.max = currentFrame;
+		dest->range.max = safe_truncate< uint16 >( currentFrame );
 	}
 	out->voxelsFilename = makeString( primary, root["voxels"].getString() );
 
 	partition.commit();
+	return true;
+}
+bool loadVoxelGridsFromFile( PlatformServices* platform, StringView filename,
+                             Array< VoxelGrid > grids )
+{
+	auto bytesToRead = grids.size() * sizeof( VoxelGrid );
+	if( !bytesToRead ) {
+		return false;
+	}
+	if( platform->readFileToBuffer( filename, grids.data(), bytesToRead ) != bytesToRead ) {
+		return false;
+	}
+	return true;
+}
+bool loadVoxelCollection( StackAllocator* allocator, StringView filename, VoxelCollection* out )
+{
+	if( !loadVoxelCollectionTextureMapping( allocator, filename, out ) ) {
+		return false;
+	}
+	TEMPORARY_MEMORY_BLOCK( allocator ) {
+		auto grids = makeArray( allocator, VoxelGrid, out->frames.size() );
+		if( !loadVoxelGridsFromFile( GlobalPlatformServices, out->voxelsFilename, grids ) ) {
+			return false;
+		}
+		for( auto i = 0; i < grids.size(); ++i ) {
+			auto grid  = &grids[i];
+			auto frame = &out->frames[i];
+			auto info  = &out->frameInfos[i];
+			TEMPORARY_MEMORY_BLOCK( allocator ) {
+				int32 vertices = (int32)getCapacityFor< Vertex >( allocator ) / 2;
+				int32 indices  = ( vertices * sizeof( Vertex ) ) / sizeof( uint16 );
+				auto stream    = makeMeshStream( allocator, vertices, indices, nullptr );
+				generateMeshFromVoxelGrid( &stream, grid, &info->textureMap, VoxelCellSize );
+				frame->mesh = GlobalPlatformServices->uploadMesh( toMesh( &stream ) );
+			}
+		}
+	}
 	return true;
 }
 
@@ -824,19 +977,6 @@ static void processCamera( GameInputs* inputs, GameSettings* settings, Camera* c
 }
 
 #include "VoxelEditor.cpp"
-
-#define GAME_MAP_WIDTH 16
-#define GAME_MAP_HEIGHT 16
-static int8 GameTestMap[] = {
-    0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 0,
-    0, 0, 0, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 0,
-    1, 0, 0, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 0, 0, 0, 0, 0, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
-    0, 1, 1, 1, 1, 1, 0, 0, 0, 1, 1, 1, 1, 1, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
-    0, 0, 0, 0, 0, 0, 0, 0, 1, 0, 0, 0, 0, 0, 0, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1,
-    0, 0, 0, 0, 0, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 0, 0, 1, 0, 0, 0, 0, 0, 1, 0, 0, 0, 0, 0, 0, 1,
-    0, 0, 0, 0, 0, 0, 0, 0, 1, 0, 1, 0, 0, 0, 1, 1, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
-    1, 0, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1,
-};
 
 const float Gravity        = 0.08f;
 const float SafetyDistance = 0.01f;
@@ -933,19 +1073,22 @@ bool testAabVsAab( vec2arg aPosition, rectfarg a, vec2arg delta, rectfarg b, flo
 	return collided;
 }
 
-static void doCollisionDetection( AppData* app, CollidableSystem* system, GameInputs* inputs,
-                                  float dt, bool frameBoundary )
+static void doCollisionDetection( AppData* app, Room* room, CollidableSystem* system,
+                                  GameInputs* inputs, float dt, bool frameBoundary )
 {
 	using namespace GameConstants;
+	assert( room );
+
+	auto grid = room->layers[RL_Main].grid;
 
 	auto game = &app->gameState;
 	// TODO: air movement should be accelerated instead of instant
 	vec2 rightBottom = {0, 0};
-	auto rect = Rect( -1, 1, 1.0f, 0 );
+	auto rect        = Rect( -1, 1, 1.0f, 0 );
 
 	for( auto& entry : system->entries ) {
-		entry.walljumpWindow      = processCountdownTimer( entry.walljumpWindow, dt );
-		entry.walljumpDuration    = processCountdownTimer( entry.walljumpDuration, dt );
+		entry.walljumpWindow   = processCountdownTimer( entry.walljumpWindow, dt );
+		entry.walljumpDuration = processCountdownTimer( entry.walljumpDuration, dt );
 
 		// make entry move away from the wall if a walljump was executed
 		if( entry.walljumpDuration ) {
@@ -973,7 +1116,7 @@ static void doCollisionDetection( AppData* app, CollidableSystem* system, GameIn
 
 			processSpatialState( &entry, dt );
 
-			auto vdt = dt;
+			auto vdt        = dt;
 			recti mapBounds = {0, 0, GAME_MAP_WIDTH, GAME_MAP_HEIGHT};
 
 			// find position of gap and whether we should squeeze into it this frame
@@ -1007,9 +1150,9 @@ static void doCollisionDetection( AppData* app, CollidableSystem* system, GameIn
 							if( gapTileY < 0 || gapTileY >= GAME_MAP_HEIGHT ) {
 								continue;
 							}
-							gapTileIndex = gapTileX + gapTileY * GAME_MAP_WIDTH;
-							auto gap     = GameTestMap[gapTileIndex];
-							if( gap == 0 ) {
+							gapTileIndex = grid.index( gapTileX, gapTileY );
+							auto gap     = grid[gapTileIndex];
+							if( !gap ) {
 								auto neighborTileX = gapTileX;
 								auto neighborTileY = gapTileY;
 								if( velocity.y > 0 ) {
@@ -1020,10 +1163,10 @@ static void doCollisionDetection( AppData* app, CollidableSystem* system, GameIn
 								if( !isPointInside( mapBounds, neighborTileX, neighborTileY ) ) {
 									continue;
 								}
-								auto neighborIndex = neighborTileX + neighborTileY * GAME_MAP_WIDTH;
-								auto neighbor = GameTestMap[neighborIndex];
+								auto neighborIndex = grid.index( neighborTileX, neighborTileY );
+								auto neighbor      = grid[neighborIndex];
 								// check whether neighbor is solid
-								if( neighbor != 0 ) {
+								if( neighbor ) {
 									// gap exists and is valid candidate for squeezing in
 									gapExists = true;
 									break;
@@ -1061,7 +1204,7 @@ static void doCollisionDetection( AppData* app, CollidableSystem* system, GameIn
 						// instead of calculating velocity deltas, calculate t value of how
 						// much to apply velocity to be inside gap
 						auto yDelta = gapBounds.top - ( entry.aab.top + entry.position.y );
-						auto t = yDelta / velocity.y;
+						auto t      = yDelta / velocity.y;
 						entry.position += velocity * t;
 						vdt -= t;
 #endif
@@ -1084,40 +1227,39 @@ static void doCollisionDetection( AppData* app, CollidableSystem* system, GameIn
 
 			// check grounded state of entry
 			if( entry.groundedTile >= 0 ) {
-				assert_init( auto tile = GameTestMap[entry.groundedTile], tile );
-				auto x             = entry.groundedTile % GAME_MAP_WIDTH;
-				auto y             = entry.groundedTile / GAME_MAP_WIDTH;
-				rectf tileBounds   = RectWH( x * tileWidth, y * tileHeight, tileWidth, tileHeight );
+				assert_init( auto tile = grid[entry.groundedTile], tile );
+				auto p = grid.coordinatesFromIndex( entry.groundedTile );
+				auto tileBounds =
+				    RectWH( p.x * tileWidth, p.y * tileHeight, tileWidth, tileHeight );
 				CollisionInfo info = {};
 				if( !testAabVsAab( entry.position, entry.aab, {0, 1}, tileBounds, 1, &info )
 				    || info.t > SafetyDistance + 0.00001f || info.t < 0 ) {
 					entry.groundedTile = -1;
 				}
 				if( entry.groundedTile < 0 ) {
-					bool found = false;
-					for( intmax y = tileGridRegion.top; y < tileGridRegion.bottom && !found; ++y ) {
-						for( intmax x = tileGridRegion.left; x < tileGridRegion.right && !found;
-						     ++x ) {
-							auto index = x + y * GAME_MAP_WIDTH;
-							assert( index >= 0 && index < countof( GameTestMap ) );
-							auto tile = GameTestMap[index];
-							if( tile ) {
-								rectf tileBounds =
-								    RectWH( x * tileWidth, y * tileHeight, tileWidth, tileHeight );
-								CollisionInfo info = {};
-								if( testAabVsAab( entry.position, entry.aab, {0, 1}, tileBounds, 1,
-								                  &info ) ) {
-									if( info.normal.y < 0 && info.t >= 0
-									    && info.t < SafetyDistance + 0.00001f ) {
-										entry.position.y += info.t - SafetyDistance;
-										entry.groundedTile = (int32)index;
-										found              = true;
-										break;
+					auto findNewGround = [&]() {
+						for( int32 y = tileGridRegion.top; y < tileGridRegion.bottom; ++y ) {
+							for( int32 x = tileGridRegion.left; x < tileGridRegion.right; ++x ) {
+								auto index = grid.index( x, y );
+								auto tile  = grid[index];
+								if( tile ) {
+									auto tileBounds = RectWH( x * tileWidth, y * tileHeight,
+									                          tileWidth, tileHeight );
+									CollisionInfo info = {};
+									if( testAabVsAab( entry.position, entry.aab, {0, 1}, tileBounds,
+									                  1, &info ) ) {
+										if( info.normal.y < 0 && info.t >= 0
+										    && info.t < SafetyDistance + 0.00001f ) {
+											entry.position.y += info.t - SafetyDistance;
+											entry.groundedTile = index;
+											return;
+										}
 									}
 								}
 							}
 						}
-					}
+					};
+					findNewGround();
 				}
 
 				if( entry.groundedTile < 0 ) {
@@ -1132,11 +1274,10 @@ static void doCollisionDetection( AppData* app, CollidableSystem* system, GameIn
 				vec2 push               = {};
 				int32 collidedTileIndex = 0;
 				bool collided           = false;
-				for( intmax y = tileGridRegion.top; y < tileGridRegion.bottom; ++y ) {
-					for( intmax x = tileGridRegion.left; x < tileGridRegion.right; ++x ) {
-						auto index = x + y * GAME_MAP_WIDTH;
-						assert( index >= 0 && index < countof( GameTestMap ) );
-						auto tile = GameTestMap[index];
+				for( int32 y = tileGridRegion.top; y < tileGridRegion.bottom; ++y ) {
+					for( int32 x = tileGridRegion.left; x < tileGridRegion.right; ++x ) {
+						auto index = grid.index( x, y );
+						auto tile  = grid[index];
 						if( tile ) {
 							rectf tileBounds =
 							    RectWH( x * tileWidth, y * tileHeight, tileWidth, tileHeight );
@@ -1146,7 +1287,7 @@ static void doCollisionDetection( AppData* app, CollidableSystem* system, GameIn
 								if( info.t < t ) {
 									collided          = true;
 									t                 = info.t;
-									collidedTileIndex = (int32)index;
+									collidedTileIndex = index;
 									normal            = info.normal;
 									push              = info.push;
 								}
@@ -1200,8 +1341,7 @@ static StringView detailedDebugOutput( AppData* app, char* buffer, int32 size )
 
 	auto info = app->platformInfo;
 
-	builder << "FrameTime: " << info->frameTime
-	        << "\nAverage FrameTime:" << info->averageFrameTime
+	builder << "FrameTime: " << info->frameTime << "\nAverage FrameTime:" << info->averageFrameTime
 	        << "\nMin FrameTime: " << info->minFrameTime
 	        << "\nMax FrameTime: " << info->maxFrameTime;
 
@@ -1210,10 +1350,8 @@ static StringView detailedDebugOutput( AppData* app, char* buffer, int32 size )
 	                 info->indices );
 
 	builder << '\n'
-	        << "\nFPS: " << info->fps
-	        << "\nAverage Fps:" << info->averageFps
-	        << "\nMin Fps: " << info->minFps
-	        << "\nMax Fps: " << info->maxFps;
+	        << "\nFPS: " << info->fps << "\nAverage Fps:" << info->averageFps
+	        << "\nMin Fps: " << info->minFps << "\nMax Fps: " << info->maxFps;
 
 	builder << '\n'
 	        << "\nLight Position: " << renderer->lightPosition.x << ", "
@@ -1369,7 +1507,7 @@ static void processGameCamera( AppData* app, float dt, bool frameBoundary )
 			    normalize( Vec3( player->position.x, camera->position.y, 0 ) - camera->position );
 		}
 		if( camera->turnTimer ) {
-			auto t = quadratic( camera->turnTimer.value, 0 );
+			auto t            = quadratic( camera->turnTimer.value, 0 );
 			auto dir          = normalize( lerp( t, camera->nextLook, camera->prevLook ) );
 			*camera           = cameraLookDirection( *camera, dir );
 			camera->turnTimer = processCountdownTimer( camera->turnTimer, dt * 0.05f );
@@ -1397,8 +1535,11 @@ static void doGame( AppData* app, GameInputs* inputs, bool focus, float dt, bool
 		auto allocator             = &app->stackAllocator;
 		app->gameState.tileTexture = app->platform.loadTexture( "Data/Images/texture_map.png" );
 		auto tileTextureMap        = makeDefaultVoxelGridTextureMap( app->gameState.tileTexture );
-		app->gameState.tileMesh    = loadVoxelMeshFromFile( &app->platform, &app->stackAllocator,
-		                                                 &tileTextureMap, "Data/tile.raw" );
+		if( loadVoxelCollection( allocator, "Data/voxels/default_tileset.json",
+		                         &app->gameState.tileSet ) ) {
+			app->gameState.tileMesh    = app->gameState.tileSet.frames[0].mesh;
+			app->gameState.tileTexture = app->gameState.tileSet.frameInfos[0].textureMap.texture;
+		}
 		app->gameState.heroTexture = app->platform.loadTexture( "Data/Images/dude2.png" );
 		auto heroTextureMap        = makeHeroVoxelGridTextureMap( app->gameState.heroTexture );
 		app->gameState.heroMesh    = loadVoxelMeshFromFile( &app->platform, &app->stackAllocator,
@@ -1424,13 +1565,15 @@ static void doGame( AppData* app, GameInputs* inputs, bool focus, float dt, bool
 		game->useGameCamera      = true;
 		game->lighting           = false;
 
+		game->room = debugGetRoom( allocator );
+
 		game->initialized = true;
 	}
 
 	if( !focus ) {
 		return;
 	}
-	auto matrixStack     = renderer->matrixStack;
+	auto matrixStack = renderer->matrixStack;
 
 	processCamera( inputs, settings, &app->voxelState.camera,
 	               isKeyDown( inputs, KC_Shift ) ? dt : ( dt * 0.25f ) );
@@ -1457,7 +1600,8 @@ static void doGame( AppData* app, GameInputs* inputs, bool focus, float dt, bool
 	processGameCamera( app, dt, frameBoundary );
 	processControlSystem( &game->controlSystem, &game->collidableSystem, inputs, dt,
 	                      frameBoundary );
-	doCollisionDetection( app, &app->gameState.collidableSystem, inputs, dt, frameBoundary );
+	doCollisionDetection( app, &app->gameState.room, &app->gameState.collidableSystem, inputs, dt,
+	                      frameBoundary );
 
 	if( enableRender ) {
 		setRenderState( renderer, RenderStateType::Lighting, game->lighting );
@@ -1469,18 +1613,34 @@ static void doGame( AppData* app, GameInputs* inputs, bool focus, float dt, bool
 		}
 		renderer->view = cameraTranslation * getViewMatrix( camera );
 
+		const mat4 rotations[] = {
+		    matrixIdentity(), matrixRotationZOrigin( HalfPi32, 8, 8 ),
+		    matrixRotationZOrigin( Pi32, 8, 8 ), matrixRotationZOrigin( Pi32 + HalfPi32, 8, 8 ),
+		};
+
 		{
-			setTexture( renderer, 0, game->tileTexture );
-			auto tileWidth = TILE_WIDTH;
+			auto tileWidth  = TILE_WIDTH;
 			auto tileHeight = TILE_HEIGHT;
-			for( intmax y = 0; y < GAME_MAP_HEIGHT; ++y ) {
-				for( intmax x = 0; x < GAME_MAP_WIDTH; ++x ) {
-					auto tile = GameTestMap[x + y * GAME_MAP_WIDTH];
-					if( tile ) {
-						pushMatrix( matrixStack );
-						translate( matrixStack, x * tileWidth, -y * tileHeight - tileHeight, 0 );
-						addRenderCommandMesh( renderer, game->tileMesh );
-						popMatrix( matrixStack );
+			const float zTranslation[] = {0, TILE_DEPTH, -TILE_DEPTH};
+			static_assert( countof( zTranslation ) == RL_Count, "" );
+			for( auto i = 0; i < RL_Count; ++i ) {
+				auto layer = &app->gameState.room.layers[i];
+				auto grid = layer->grid;
+				auto collection = &app->gameState.tileSet;
+				setTexture( renderer, 0, collection->texture );
+				for( auto y = 0; y < grid.height; ++y ) {
+					for( auto x = 0; x < grid.width; ++x ) {
+						auto tile = grid.at( x, y );
+						if( tile ) {
+							pushMatrix( matrixStack );
+							translate( matrixStack, x * tileWidth, -y * tileHeight - tileHeight,
+							           zTranslation[i] );
+							assert( tile.rotation < countof( rotations ) );
+							multMatrix( matrixStack, rotations[tile.rotation] );
+							auto entry = &collection->frames[tile.frames.min];
+							addRenderCommandMesh( renderer, entry->mesh );
+							popMatrix( matrixStack );
+						}
 					}
 				}
 			}
@@ -1501,7 +1661,7 @@ static void doGame( AppData* app, GameInputs* inputs, bool focus, float dt, bool
 			setTexture( renderer, 0, game->heroTexture );
 			pushMatrix( matrixStack );
 			translate( matrixStack, position, 0 );
-			auto mesh = addRenderCommandMesh( renderer, game->heroMesh );
+			auto mesh               = addRenderCommandMesh( renderer, game->heroMesh );
 			mesh->screenDepthOffset = -0.01f;
 			popMatrix( matrixStack );
 		}
@@ -1518,7 +1678,7 @@ static void doGame( AppData* app, GameInputs* inputs, bool focus, float dt, bool
 			// render camera follow region
 			setTexture( renderer, 0, null );
 			MESH_STREAM_BLOCK( stream, renderer ) {
-				stream->color = Color::Blue;
+				stream->color     = Color::Blue;
 				stream->lineWidth = 2;
 				pushQuadOutline( stream, gameToScreen( app->gameState.cameraFollowRegion ) );
 			}
@@ -1669,7 +1829,7 @@ UPDATE_AND_RENDER( updateAndRender )
 		float step      = 16;
 		float y         = app->height - step;
 		reset( font );
-		for( intmax i = GlobalIngameLog->count - 1; i >= 0; --i ) {
+		for( int32 i = GlobalIngameLog->count - 1; i >= 0; --i ) {
 			auto entry         = &GlobalIngameLog->entries[i];
 			StringView message = {entry->message, entry->messageLength};
 			float x            = ( app->width - stringWidth( font, message ) ) * 0.5f;
