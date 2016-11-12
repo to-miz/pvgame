@@ -1,5 +1,5 @@
 /*
-tm_arrayview.h v1.1.2 - public domain
+tm_arrayview.h v1.1.2a - public domain
 written by Tolga Mizrak 2016
 
 no warranty; use at your own risk
@@ -36,6 +36,8 @@ SWITCHES
 	    std::container usage and UninitializedArrayView usage will require code changes.
 
 HISTORY
+	v1.1.2a 07.10.16 minor adjustment of size_t usage
+	                 fixed a minor assertion error
 	v1.1.2  07.10.16 removed get_index and unsigned int arithmetic when tma_size_t is signed
 	v1.1.1  10.09.16 fixed a couple of typos in macro definitions
 	                 added TMA_INT64_ACCOSSORS
@@ -253,7 +255,7 @@ ArrayView< T > makeArrayView( T* ptr, tma_size_t sz )
 template < class T >
 ArrayView< T > makeArrayView( T* first, T* last )
 {
-	TMA_ASSERT( first >= last );
+	TMA_ASSERT( first <= last );
 	return {first, static_cast< tma_size_t >( last - first )};
 }
 template < class Container >
@@ -541,16 +543,16 @@ inline reference emplace_back()
 		TMA_ASSERT( ptr );
 		TMA_ASSERT( position >= begin() && position <= end() );
 
-		size_t rem    = remaining();
-		size_t count  = ( n < rem ) ? n : ( rem );
-		size_t suffix = end() - position;
+		size_type rem   = remaining();
+		size_type count = ( n < rem ) ? n : ( rem );
+		auto suffix     = end() - position;
 		if( count > 0 ) {
 			auto tmp = val;  // in case val is inside sequence
 			// make room for insertion by moving suffix
 			TMA_MEMMOVE( position + count, position, suffix * sizeof( value_type ) );
 
 			sz += static_cast< size_type >( count );
-			for( size_t i = 0; i < count; ++i ) {
+			for( int i = 0; i < count; ++i ) {
 				position[i] = tmp;
 			}
 		}

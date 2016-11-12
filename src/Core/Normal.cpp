@@ -73,3 +73,18 @@ constexpr const Normal normal_neg_z_axis = {0, 0, INT10_MIN};
 #endif
 
 static_assert( sizeof( Normal ) == 4, "Normal must be a 32bit packed int" );
+
+vec3 unpackNormal( Normal normal )
+{
+	auto remap = []( int32 x ) {
+		const float oneOverDiff = 1.0f / ( INT10_MAX - INT10_MIN );
+		return ( ( x - INT10_MIN ) * oneOverDiff ) * 2 - 1;
+	};
+	return {remap( normal.x ), remap( normal.y ), remap( normal.z )};
+}
+Normal packNormal( vec3arg normal )
+{
+	return {remap( normal.x, -1, 1, INT10_MIN, INT10_MAX ),
+	        remap( normal.y, -1, 1, INT10_MIN, INT10_MAX ),
+	        remap( normal.z, -1, 1, INT10_MIN, INT10_MAX )};
+}

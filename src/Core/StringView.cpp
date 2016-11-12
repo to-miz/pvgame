@@ -196,7 +196,9 @@ int32 copyToString( StringView str, char* dest, int32 destSize )
 {
 	assert( dest || destSize == 0 );
 	auto minSize = MIN( destSize, str.sz );
-	memcpy( dest, str.ptr, minSize );
+	if( dest && str.ptr && minSize ) {
+		memcpy( dest, str.ptr, minSize );
+	}
 	return minSize;
 }
 

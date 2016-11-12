@@ -79,6 +79,9 @@ extern global Win32AppContextData Win32AppContext;
 #include "win32TextureLoader.cpp"
 
 #include <Core/IntrusiveLinkedList.h>
+#define NO_PROFILING
+#include <Profiling.cpp>
+
 #include <QuadTexCoords.cpp>
 #include <Graphics.h>
 #include <Graphics/Font.h>
@@ -510,6 +513,8 @@ int CALLBACK WinMain( HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdL
 
 	float targetTime = 1000.0f / 60.0f;
 	double frameTimeAcc = 0;
+	double gameTimeAcc = 0;
+	double renderTimeAcc = 0;
 	intmax loopCounter = 0;
 	float minFrameTime = 0;
 	float maxFps = 0;
@@ -639,13 +644,19 @@ int CALLBACK WinMain( HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdL
 
 		Color clearColor = Color::White;
 		if( !replayStepped || replayStep ) {
+			auto startTime = win32PerformanceCounter();
 			renderCommands = updateAndRender( memory, &inputs, clampedElapsedTime );
+			auto gameTime = win32PerformanceCounter() - startTime;
+			info.gameTime = (float)gameTime;
+			gameTimeAcc += gameTime;
+
 			replayStep = false;
 			if( renderCommands ) {
 				clearColor = renderCommands->clearColor;
 			}
 		}
 
+		auto renderStartTime = win32PerformanceCounter();
 		openGlClear( clearColor );
 		if( renderCommands ) {
 			openGlPrepareRender( &openGlContext, renderCommands->wireframe );
@@ -658,29 +669,38 @@ int CALLBACK WinMain( HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdL
 		assert( glGetError() == GL_NO_ERROR );
 
 		double endTime = win32PerformanceCounter();
+		auto renderTime = endTime - renderStartTime;
+		info.renderTime = (float)renderTime;
+		renderTimeAcc += renderTime;
+
 		elapsedTime = endTime - startTime;
 
-		info.frameTime = (float)elapsedTime;
-		info.fps = 1000.0f / info.frameTime;
+		info.totalFrameTime = (float)elapsedTime;
+		info.fps = 1000.0f / info.totalFrameTime;
 
-		if( info.frameTime > maxFrameTime ) {
-			maxFrameTime = info.frameTime;
+		if( info.totalFrameTime > maxFrameTime ) {
+			maxFrameTime = info.totalFrameTime;
 			minFps = info.fps;
 		}
-		if( info.frameTime < minFrameTime || minFrameTime == 0 ) {
-			minFrameTime = info.frameTime;
+		if( info.totalFrameTime < minFrameTime || minFrameTime == 0 ) {
+			minFrameTime = info.totalFrameTime;
 			maxFps = info.fps;
 		}
 		frameTimeAcc += elapsedTime;
 		++loopCounter;
 		if( frameTimeAcc >= 1000.0f ) {
-			info.averageFrameTime = (float)( frameTimeAcc / (double)loopCounter );
+			auto counter           = (double)loopCounter;
+			info.averageFrameTime  = (float)( frameTimeAcc / counter );
+			info.averageGameTime   = (float)( gameTimeAcc / counter );
+			info.averageRenderTime = (float)( renderTimeAcc / counter );
 			info.averageFps = 1000.0f / info.averageFrameTime;
 			info.minFrameTime = minFrameTime;
 			info.minFps = minFps;
 			info.maxFrameTime = maxFrameTime;
 			info.maxFps = maxFps;
 			frameTimeAcc = 0;
+			gameTimeAcc = 0;
+			renderTimeAcc = 0;
 			loopCounter = 0;
 			minFrameTime = 0;
 			minFps = 0;

@@ -217,6 +217,8 @@ void clear( MeshStream* stream )
 
 void pushBox( MeshStream* stream, vec3 box[8] )
 {
+	PROFILE_FUNCTION();
+
 	assert( isValid( stream ) );
 	if( !hasCapacity( stream, 24, 36 ) ) {
 		// OutOfMemory();
@@ -325,6 +327,8 @@ void pushBox( MeshStream* stream, vec3 box[8] )
 void pushAabb( MeshStream* stream, float left, float bottom, float near, float right, float top,
                float far )
 {
+	PROFILE_FUNCTION();
+
 	vec3 vertices[8] = {
 	    {left, top, near}, {right, top, near}, {left, bottom, near}, {right, bottom, near},
 	    {left, top, far},  {right, top, far},  {left, bottom, far},  {right, bottom, far},
@@ -333,6 +337,8 @@ void pushAabb( MeshStream* stream, float left, float bottom, float near, float r
 }
 void pushAabb( MeshStream* stream, aabbarg aabb )
 {
+	PROFILE_FUNCTION();
+
 	vec3 vertices[8] = {
 	    {aabb.left, aabb.top, aabb.near},    {aabb.right, aabb.top, aabb.near},
 	    {aabb.left, aabb.bottom, aabb.near}, {aabb.right, aabb.bottom, aabb.near},
@@ -345,6 +351,8 @@ void pushAabb( MeshStream* stream, aabbarg aabb )
 
 void pushRay( MeshStream* stream, vec3arg start, vec3arg dirNormalized, float length )
 {
+	PROFILE_FUNCTION();
+
 	vec3 hNormal = safeNormalize( vec3{dirNormalized.z, 0, -dirNormalized.x}, vec3{1, 0, 0} )
 	               * stream->lineWidth;
 	vec3 vNormal = safeNormalize( vec3{0, dirNormalized.z, -dirNormalized.y}, vec3{0, 1, 0} )
@@ -359,6 +367,8 @@ void pushRay( MeshStream* stream, vec3arg start, vec3arg dirNormalized, float le
 }
 void pushLine( MeshStream* stream, vec3arg start, vec3arg end )
 {
+	PROFILE_FUNCTION();
+
 	float length = 0;
 	auto dir     = safeNormalize( end - start, &length );
 	if( length != 0 ) {
@@ -367,6 +377,8 @@ void pushLine( MeshStream* stream, vec3arg start, vec3arg end )
 }
 void pushAabbOutline( MeshStream* stream, aabbarg box )
 {
+	PROFILE_FUNCTION();
+
 	pushLine( stream, {box.min.x, box.min.y, box.min.z}, {box.max.x, box.min.y, box.min.z} );
 	pushLine( stream, {box.min.x, box.min.y, box.min.z}, {box.min.x, box.max.y, box.min.z} );
 	pushLine( stream, {box.min.x, box.min.y, box.min.z}, {box.min.x, box.min.y, box.max.z} );
@@ -387,6 +399,8 @@ void pushAabbOutline( MeshStream* stream, aabbarg box )
 }
 void pushPoint( MeshStream* stream, vec3arg point )
 {
+	PROFILE_FUNCTION();
+
 	auto pointSize = stream->pointSize;
 	pushAabb( stream, point.x - pointSize, point.y - pointSize, point.z - pointSize,
 	          point.x + pointSize, point.y + pointSize, point.z + pointSize );
@@ -395,6 +409,8 @@ void pushPoint( MeshStream* stream, vec3arg point )
 void pushQuad( MeshStream* stream, vec3 quad[4],
                QuadTexCoordsArg texCoords = makeQuadTexCoordsDef() )
 {
+	PROFILE_FUNCTION();
+
 	assert( isValid( stream ) );
 	if( !hasCapacity( stream, 4, 6 ) ) {
 		// OutOfMemory();
@@ -424,6 +440,8 @@ void pushQuad( MeshStream* stream, vec3 quad[4],
 }
 void pushQuad( MeshStream* stream, Vertex vertices[4] )
 {
+	PROFILE_FUNCTION();
+
 	assert( isValid( stream ) );
 	if( !hasCapacity( stream, 4, 6 ) ) {
 		// OutOfMemory();
@@ -447,6 +465,8 @@ void pushQuad( MeshStream* stream, Vertex vertices[4] )
 }
 void pushQuad( MeshStream* stream, rectfarg rect, float z = 0 )
 {
+	PROFILE_FUNCTION();
+
 	auto color         = stream->color;
 	Vertex vertices[4] = {
 	    {rect.left, rect.top, z, color, 0, 0, normal_neg_z_axis},
@@ -458,6 +478,8 @@ void pushQuad( MeshStream* stream, rectfarg rect, float z = 0 )
 }
 void pushQuad( MeshStream* stream, rectfarg rect, float z, QuadTexCoordsArg texCoords )
 {
+	PROFILE_FUNCTION();
+
 	auto color         = stream->color;
 	Vertex vertices[4] = {
 	    {rect.left, rect.top, z, color, texCoords.elements[0], normal_neg_z_axis},
@@ -469,6 +491,8 @@ void pushQuad( MeshStream* stream, rectfarg rect, float z, QuadTexCoordsArg texC
 }
 void pushQuadOutline( MeshStream* stream, rectfarg rect, float z = 0 )
 {
+	PROFILE_FUNCTION();
+
 	auto halfWidth = stream->lineWidth * 0.5f;
 	pushQuad( stream, rectf{rect.left - halfWidth, rect.top, rect.left + halfWidth, rect.bottom},
 	          z );
@@ -542,6 +566,8 @@ void pushLineStripIndex( LineMeshStream* stream, uint16 index )
 
 void pushLine( LineMeshStream* stream, vec3arg start, vec3arg end )
 {
+	PROFILE_FUNCTION();
+
 	if( !hasCapacity( stream, 2, 3 ) ) {
 		// OutOfMemory();
 		return;
@@ -552,6 +578,8 @@ void pushLine( LineMeshStream* stream, vec3arg start, vec3arg end )
 }
 void pushAabbOutline( LineMeshStream* stream, aabbarg box )
 {
+	PROFILE_FUNCTION();
+
 	if( !hasCapacity( stream, 8, 20 ) ) {
 		// OutOfMemory();
 		return;
@@ -582,6 +610,8 @@ void pushAabbOutline( LineMeshStream* stream, aabbarg box )
 }
 void pushQuadOutline( LineMeshStream* stream, rectfarg rect, float z = 0 )
 {
+	PROFILE_FUNCTION();
+
 	if( !hasCapacity( stream, 4, 6 ) ) {
 		// OutOfMemory();
 		return;
@@ -595,6 +625,8 @@ void pushQuadOutline( LineMeshStream* stream, rectfarg rect, float z = 0 )
 }
 void pushLines( LineMeshStream* stream, Array< vec3 > vertices )
 {
+	PROFILE_FUNCTION();
+
 	if( !hasCapacity( stream, vertices.size(), vertices.size() + 1 ) ) {
 		// OutOfMemory();
 		return;
@@ -606,6 +638,8 @@ void pushLines( LineMeshStream* stream, Array< vec3 > vertices )
 }
 void pushLines( LineMeshStream* stream, Array< vec2 > vertices, float z = 0 )
 {
+	PROFILE_FUNCTION();
+
 	if( !hasCapacity( stream, vertices.size(), vertices.size() + 1 ) ) {
 		// OutOfMemory();
 		return;
@@ -790,6 +824,8 @@ void addRenderCommandMesh( RenderCommands* renderCommands, const Mesh& mesh )
 }
 void addRenderCommandMeshTransformed( RenderCommands* renderCommands, const Mesh& mesh )
 {
+	PROFILE_FUNCTION();
+
 	auto body = addRenderCommandMeshImpl< RenderCommandMesh >( renderCommands, mesh.verticesCount,
 	                                                           mesh.indicesCount );
 	auto& current = currentMatrix( renderCommands->matrixStack );
@@ -837,6 +873,8 @@ LineMeshStream addRenderCommandLineMeshStream( RenderCommands* renderCommands, i
 RenderCommandMesh* addRenderCommandSingleQuad( RenderCommands* renderCommands, rectfarg rect,
                                                float z = 0 )
 {
+	PROFILE_FUNCTION();
+
 	auto color       = renderCommands->color;
 	auto result      = addRenderCommandMesh( renderCommands, 4, 6 );
     result->mesh.vertices[0] = {{rect.left, rect.top, z}, color, 0, 0, normal_neg_z_axis};
@@ -856,6 +894,8 @@ RenderCommandMesh* addRenderCommandSingleQuad( RenderCommands* renderCommands, r
 RenderCommandMesh* addRenderCommandSingleQuad( RenderCommands* renderCommands, rectfarg rect,
                                                float z, QuadTexCoordsArg texCoords )
 {
+	PROFILE_FUNCTION();
+
 	auto color       = renderCommands->color;
 	auto result      = addRenderCommandMesh( renderCommands, 4, 6 );
 	result->mesh.vertices[0] = {
@@ -887,6 +927,8 @@ struct MeshStreamingBlock {
 template < class Stream, class Command >
 MeshStreamingBlock< Stream, Command > beginMeshStreamingImpl( RenderCommands* renderCommands )
 {
+	PROFILE_FUNCTION();
+
 	assert( isValid( renderCommands ) );
 	assert( !renderCommands->locked );
 	auto allocator = &renderCommands->allocator;
@@ -918,6 +960,8 @@ template < class Stream, class Command >
 void endMeshStreamingImpl( RenderCommands* renderCommands,
                            MeshStreamingBlock< Stream, Command >* block )
 {
+	PROFILE_FUNCTION();
+
 	assert( renderCommands && renderCommands->locked );
 	auto stream               = &block->stream;
 	auto meshCommand          = block->meshCommand;
@@ -990,6 +1034,8 @@ struct MeshStreamGuard {
 
 void setTexture( RenderCommands* renderCommands, int32 textureStage, TextureId texture )
 {
+	PROFILE_FUNCTION();
+
 	assert( isValid( renderCommands ) );
 
 	auto allocator = &renderCommands->allocator;
@@ -1007,6 +1053,8 @@ void setTexture( RenderCommands* renderCommands, int32 textureStage, null_t )
 
 void setProjection( RenderCommands* renderCommands, ProjectionType type )
 {
+	PROFILE_FUNCTION();
+
 	assert( isValid( renderCommands ) );
 	auto allocator = &renderCommands->allocator;
 	allocateRenderCommandHeader( allocator, RenderCommandSetProjection );
@@ -1015,6 +1063,8 @@ void setProjection( RenderCommands* renderCommands, ProjectionType type )
 }
 void setRenderState( RenderCommands* renderCommands, RenderStateType type, bool enabled )
 {
+	PROFILE_FUNCTION();
+
 	assert( isValid( renderCommands ) );
 	auto allocator = &renderCommands->allocator;
 	allocateRenderCommandHeader( allocator, RenderCommandSetRenderState );
@@ -1026,6 +1076,8 @@ void setRenderState( RenderCommands* renderCommands, RenderStateType type, bool 
 RenderCommandJump* addRenderCommandJump( RenderCommands* renderCommands, RenderCommandJump* prev,
                                          void* userData )
 {
+	PROFILE_FUNCTION();
+
 	assert( isValid( renderCommands ) );
 	auto allocator = &renderCommands->allocator;
 	allocateRenderCommandHeader( allocator, RenderCommandJump );
@@ -1047,6 +1099,8 @@ typedef bool RenderCommandJumpCompareType( const RenderCommandJump& a, const Ren
 void sortRenderCommandJumps( RenderCommands* renderCommands, RenderCommandJump* first,
                              RenderCommandJump* last, RenderCommandJumpCompareType* cmp )
 {
+	PROFILE_FUNCTION();
+
 	// the block of memory to be sorted always needs to begin and end with a jump, so we assert that
 	// there actually is a jump at the end of the memory region to be sorted
 	assert( back( &renderCommands->allocator ) == (char*)last + sizeof( RenderCommandJump ) );
@@ -1065,6 +1119,8 @@ void sortRenderCommandJumps( RenderCommands* renderCommands, RenderCommandJump* 
 // quads on the xy plane
 void clip( Mesh* mesh, rectfarg rect )
 {
+	PROFILE_FUNCTION();
+
 	assert( mesh );
 	assert( isValid( rect ) );
 
@@ -1104,6 +1160,8 @@ void clip( Mesh* mesh, rectfarg rect )
 }
 void clip( RenderCommandsStream stream, rectfarg rect )
 {
+	PROFILE_FUNCTION();
+	
 	while( stream.size ) {
 		auto header = getRenderCommandsHeader( &stream );
 		switch( header->type ) {

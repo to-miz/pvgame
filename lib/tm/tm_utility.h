@@ -300,8 +300,8 @@ template < class result_type, class value_type >
 result_type bit_cast( const value_type& value );
 
 // return index of value in contiguous container
-template < class Container, class ValueType >
-tmut_size_t indexof( const Container& container, const ValueType& value );
+template < class Container, class ValueType, class ReturnType = tmut_size_t >
+ReturnType indexof( const Container& container, const ValueType& value );
 
 // get type of value without it being a reference type
 #define typeof( value ) std::remove_reference < decltype( value ) > ::type
@@ -432,7 +432,7 @@ float clamp( float val, float lower = 0, float upper = 1 );
 	template < class T >
 	T remap( float t, float tMin, float tMax, T a, T b )
 	{
-		return a + ( ( t - tMin ) / ( tMax - tMin ) ) * ( b - a );
+		return static_cast< T >( a + ( ( t - tMin ) / ( tMax - tMin ) ) * ( b - a ) );
 	}
 #endif
 
@@ -652,8 +652,8 @@ inline result_type bit_cast( const value_type& value )
 	return ret;
 }
 
-template < class Container, class ValueType >
-inline tmut_size_t indexof( const Container& container, const ValueType& value )
+template < class Container, class ValueType, class ReturnType >
+inline ReturnType indexof( const Container& container, const ValueType& value )
 {
 #ifndef TM_USE_OWN_BEGIN_END
 	using std::begin;
@@ -665,7 +665,7 @@ inline tmut_size_t indexof( const Container& container, const ValueType& value )
 	TMUT_ASSERT( &value >= &*first && &value < &*( end( container ) ) );
 	// we take the adress after dereferencing in case we are dealing with an iterator type instead
 	// of pointers
-	return static_cast< tmut_size_t >( &value - &*first );
+	return static_cast< ReturnType >( &value - &*first );
 }
 
 template< class ValueType >

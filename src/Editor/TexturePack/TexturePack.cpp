@@ -54,21 +54,18 @@ TexturePackRegion* texturePackAddUniqueTextureRegion( AppData* app, rectiarg rec
 {
 	auto editor = &app->texturePackState;
 
-	int32 regionId = -1;
 	auto textureRegion =
 	    find_first_where( editor->uniqueTextureRegions,
 	                      it.texture == source && memcmp( &it.rect, &rect, sizeof( recti ) ) == 0 );
 
 	if( !textureRegion ) {
-		regionId = ++editor->regionIds;
+		auto regionId = ++editor->regionIds;
 		if( !editor->uniqueTextureRegions.remaining() ) {
 			LOG( ERROR, "out of memory for unique texture regions" );
 		} else {
 			editor->uniqueTextureRegions.push_back( {regionId, rect, source} );
 			textureRegion = &editor->uniqueTextureRegions.back();
 		}
-	} else {
-		regionId = textureRegion->id;
 	}
 	return textureRegion;
 }
@@ -783,9 +780,9 @@ void texturePackSave( AppData* app )
 						        auto texCoords = texturePackGetTexCoords( rect, face->orientation );
 						        writePropertyName( &writer, "texCoords" );
 						        writeStartArray( &writer );
-							        for( auto j = 0; j < 4; ++j ) {
-								        writeValue( &writer, texCoords.elements[j] );
-							        }
+						        	FOR( element : texCoords.elements ) {
+						        		writeValue( &writer, element );
+						        	}
 						        writeEndArray( &writer );
 
 						        writeProperty( &writer, "orientation", (int32)face->orientation );

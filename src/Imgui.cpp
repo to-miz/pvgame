@@ -941,7 +941,6 @@ bool imguiEditbox( ImGuiHandle handle, StringView name, char* data, int32* lengt
 		auto selectedText      = substr( text, selection.min, selection.max - selection.min );
 		auto selectedTextWidth = stringWidth( font, selectedText );
 		auto preSelectedText   = substr( text, 0, selection.min );
-		auto postSelectedText  = substr( text, selection.max );
 		selectionRect.left += stringWidth( font, preSelectedText );
 		selectionRect.right = selectionRect.left + selectedTextWidth;
 
@@ -1020,7 +1019,6 @@ bool imguiEditbox( ImGuiHandle handle, StringView name, char* data, int32* lengt
 		}
 
 		{
-			auto selection        = state->selection();
 			auto textOffset       = state->textOffset;
 			auto beforeCaret      = substr( text, 0, state->selectionEnd );
 			auto beforeCaretWidth = stringWidth( font, beforeCaret ) + textOffset;
@@ -1152,6 +1150,9 @@ void imguiUpdate( float dt )
 				state->timePassed = 0;
 				state->hideCaret  = !state->hideCaret;
 			}
+			break;
+		}
+		default: {
 			break;
 		}
 	}
@@ -1354,7 +1355,7 @@ bool imguiBeginDropGroup( StringView name, bool* expanded )
 		renderer->color = multiply( renderer->color, Color::White );
 		setTexture( renderer, 0, null );
 		MESH_STREAM_BLOCK( stream, renderer ) {
-			stream->color = multiply( renderer->color, {0x80544C9A} );
+			stream->color = multiply( renderer->color, 0x80544C9A );
 			pushQuad( stream, inner );
 		}
 		setTexture( renderer, 0, style->atlas );
@@ -1410,7 +1411,7 @@ ImGuiComboState imguiCombo( StringView name, int32* selectedIndex )
 
 	RENDER_COMMANDS_STATE_BLOCK( renderer ) {
 		auto color      = renderer->color;
-		renderer->color = multiply( color, {0x800000FF} );
+		renderer->color = multiply( color, 0x800000FF );
 		setTexture( renderer, 0, null );
 		addRenderCommandSingleQuad( renderer, inner );
 		renderer->color = multiply( color, Color::White );
@@ -1764,8 +1765,6 @@ void imguiNextColumn( ImGuiBeginColumnResult* columns, float width )
 	container->rect.right         = container->rect.left + width;
 	container->addPosition.x      = container->rect.left;
 	container->addPosition.y      = columns->y;
-	ImGuiBeginColumnResult result = {container->rect, container->addPosition.x,
-	                                 container->addPosition.y};
 	container->rect = RectSetWidth( container->rect, width );
 	columns->x      = container->rect.left;
 }
@@ -1872,7 +1871,6 @@ rectf imguiScrollable( vec2* scrollPos, rectfarg scrollDomain, float width, floa
                        float stepSize = 10 )
 {
 	auto style         = &ImGui->style;
-	auto handle        = imguiMakeHandle( scrollPos, ImGuiControlType::Scrollable );
 	bool hscrollActive = ::width( scrollDomain ) > width;
 	bool vscrollActive = ::height( scrollDomain ) > height;
 
@@ -1952,7 +1950,6 @@ void imguiEndScrollableRegion( ImGuiScrollableRegion* region, ImGuiScrollableReg
 {
 	assert( region );
 	assert( state );
-	auto handle    = imguiMakeHandle( region, ImGuiControlType::ScrollableRegion );
 	auto container = imguiCurrentContainer();
 	auto renderer  = ImGui->renderer;
 

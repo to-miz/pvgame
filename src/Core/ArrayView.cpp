@@ -79,9 +79,9 @@ struct SmallUninitializedArray : UninitializedArray< T > {
 	T buffer[N];
 	SmallUninitializedArray()
 	{
-		ptr = buffer;
-		sz  = 0;
-		cap = N;
+		this->ptr = buffer;
+		this->sz  = 0;
+		this->cap = N;
 	}
 };
 

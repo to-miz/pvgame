@@ -115,6 +115,8 @@ void reset( Font* font ) { font->renderOptions = defaultFontRenderOptions(); }
 
 FontRange* findFontRange( Array< FontRange > ranges, uint32 codepoint )
 {
+	PROFILE_FUNCTION();
+
 	FOR( range : ranges ) {
 		if( codepoint >= range.min && codepoint < range.max ) {
 			return &range;
@@ -124,6 +126,8 @@ FontRange* findFontRange( Array< FontRange > ranges, uint32 codepoint )
 }
 int32 findFontRangeIndex( Array< FontRange > ranges, uint32 codepoint )
 {
+	PROFILE_FUNCTION();
+
 	for( intmax i = 0, count = ranges.size(); i < count; ++i ) {
 		auto range = &ranges[i];
 		if( codepoint >= range->min && codepoint < range->max ) {
@@ -167,6 +171,8 @@ uint32 getSecondCodepointFromKerningKey( uint64 key )
 }
 float getKerningAmount( FontKerning* kerning, uint64 key )
 {
+	PROFILE_FUNCTION();
+
 	assert( kerning );
 	auto keys = kerning->keys;
 	for( intmax i = 0, count = kerning->count; i < count; ++i ) {
@@ -204,6 +210,8 @@ FontInfo* getFontInfo( Font* font )
 
 float stringWidth( FontInfo* font, FontRenderOptions* options, StringView string )
 {
+	PROFILE_FUNCTION();
+
 	auto result = 0.0f;
 	auto sep = options->sep * options->scale;
 	auto scale = options->scale;
@@ -239,6 +247,8 @@ float stringHeight( Font* font )
 float lineWidth( FontInfo* font, FontRenderOptions* options, bool kerning, StringView string,
                  int32 start, int32* end )
 {
+	PROFILE_FUNCTION();
+
 	auto result = 0.0f;
 	auto sep = options->sep * options->scale;
 	auto scale = options->scale;
@@ -271,6 +281,8 @@ float lineWidth( FontInfo* font, FontRenderOptions* options, bool kerning, Strin
 float stringHeight( FontInfo* font, FontRenderOptions* options, StringView string,
                     float textAreaWidth, float verticalPadding )
 {
+	PROFILE_FUNCTION();
+
 	float result;
 	auto scale = options->scale;
 	auto advance = ( font->newLineAdvance + verticalPadding ) * scale;
@@ -294,6 +306,8 @@ float stringHeight( FontInfo* font, FontRenderOptions* options, StringView strin
 }
 float stringHeight( Font* font, StringView string, float textAreaWidth = 0 )
 {
+	PROFILE_FUNCTION();
+
 	auto info = getFontInfo( font );
 	assert( info );
 	return stringHeight( info, &font->renderOptions, string, textAreaWidth, font->verticalPadding );
@@ -306,6 +320,8 @@ struct CharCountResult {
 CharCountResult charCount( FontInfo* font, FontRenderOptions* options, StringView string,
                            float textAreaWidth )
 {
+	PROFILE_FUNCTION();
+
 	CharCountResult result = {};
 	float maxWidth = 0.0f;
 	auto scale = options->scale;
@@ -359,6 +375,8 @@ TextChain renderText( MeshStream* stream, FontInfo* info, FontRenderOptions* opt
                       float verticalPadding, StringView text, rectfarg rect, float z = 0,
                       TextChain chain = {} )
 {
+	PROFILE_FUNCTION();
+
 	assert( stream );
 	assert( info );
 	assert( options );
@@ -538,6 +556,8 @@ TextChain renderText( MeshStream* stream, Font* font, StringView text, rectfarg 
 TextChain renderText( RenderCommands* renderer, Font* font, StringView text, rectfarg rect,
                       float z = 0, TextChain chain = {} )
 {
+	PROFILE_FUNCTION();
+	
 	auto info = getFontInfo( font );
 	setTexture( renderer, 0, info->ranges[0].texture );
 	MESH_STREAM_BLOCK( stream, renderer ) {

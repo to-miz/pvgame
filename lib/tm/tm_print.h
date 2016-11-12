@@ -1,5 +1,5 @@
 /*
-tm_print.h v0.0.4b - public domain
+tm_print.h v0.0.4c - public domain
 author: Tolga Mizrak 2016
 
 no warranty; use at your own risk
@@ -33,6 +33,7 @@ ISSUES
 	sized)
 
 HISTORY
+	v0.0.4c 23.10.16 added some assertions for bounds checking
 	v0.0.4b 07.10.16 fixed some casting issues when tmp_size_t is signed
 	v0.0.4a 29.09.16 fixed a bug where inputting an escaped {{ was resulting in an infinite loop
 	v0.0.4  29.09.16 added signed/unsigned char, short and long handling
@@ -1006,30 +1007,35 @@ struct memoryprinter {
 			}
 			case PrintType::Bool: {
 				auto len = print_bool( data, remaining, &format, value.b );
+				TMP_ASSERT( len <= remaining );
 				data += len;
 				remaining -= len;
 				break;
 			}
 			case PrintType::Int: {
 				auto len = print_i32( data, remaining, &format, value.i );
+				TMP_ASSERT( len <= remaining );
 				data += len;
 				remaining -= len;
 				break;
 			}
 			case PrintType::UInt: {
 				auto len = print_u32( data, remaining, &format, value.u );
+				TMP_ASSERT( len <= remaining );
 				data += len;
 				remaining -= len;
 				break;
 			}
 			case PrintType::Int64: {
 				auto len = print_i64( data, remaining, &format, value.ll );
+				TMP_ASSERT( len <= remaining );
 				data += len;
 				remaining -= len;
 				break;
 			}
 			case PrintType::UInt64: {
 				auto len = print_u64( data, remaining, &format, value.ull );
+				TMP_ASSERT( len <= remaining );
 				data += len;
 				remaining -= len;
 				break;
@@ -1040,6 +1046,7 @@ struct memoryprinter {
 					format.flags |= PF_TRAILING_ZEROES;
 				#endif
 				auto len = print_float( data, remaining, &format, value.f );
+				TMP_ASSERT( len <= remaining );
 				data += len;
 				remaining -= len;
 				#ifdef TMP_FLOAT_ALWAYS_TRAILING_ZEROES
@@ -1053,6 +1060,7 @@ struct memoryprinter {
 					format.flags |= PF_TRAILING_ZEROES;
 				#endif
 				auto len = print_double( data, remaining, &format, value.d );
+				TMP_ASSERT( len <= remaining );
 				data += len;
 				remaining -= len;
 				#ifdef TMP_FLOAT_ALWAYS_TRAILING_ZEROES
@@ -1071,6 +1079,7 @@ struct memoryprinter {
 #ifdef TMP_CUSTOM_PRINTING
 			case PrintType::Custom: {
 				auto len =  value.custom.customPrint( data, remaining, format, value.custom.data );
+				TMP_ASSERT( len <= remaining );
 				remaining -= len;
 				data += len;
 				break;
@@ -1086,6 +1095,7 @@ struct memoryprinter {
 	void operator()( const char* str, tmp_size_t len )
 	{
 		auto size = TMP_MIN( len, remaining );
+		assert( size >= 0 );
 		TMP_MEMCPY( data, str, size );
 		remaining -= size;
 		data += size;

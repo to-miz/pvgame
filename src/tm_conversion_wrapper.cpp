@@ -36,7 +36,6 @@ typedef bool tmc_bool;
 #define TM_CONVERSION_IMPLEMENTATION
 #include <tm_conversion.h>
 
-#define TM_PRINT_IMPLEMENTATION
 #define TMP_NO_CSTDIO
 #define TMP_ASSERT assert
 #define TMP_MEMCPY memcpy
@@ -46,12 +45,46 @@ typedef uint32 tmp_uint32;
 typedef int64 tmp_int64;
 typedef uint64 tmp_uint64;
 typedef int32 tmp_size_t;
+
+// custom printers
+tmp_size_t snprint( char* buffer, tmp_size_t len, const PrintFormat& initialFormatting,
+                    const vec2& value );
+tmp_size_t snprint( char* buffer, tmp_size_t len, const PrintFormat& initialFormatting,
+                    const vec3& value );
+tmp_size_t snprint( char* buffer, tmp_size_t len, const PrintFormat& initialFormatting,
+                    const vec4& value );
+tmp_size_t snprint( char* buffer, tmp_size_t len, const PrintFormat& initialFormatting,
+                    const rectf& value );
+
 #define TMP_NO_INCLUDE_TM_CONVERSION
 #define TMP_STRING_VIEW StringView
 #define TMP_STRING_VIEW_DATA( x ) ( ( x ).data() )
 #define TMP_STRING_VIEW_SIZE( x ) ( ( x ).size() )
 #define TMP_CUSTOM_PRINTING
+#define TM_PRINT_IMPLEMENTATION
 #include <tm_print.h>
+
+tmp_size_t snprint( char* buffer, tmp_size_t len, const PrintFormat& initialFormatting,
+                    const vec2& value )
+{
+	return ::snprint( buffer, len, "{{{}, {}}", value.x, value.y );
+}
+tmp_size_t snprint( char* buffer, tmp_size_t len, const PrintFormat& initialFormatting,
+                    const vec3& value )
+{
+	return ::snprint( buffer, len, "{{{}, {}, {}}", value.x, value.y, value.z );
+}
+tmp_size_t snprint( char* buffer, tmp_size_t len, const PrintFormat& initialFormatting,
+                    const vec4& value )
+{
+	return ::snprint( buffer, len, "{{{}, {}, {}, {}}", value.x, value.y, value.z, value.w );
+}
+tmp_size_t snprint( char* buffer, tmp_size_t len, const PrintFormat& initialFormatting,
+                    const rectf& value )
+{
+	return ::snprint( buffer, len, "{{{}, {}, {}, {}}", initialFormatting, value.left, value.top,
+	                  value.right, value.bottom );
+}
 
 struct string_builder {
 	char* ptr;
@@ -145,28 +178,4 @@ NumberString toNumberString( int32 value )
 	NumberString result;
 	result.count = to_string( value, result.data, countof( result.data ) );
 	return result;
-}
-
-// custom printers
-
-tmp_size_t snprint( char* buffer, tmp_size_t len, const PrintFormat& initialFormatting,
-                    const vec2& value )
-{
-	return ::snprint( buffer, len, "{{{}, {}}", value.x, value.y );
-}
-tmp_size_t snprint( char* buffer, tmp_size_t len, const PrintFormat& initialFormatting,
-                    const vec3& value )
-{
-	return ::snprint( buffer, len, "{{{}, {}, {}}", value.x, value.y, value.z );
-}
-tmp_size_t snprint( char* buffer, tmp_size_t len, const PrintFormat& initialFormatting,
-                    const vec4& value )
-{
-	return ::snprint( buffer, len, "{{{}, {}, {}, {}}", value.x, value.y, value.z, value.w );
-}
-tmp_size_t snprint( char* buffer, tmp_size_t len, const PrintFormat& initialFormatting,
-                    const rectf& value )
-{
-	return ::snprint( buffer, len, "{{{}, {}, {}, {}}", initialFormatting, value.left, value.top,
-	                  value.right, value.bottom );
 }

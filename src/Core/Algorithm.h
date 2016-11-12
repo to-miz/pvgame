@@ -1,7 +1,92 @@
+/*
+Note that some template algorithms that exist in stl header algorithm are reimplemented here.
+That is because in this code base we implement cmath functions ourselves and <algorithm> might
+include it, generating errors.
+
+Most functions are not 100% stand-ins for stl algorithms, most assume that iterators are in fact
+pointers.
+*/
+
 #pragma once
 
 #ifndef _ALGORITHM_H_INCLUDED_
 #define _ALGORITHM_H_INCLUDED_
+
+constexpr const intmax MaxIntroSort = 32;
+
+struct less {
+	template < class A, class B >
+	bool operator()( const A& a, const B& b )
+	{
+		return a < b;
+	}
+};
+
+template < class A, class B >
+struct pair {
+	A first;
+	B second;
+};
+template < class A, class B >
+pair< A, B > make_pair( A&& a, B&& b )
+{
+	return {std::forward< A >( a ), std::forward< B >( b )};
+}
+
+template < class RandomAccessIterator >
+RandomAccessIterator rotate_right( RandomAccessIterator first, RandomAccessIterator last )
+{
+	assert( first < last );
+	if( last - first > 1 ) {
+		auto tmp = std::move( *( last - 1 ) );
+		move( first + 1, first, last - first - 1 );
+		*first = std::move( tmp );
+	}
+	return first;
+}
+template < class RandomAccessIterator >
+RandomAccessIterator rotate_left( RandomAccessIterator first, RandomAccessIterator last )
+{
+	assert( first <= last );
+	if( last - first > 1 ) {
+		auto tmp = std::move( *first );
+		move( first, first + 1, last - first - 1 );
+		*( last - 1 ) = std::move( tmp );
+	}
+	return first;
+}
+
+template < class RandomAccessIterator, class Pred >
+void insertion_sort( RandomAccessIterator first, RandomAccessIterator last, Pred& pred )
+{
+	assert( first <= last );
+	if( first != last ) {
+		for( auto next = first + 1; next < last; ++next ) {
+			// find insertion pos
+			auto dest = first;
+			auto value = std::move( *next );
+			while( pred( *dest, value ) ) {
+				++dest;
+			}
+			// make room for insertion
+			move( dest + 1, dest, next - dest - 1 );
+			// insert
+			*dest = std::move( value );
+		}
+	}
+}
+
+template < class Iterator, class Pred >
+void sort( Iterator first, Iterator last, Pred pred )
+{
+	// TODO: use better sorting algorithm
+	insertion_sort( first, last, pred );
+}
+template < class Iterator >
+void sort( Iterator first, Iterator last )
+{
+	sort( first, last, less() );
+}
 
 template < class T >
 T exchange( T& value, const T& newValue )
@@ -254,26 +339,61 @@ bool append_unique( Container& container, Value&& value )
 	return false;
 }
 
+template < class RandomAccessIterator, class ValueType, class Pred >
+RandomAccessIterator upper_bound( RandomAccessIterator first, RandomAccessIterator last,
+                                  const ValueType& value, Pred&& pred )
+{
+	auto count = last - first;
+	assert( count >= 0 );
+	while( count > 0 ) {
+		auto halfCount = count / 2;
+		auto mid       = first + halfCount;
+		if( !pred( value, *mid ) ) {
+			first = mid + 1;
+			count -= halfCount + 1;
+		} else {
+			count = halfCount;
+		}
+	}
+	return first;
+}
+
+template < class RandomAccessIterator, class ValueType >
+RandomAccessIterator upper_bound( RandomAccessIterator first, RandomAccessIterator last,
+                                  const ValueType& value )
+{
+	return upper_bound( first, last, value, less() );
+}
+
 // sorts (last - 1)st element into array of [first, last)
 template < class RandomAccessIterator >
-void insertion_sort_last_elem( RandomAccessIterator first, RandomAccessIterator last )
+RandomAccessIterator insertion_sort_last_elem( RandomAccessIterator first,
+                                               RandomAccessIterator last )
 {
-	if( first >= last ) return;
+	if( first >= last ) return first;
 
-	--last;
-	auto elem = *last;
-	std::rotate( std::upper_bound( first, last, elem ), last, last + 1 );
+	auto back = last - 1;
+	auto elem = *back;
+	auto pos = upper_bound( first, back, elem, less() );
+	if( pos != back ) {
+		rotate_right( pos, last );
+	}
+	return pos;
 }
 
 template < class RandomAccessIterator, class Compare >
-void insertion_sort_last_elem( RandomAccessIterator first, RandomAccessIterator last,
-							   Compare&& cmp )
+RandomAccessIterator insertion_sort_last_elem( RandomAccessIterator first,
+                                               RandomAccessIterator last, Compare&& cmp )
 {
-	if( first >= last ) return;
+	if( first >= last ) return first;
 
-	--last;
-	auto elem = *last;
-	std::rotate( std::upper_bound( first, last, elem, cmp ), last, last + 1 );
+	auto back = last - 1;
+	auto elem = *back;
+	auto pos = upper_bound( first, back, elem, cmp );
+	if( pos != back ) {
+		rotate_right( pos, last );
+	}
+	return pos;
 }
 
 template < class ForwardIterator, class T >

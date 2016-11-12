@@ -23,7 +23,7 @@ inline bool hasUtf16LittleEndianByteOrderMark( uint16* str, int32 length )
 		return false;
 	}
 }
-inline bool hasUtf16LittleEndianByteOrderMark( char* str, int32 length )
+inline bool hasUtf16LittleEndianByteOrderMark( const char* str, int32 length )
 {
 	if( length >= 2 ) {
 		return (uint8)str[0] == LittleEndianByteOrderMark[0]
@@ -45,7 +45,7 @@ inline bool hasUtf16BigEndianByteOrderMark( uint16* str, int32 length )
 		return false;
 	}
 }
-inline bool hasUtf16BigEndianByteOrderMark( char* str, int32 length )
+inline bool hasUtf16BigEndianByteOrderMark( const char* str, int32 length )
 {
 	if( length >= 2 ) {
 		return (uint8)str[0] == BigEndianByteOrderMark[0]

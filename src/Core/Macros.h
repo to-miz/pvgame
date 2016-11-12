@@ -64,5 +64,10 @@
 #define not_implemented() debug_error( "not implemented" )
 
 #define FOR( x ) for( auto&& x )
+// macro version of if with initializer, search & replace once C++1z has them
+#define if_init( init, cond )  \
+	if( bool once_ = false ) { \
+	} else                     \
+		for( init; !once_ && ( cond ); once_ = true )
 
-#endif // _MACROS_H_INCLUDED_
+#endif  // _MACROS_H_INCLUDED_

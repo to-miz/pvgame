@@ -164,7 +164,7 @@ void generateMeshFromVoxelGrid( MeshStream* stream, VoxelGrid* grid, VoxelGridTe
 
 		VoxelFaceValues face;
 	};
-	auto findFirstUnprocessedQuad = []( VoxelGrid* grid, uint8* map, PlaneDescriptor* plane,
+	auto findFirstUnprocessedQuad = []( VoxelGrid* grid, const uint8* map, PlaneDescriptor* plane,
 	                                    int32 layer ) -> FindFirstQuadResult {
 		// assume we are searching on the xy plane
 		for( int32 y = 0; y < plane->vCellCount; ++y ) {
@@ -194,7 +194,7 @@ void generateMeshFromVoxelGrid( MeshStream* stream, VoxelGrid* grid, VoxelGridTe
 		return {false};
 	};
 
-	auto isGeneratingQuad = []( VoxelGrid* grid, PlaneDescriptor* plane, uint8* map, int32 x,
+	auto isGeneratingQuad = []( VoxelGrid* grid, PlaneDescriptor* plane, const uint8* map, int32 x,
 	                            int32 y, int32 z, uint32 textureIndex ) {
 		auto mapIndex = x + y * plane->hCellCount;
 		vec3i currentCell;
@@ -221,8 +221,6 @@ void generateMeshFromVoxelGrid( MeshStream* stream, VoxelGrid* grid, VoxelGridTe
 				if( first.found ) {
 					auto position = swizzle( first.position, plane->hComponent, plane->vComponent,
 					                         plane->zComponent );
-					auto dim = swizzle( grid->dim, plane->hComponent, plane->vComponent,
-					                    plane->zComponent );
 					auto cell = getCell( grid, first.position );
 					auto textureIndex = getVoxelFaceTexture( cell, plane->face );
 					map[position.x + position.y * plane->hCellCount] = 1;

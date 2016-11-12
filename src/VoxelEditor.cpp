@@ -122,7 +122,6 @@ RayCastResult raycastIntoVoxelGrid( VoxelGrid* grid, vec3arg rayOrigin, vec3 ray
 		result.position = {x, y, z};
 		result.found    = true;
 	} else {
-		float prevT = 0;
 		float t     = 0;
 		while( t < tMax ) {
 			if( !isPointInsideVoxelBounds( grid, x, y, z ) ) {
@@ -137,7 +136,6 @@ RayCastResult raycastIntoVoxelGrid( VoxelGrid* grid, vec3arg rayOrigin, vec3 ray
 				break;
 			}
 
-			prevT = t;
 			if( tMaxX < tMaxY ) {
 				if( tMaxX < tMaxZ ) {
 					// tMaxX was smallest
@@ -321,7 +319,6 @@ static void processSelectMode( AppData* app, GameInputs* inputs, bool focus, flo
 		intmax componentAabbMin  = 0;
 		intmax componentAabbMax  = 0;
 		intmax componentIndexMin = 0;
-		intmax componentIndexMax = 0;
 		intmax componentVec      = 0;
 		float scale              = 0;
 		float offset             = 0;
@@ -332,12 +329,10 @@ static void processSelectMode( AppData* app, GameInputs* inputs, bool focus, flo
 				componentAabbMin  = 0;
 				componentIndexMin = 0;
 				componentAabbMax  = 3;
-				componentIndexMax = 3;
 			} else {
 				componentAabbMin  = 3;
 				componentIndexMin = 3;
 				componentAabbMax  = 0;
-				componentIndexMax = 0;
 			}
 			componentVec = 0;
 			scale        = CELL_ONE_OVER_WIDTH;
@@ -347,12 +342,10 @@ static void processSelectMode( AppData* app, GameInputs* inputs, bool focus, flo
 				componentAabbMin  = 1;
 				componentIndexMin = 4;
 				componentAabbMax  = 4;
-				componentIndexMax = 1;
 			} else {
 				componentAabbMin  = 4;
 				componentIndexMin = 1;
 				componentAabbMax  = 1;
-				componentIndexMax = 4;
 			}
 			componentVec = 1;
 			scale        = -CELL_ONE_OVER_HEIGHT;
@@ -363,12 +356,10 @@ static void processSelectMode( AppData* app, GameInputs* inputs, bool focus, flo
 				componentAabbMin  = 2;
 				componentIndexMin = 2;
 				componentAabbMax  = 5;
-				componentIndexMax = 5;
 			} else {
 				componentAabbMin  = 5;
 				componentIndexMin = 5;
 				componentAabbMax  = 2;
-				componentIndexMax = 2;
 			}
 			componentVec = 2;
 			scale        = CELL_ONE_OVER_DEPTH;
@@ -560,6 +551,8 @@ VoxelGrid getVoxelGridFromTextureMapTopLeftColorKey( VoxelGridTextureMap* map )
 
 static void doVoxelGui( AppData* app, GameInputs* inputs, bool focus, float dt )
 {
+	PROFILE_FUNCTION();
+
 	auto voxel     = &app->voxelState;
 	auto gui       = &voxel->gui;
 	auto renderer  = &app->renderer;
@@ -839,6 +832,8 @@ static void doVoxelGui( AppData* app, GameInputs* inputs, bool focus, float dt )
 
 static void doVoxel( AppData* app, GameInputs* inputs, bool focus, float dt )
 {
+	PROFILE_FUNCTION();
+
 	auto voxel    = &app->voxelState;
 	auto camera   = &voxel->camera;
 	auto renderer = &app->renderer;

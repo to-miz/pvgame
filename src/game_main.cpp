@@ -1,68 +1,65 @@
 #include "DebugSwitches.h"
 
 #include <cassert>
-#include <Core/IntegerTypes.h>
-#include <Core/CoreTypes.h>
+#include "Core/IntegerTypes.h"
+#include "Core/CoreTypes.h"
 #include "Warnings.h"
-#include <stdarg.h>
+#include <cstdarg>
 
 #include <type_traits>
-#include <Core/Macros.h>
+#include "Core/Macros.h"
 #include <cstring>
 
-#include <Core/Math.h>
-#include <tm_utility_wrapper.cpp>
-#include <Core/CoreFloat.h>
-#include <Core/Math.cpp>
-#include <Utility.cpp>
-#include <Core/Log.h>
+#include "Core/Math.h"
+#include "tm_utility_wrapper.cpp"
+#include "Core/CoreFloat.h"
+#include "Core/Math.cpp"
+#include "Utility.cpp"
+#include "Core/Log.h"
 
-#include <Core/NumericLimits.h>
-#include <Core/Truncate.h>
-#include <Core/NullableInt.h>
-#include <Core/Algorithm.h>
+#include "Core/NumericLimits.h"
+#include "Core/Truncate.h"
+#include "Core/NullableInt.h"
+#include "Core/Algorithm.h"
 
 #ifdef GAME_DEBUG
 #define ARGS_AS_CONST_REF 1
 #else
 #define ARGS_AS_CONST_REF 0
 #endif
-#include <Core/StackAllocator.cpp>
+#include "Core/StackAllocator.cpp"
 #define VEC3_ARGS_AS_CONST_REF ARGS_AS_CONST_REF
 #define VEC4_ARGS_AS_CONST_REF ARGS_AS_CONST_REF
-#include <Core/Vector.cpp>
+#include "Core/Vector.cpp"
 #define RECT_ARGS_AS_CONST_REF ARGS_AS_CONST_REF
-#include <Core/Rect.h>
-#include <Core/Matrix.cpp>
+#include "Core/Rect.h"
+#include "Core/Matrix.cpp"
 #define AABB_ARGS_AS_CONST_REF ARGS_AS_CONST_REF
-#include <Core/AABB.h>
+#include "Core/AABB.h"
 #define RANGE_ARGS_AS_CONST_REF ARGS_AS_CONST_REF
-#include <Core/Range.h>
+#include "Core/Range.h"
 
-#include <Core/ArrayView.cpp>
-#include <Core/StringView.cpp>
-#include <Core/String.cpp>
-#include <Core/Unicode.cpp>
-#include <tm_conversion_wrapper.cpp>
-#include <tm_bin_packing_wrapper.cpp>
+#include "Core/ArrayView.cpp"
+#include "Core/StringView.cpp"
+#include "Core/String.cpp"
+#include "Core/Unicode.cpp"
+#include "tm_conversion_wrapper.cpp"
+#include "tm_bin_packing_wrapper.cpp"
 
-#include <Core/ScopeGuard.h>
+#include "Core/ScopeGuard.h"
 
-#include <easing.cpp>
+#include "easing.cpp"
 
-#include <Windows.h>
-#include <Windowsx.h>
-#undef far
-#undef near
+#include "Core/Color.cpp"
+#include "Core/Normal.cpp"
+#include "ImageData.h"
 
-#include <Core/Color.cpp>
-#include <Core/Normal.cpp>
-#include <ImageData.h>
+#include "Core/IntrusiveLinkedList.h"
+#include "Profiling.cpp"
 
-#include <Core/IntrusiveLinkedList.h>
-#include <QuadTexCoords.cpp>
-#include <Graphics.h>
-#include <Graphics/Font.h>
+#include "QuadTexCoords.cpp"
+#include "Graphics.h"
+#include "Graphics/Font.h"
 #include "TextureMap.cpp"
 
 #include "VirtualKeys.h"
@@ -75,38 +72,56 @@
 #include "JsonWriter.cpp"
 #include "tm_json_wrapper.cpp"
 
+#include "Core/Hash.cpp"
+
 namespace GameConstants
 {
-constexpr float MovementSpeed          = 1.1f;
-constexpr float JumpingSpeed           = -2.0f;
-constexpr float WalljumpingSpeed       = -2.0f;
-constexpr float WalljumpMaxDuration    = 8;
-constexpr float WalljumpFixDuration    = 4;
-constexpr float WalljumpWindowDuration = 10;
-constexpr float WalljumpMoveThreshold  = WalljumpMaxDuration - WalljumpFixDuration;
+constexpr const float Gravity                = 0.1f;
+constexpr const float MovementSpeed          = 1.1f;
+constexpr const float JumpingSpeed           = -2.8f;
+constexpr const float WalljumpingSpeed       = -2.8f;
+constexpr const float WalljumpMaxDuration    = 8;
+constexpr const float WalljumpFixDuration    = 4;
+constexpr const float WalljumpWindowDuration = 10;
+constexpr const float WalljumpMoveThreshold  = WalljumpMaxDuration - WalljumpFixDuration;
+
+constexpr const float TileWidth  = 16.0f;
+constexpr const float TileHeight = 16.0f;
 }
+
+struct DebugValues;
 
 // globals
 global PlatformServices* GlobalPlatformServices = nullptr;
 global TextureMap* GlobalTextureMap             = nullptr;
 global IngameLog* GlobalIngameLog               = nullptr;
 global ImmediateModeGui* ImGui                  = nullptr;
+global ProfilingTable* GlobalProfilingTable     = nullptr;
 
 global MeshStream* debug_MeshStream = nullptr;
 global bool debug_FillMeshStream    = true;
+global DebugValues* debug_Values    = nullptr;
 
-global string_builder* debugPrinter = nullptr;
-#ifdef GAME_DEBUG
-	#define debugPrint( ... ) debugPrinter->print( __VA_ARGS__ );
-	#define debugPrintln( ... ) debugPrinter->println( __VA_ARGS__ );
-	#define debugPrintClear() debugPrinter->clear()
-	#define debugPrintGetString() asStringView( *debugPrinter )
+global string_builder* GlobalDebugPrinter = nullptr;
+#if defined( GAME_DEBUG ) || ( GAME_DEBUG_PRINTING )
+	#define debugPrint( ... ) GlobalDebugPrinter->print( __VA_ARGS__ );
+	#define debugPrintln( ... ) GlobalDebugPrinter->println( __VA_ARGS__ );
+	#define debugPrintClear() GlobalDebugPrinter->clear()
+	#define debugPrintGetString() asStringView( *GlobalDebugPrinter )
 #else
 	#define debugPrint( ... )
 	#define debugPrintln( ... )
 	#define debugPrintClear()
 	#define debugPrintGetString() ( StringView{} )
 #endif
+
+struct DebugValues {
+	float groundPosition;
+	float jumpHeight;
+	float maxJumpHeight;
+	float lastJumpHeight;
+	float jumpHeightError;
+};
 
 StringView toString( VirtualKeyEnumValues key )
 {
@@ -277,7 +292,7 @@ struct CountdownTimer {
 	inline explicit operator bool() const { return value > 0; }
 };
 bool isCountdownTimerExpired( CountdownTimer timer ) { return timer.value < Float::BigEpsilon; }
-CountdownTimer processCountdownTimer( CountdownTimer timer, float dt )
+CountdownTimer processTimer( CountdownTimer timer, float dt )
 {
 	CountdownTimer result = timer;
 	result.value -= dt;
@@ -321,20 +336,64 @@ static const char* SpatilStateStrings[] = {
     "Grounded", "FallingOff", "Airborne",
 };
 
+struct CollidableRef {
+	enum : int8 { None, Tile, Dynamic } type;
+	uint16 index;
+	EntityHandle handle;
+	explicit operator bool() const { return type != None; }
+	void clear() { type = None; }
+	void setTile( int32 index )
+	{
+		this->type  = Tile;
+		this->index = safe_truncate< uint16 >( index );
+	}
+	void setDynamic( int32 index, EntityHandle handle )
+	{
+		this->type   = Dynamic;
+		this->index  = safe_truncate< uint16 >( index );
+		this->handle = handle;
+	}
+};
+enum class CollidableMovement : int8 { Straight, Grounded };
+enum class CollidableResponse : int8 { FullStop, Bounce };
 struct CollidableComponent {
 	vec2 position;
 	vec2 velocity;
 	rectf aab;
-	int32 groundedTile;
+	CollidableRef grounded;
+	vec2 positionDelta;
 
 	CountdownTimer walljumpWindow;    // time window in which we can perform a walljump
 	CountdownTimer walljumpDuration;  // how long the player can't move towards the wall
-	bool walljumpLeft;                // whether we are doing a walljump to the left or right
 
 	SpatialState spatialState;
 	float spatialStateTimer;
 
+	float gravityModifier;
+	float bounceModifier;  // value between 0 and 2 to specify bouncing behavior (0 = keep velocity
+	                       // on collision, 1 = slide along edge on collision, 2 = reflect)
+
 	EntityHandle entity;
+
+	CollidableMovement movement;
+	CollidableResponse response;
+	vec2 forcedNormal;
+	uint8 flags;
+
+	enum Flags : uint8 {
+		WalljumpLeft    = BITFIELD( 0 ),  // whether we are doing a walljump to the left or right
+		Dynamic         = BITFIELD( 1 ),  // whether collidable is a dynamic collider
+		UseForcedNormal = BITFIELD( 2 ),
+	};
+
+	bool walljumpLeft() const { return ( flags & WalljumpLeft ) != 0; }
+	bool dynamic() const { return ( flags & Dynamic ) != 0; }
+	bool useForcedNormal() const { return ( flags & UseForcedNormal ) != 0; }
+	void setForcedNormal( vec2arg normal )
+	{
+		forcedNormal = normal;
+		flags |= UseForcedNormal;
+	}
 };
 void setSpatialState( CollidableComponent* collidable, SpatialState state )
 {
@@ -342,7 +401,7 @@ void setSpatialState( CollidableComponent* collidable, SpatialState state )
 		collidable->spatialState      = state;
 		collidable->spatialStateTimer = 0;
 		if( state != SpatialState::Grounded ) {
-			collidable->groundedTile = -1;
+			collidable->grounded.clear();
 		}
 	}
 }
@@ -372,8 +431,32 @@ const char* getSpatialStateString( SpatialState state )
 	return SpatilStateStrings[valueof( state )];
 }
 
+CollidableComponent* getDynamicFromCollidableRef( Array< CollidableComponent > dynamics, CollidableRef ref )
+{
+	assert( ref.type == CollidableRef::Dynamic );
+	assert( ref.index >= 0 );
+	if( ref.index < dynamics.size() ) {
+		auto candidate = &dynamics[ref.index];
+		if( candidate->entity == ref.handle ) {
+			return candidate;
+		}
+	}
+	auto handle = ref.handle;
+	return find_first_where( dynamics, it.entity == handle );
+}
+
 struct CollidableSystem {
 	UArray< CollidableComponent > entries;
+	int32 entriesCount;  // count of entries that are not dynamic
+
+	Array< CollidableComponent > staticEntries() const
+	{
+		return makeArrayView( entries.begin(), entries.begin() + entriesCount );
+	}
+	Array< CollidableComponent > dynamicEntries() const
+	{
+		return makeArrayView( entries.begin() + entriesCount, entries.end() );
+	}
 };
 CollidableSystem makeCollidableSystem( StackAllocator* allocator, int32 maxCount )
 {
@@ -381,16 +464,26 @@ CollidableSystem makeCollidableSystem( StackAllocator* allocator, int32 maxCount
 	result.entries          = makeUArray( allocator, CollidableComponent, maxCount );
 	return result;
 }
-CollidableComponent* addCollidableComponent( CollidableSystem* system, EntityHandle entity )
+CollidableComponent* addCollidableComponent( CollidableSystem* system, EntityHandle entity,
+                                             bool dynamic = false )
 {
 	assert( system );
 	assert( entity );
 	CollidableComponent* result = nullptr;
 	if( system->entries.remaining() ) {
-		result               = system->entries.emplace_back();
-		*result              = {};
-		result->groundedTile = -1;
-		result->entity       = entity;
+		if( dynamic ) {
+			result  = system->entries.emplace_back();
+			*result = {};
+		} else {
+			result =
+			    system->entries.insert( system->entries.begin() + system->entriesCount, 1, {} );
+			++system->entriesCount;
+		}
+		result->grounded.clear();
+		result->entity          = entity;
+		setFlagCond( result->flags, CollidableComponent::Dynamic, dynamic );
+		result->gravityModifier = 1;
+		result->bounceModifier  = 1;
 	}
 	return result;
 }
@@ -436,31 +529,37 @@ void processControlSystem( ControlSystem* control, CollidableSystem* collidableS
 	using namespace GameConstants;
 
 	for( auto& entry : control->entries ) {
-		entry.jumpInputBuffer = processCountdownTimer( entry.jumpInputBuffer, dt );
+		entry.jumpInputBuffer = processTimer( entry.jumpInputBuffer, dt );
 		if( auto collidable = findCollidableComponent( collidableSystem, entry.entity ) ) {
 			collidable->velocity.x = 0;
 			// TODO: do keymapping to actions
 			if( isKeyDown( inputs, KC_Left ) ) {
 				if( isCountdownTimerExpired( collidable->walljumpDuration )
-				    || collidable->walljumpLeft ) {
+				    || collidable->walljumpLeft() ) {
 
 					collidable->velocity.x = -MovementSpeed;
 				}
 			}
 			if( isKeyDown( inputs, KC_Right ) ) {
 				if( isCountdownTimerExpired( collidable->walljumpDuration )
-				    || !collidable->walljumpLeft ) {
+				    || !collidable->walljumpLeft() ) {
 
 					collidable->velocity.x = MovementSpeed;
 				}
 			}
-			if( isKeyPressed( inputs, KC_Up ) && collidable->groundedTile < 0 ) {
+			if( isKeyPressed( inputs, KC_Up ) && !collidable->grounded ) {
 				entry.jumpInputBuffer = {4};
 			}
 			// TODO: input buffering
-			if( frameBoundary && isKeyDown( inputs, KC_Up )
-			    && isSpatialStateJumpable( collidable ) ) {
-
+			auto jumpDown = isKeyDown( inputs, KC_Up );
+			if( collidable->spatialState == SpatialState::Airborne && jumpDown
+			    && collidable->velocity.y < 0 ) {
+			} else {
+				if( collidable->velocity.y < 0 ) {
+					collidable->velocity.y = 0;
+				}
+			}
+			if( frameBoundary && jumpDown && isSpatialStateJumpable( collidable ) ) {
 				collidable->velocity.y = JumpingSpeed;
 				setSpatialState( collidable, SpatialState::Airborne );
 			}
@@ -530,28 +629,28 @@ struct Room {
 #define GAME_MAP_WIDTH 16
 #define GAME_MAP_HEIGHT 16
 static int8 GameDebugMapMain[] = {
-    0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 2, 0, 
-    0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 0,
-    0, 0, 0, 3, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 2, 0, 
+    2, 0, 0, 0, 2, 0, 0, 0, 0, 0, 0, 0, 0, 0, 2, 0,
+    2, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 0,
+    3, 3, 3, 3, 0, 0, 1, 1, 1, 1, 1, 1, 1, 1, 2, 0,
     0, 0, 0, 3, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 0,
-    4, 0, 0, 3, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 0, 0, 
+    4, 0, 0, 3, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 0, 0,
     4, 0, 0, 3, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
-    4, 4, 4, 4, 1, 1, 0, 0, 0, 1, 1, 1, 1, 1, 1, 0, 
+    4, 4, 4, 4, 1, 1, 0, 0, 0, 1, 1, 1, 1, 1, 1, 0,
     4, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
-    4, 0, 0, 0, 0, 0, 0, 0, 7, 0, 0, 0, 0, 0, 0, 1, 
+    4, 0, 0, 0, 0, 0, 0, 0, 7, 0, 0, 0, 0, 0, 0, 1,
     4, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1,
-    4, 0, 0, 0, 0, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 
+    4, 0, 0, 0, 0, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1,
     4, 0, 1, 0, 0, 0, 0, 0, 7, 0, 0, 0, 0, 0, 0, 1,
-    4, 0, 0, 0, 0, 0, 0, 0, 7, 0, 1, 0, 0, 0, 1, 1, 
+    4, 0, 0, 0, 0, 0, 0, 0, 7, 0, 1, 0, 0, 0, 1, 1,
     4, 0, 0, 0, 0, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
-    4, 0, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 
+    4, 0, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
     6, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1,
 };
 static int8 GameDebugMapFront[] = {
-    0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 
-    0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 
-    0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 
-    0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 
+    0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+    0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+    0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+    0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
     6, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
     4, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
     4, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
@@ -579,7 +678,7 @@ static Room debugGetRoom( StackAllocator* allocator )
 	Room result = makeRoom( allocator, GAME_MAP_WIDTH, GAME_MAP_HEIGHT );
 	auto back   = result.layers[RL_Back].grid;
 	fill( back.data(), {0, 0, 2, 3}, back.size() );
-	auto processLayer = []( TileGrid grid, int8* map ) {
+	auto processLayer = []( TileGrid grid, const int8* map ) {
 		for( auto y = 0; y < GAME_MAP_HEIGHT; ++y ) {
 			for( auto x = 0; x < GAME_MAP_WIDTH; ++x ) {
 				auto index = x + y * GAME_MAP_WIDTH;
@@ -650,12 +749,6 @@ struct GameState {
 	// debug fields
 	GameDebugGuiState debugGui;
 
-	float groundPosition;
-	float jumpHeight;
-	float maxJumpHeight;
-	float lastJumpHeight;
-	float jumpHeightError;
-
 	bool paused;
 
 	bool debugCamera;
@@ -676,6 +769,8 @@ struct AppData {
 	TextureMap textureMap;
 	ImmediateModeGui guiState;
 	string_builder debugPrinter;
+	ProfilingTable profilingTable;
+	DebugValues debugValues;
 
 	float frameTimeAcc;
 
@@ -766,9 +861,10 @@ GAME_STORAGE PlatformRemapInfo initializeApp( void* memory, size_t size,
                                               float viewportHeight );
 INITIALIZE_APP( initializeApp )
 {
-	assert( getAlignmentOffset( memory, alignof( AppData ) ) == 0 );
 	char* p  = (char*)memory;
 	auto app = (AppData*)p;
+	assert( isAligned( app ) );
+	assert( size >= sizeof( AppData ) );
 	p += sizeof( AppData );
 	size -= sizeof( AppData );
 
@@ -809,12 +905,17 @@ RELOAD_APP( reloadApp )
 {
 	PlatformRemapInfo result = {};
 
-	auto app               = (AppData*)memory;
-	debug_MeshStream       = &app->debugMeshStream;
-	GlobalPlatformServices = &app->platform;
-	GlobalIngameLog        = &app->log;
-	GlobalTextureMap       = &app->textureMap;
-	debugPrinter           = &app->debugPrinter;
+	auto app                       = (AppData*)memory;
+	assert( isAligned( app ) );
+	assert( size >= sizeof( AppData ) );
+	debug_MeshStream               = &app->debugMeshStream;
+	GlobalPlatformServices         = &app->platform;
+	GlobalIngameLog                = &app->log;
+	GlobalTextureMap               = &app->textureMap;
+	GlobalDebugPrinter             = &app->debugPrinter;
+	GlobalProfilingTable           = &app->profilingTable;
+	debug_Values                   = &app->debugValues;
+	app->profilingTable.infosCount = 0;
 
 	result.success    = true;
 	result.logStorage = GlobalIngameLog;
@@ -978,7 +1079,6 @@ static void processCamera( GameInputs* inputs, GameSettings* settings, Camera* c
 
 #include "VoxelEditor.cpp"
 
-const float Gravity        = 0.08f;
 const float SafetyDistance = 0.01f;
 
 bool testPointVsAxisAlignedLineSegment( float x, float y, float deltaX, float deltaY,
@@ -1023,6 +1123,14 @@ bool testAabVsAab( vec2arg aPosition, rectfarg a, vec2arg delta, rectfarg b, flo
 		info->normal            = minPush.normal;
 		info->push              = minPush.push * minPush.normal;
 		collided                = true;
+		if( ( minPush.normal.x < 0 && delta.x < info->push.x )
+		    || ( minPush.normal.x > 0 && delta.x > info->push.x )
+		    || ( minPush.normal.y < 0 && delta.y < info->push.y )
+		    || ( minPush.normal.y > 0 && delta.y > info->push.y ) ) {
+			// if we are moving away from collision faster than the push, ignore it
+			// the collision will be resolved by just letting the point move
+			collided = false;
+		}
 	} else {
 		if( delta.x != 0 ) {
 			if( testPointVsAxisAlignedLineSegment( aPosition.x, aPosition.y, delta.x, delta.y,
@@ -1073,28 +1181,90 @@ bool testAabVsAab( vec2arg aPosition, rectfarg a, vec2arg delta, rectfarg b, flo
 	return collided;
 }
 
-static void doCollisionDetection( AppData* app, Room* room, CollidableSystem* system,
-                                  GameInputs* inputs, float dt, bool frameBoundary )
+struct CollisionResult {
+	CollidableRef collision;
+	CollisionInfo info;
+	inline explicit operator bool() const { return static_cast< bool >( collision ); }
+};
+static CollisionResult detectCollisionVsTileGrid( CollidableComponent* collidable, vec2arg velocity,
+                                                  TileGrid grid, recti tileGridRegion, float maxT )
 {
 	using namespace GameConstants;
-	assert( room );
 
-	auto grid = room->layers[RL_Main].grid;
+	CollisionResult result = {};
+	result.info.t          = maxT;
+	for( auto y = tileGridRegion.top; y < tileGridRegion.bottom; ++y ) {
+		for( auto x = tileGridRegion.left; x < tileGridRegion.right; ++x ) {
+			auto index = grid.index( x, y );
+			auto tile  = grid[index];
+			if( tile ) {
+				rectf tileBounds   = RectWH( x * TileWidth, y * TileHeight, TileWidth, TileHeight );
+				CollisionInfo info = {};
+				if( testAabVsAab( collidable->position, collidable->aab, velocity, tileBounds,
+				                  result.info.t, &info ) ) {
+					if( info.t < result.info.t ) {
+						result.collision.setTile( index );
+						result.info = info;
+					}
+				}
+			}
+		}
+	}
+	return result;
+}
+static CollisionResult detectCollisionVsDynamics( CollidableComponent* collidable,
+                                                  Array< CollidableComponent > dynamics, float maxT,
+                                                  float dt )
+{
+	using namespace GameConstants;
 
-	auto game = &app->gameState;
+	CollisionResult result = {};
+	result.info.t          = maxT;
+	FOR( dynamic : dynamics ) {
+		CollisionInfo info = {};
+		if( testAabVsAab( collidable->position, collidable->aab, collidable->velocity * dt,
+		                  translate( dynamic.aab, dynamic.position ), result.info.t, &info ) ) {
+			if( info.t < result.info.t ) {
+				result.collision.setDynamic( indexof( dynamics, dynamic ), dynamic.entity );
+				result.info = info;
+			}
+		}
+	}
+	return result;
+}
+
+static recti getSweptTileGridRegion( const CollidableComponent* collidable, vec2arg velocity )
+{
+	using namespace GameConstants;
+	auto currentPlayerAab = translate( collidable->aab, collidable->position );
+	// sweep the bounding box along collidable velocity to get bounding box of the sweep region
+	auto entrySweptAab = sweep( currentPlayerAab, velocity );
+	// turn the swept bounding box to tile grid region that we need to check for collisions
+	// tiles outside this region can't possibly collide with the collidable
+	auto tileGridRegion = RectTiledIndex( entrySweptAab, TileWidth, TileHeight );
+	tileGridRegion      = RectMin( tileGridRegion, recti{0, 0, GAME_MAP_WIDTH, GAME_MAP_HEIGHT} );
+	return tileGridRegion;
+}
+
+static void processCollidables( Array< CollidableComponent > entries, TileGrid grid,
+                                Array< CollidableComponent > dynamics, bool dynamic, float dt,
+                                bool frameBoundary )
+{
+	using namespace GameConstants;
+	constexpr const float eps = 0.00001f;
+
 	// TODO: air movement should be accelerated instead of instant
-	vec2 rightBottom = {0, 0};
-	auto rect        = Rect( -1, 1, 1.0f, 0 );
+	FOR( entry : entries ) {
+		auto oldPosition = entry.position;
 
-	for( auto& entry : system->entries ) {
-		entry.walljumpWindow   = processCountdownTimer( entry.walljumpWindow, dt );
-		entry.walljumpDuration = processCountdownTimer( entry.walljumpDuration, dt );
+		entry.walljumpWindow   = processTimer( entry.walljumpWindow, dt );
+		entry.walljumpDuration = processTimer( entry.walljumpDuration, dt );
 
 		// make entry move away from the wall if a walljump was executed
 		if( entry.walljumpDuration ) {
 			// move away only for 4 frames in total
 			if( entry.walljumpDuration.value > WalljumpMoveThreshold ) {
-				if( entry.walljumpLeft ) {
+				if( entry.walljumpLeft() ) {
 					entry.velocity.x = -MovementSpeed;
 				} else {
 					entry.velocity.x = MovementSpeed;
@@ -1102,86 +1272,86 @@ static void doCollisionDetection( AppData* app, Room* room, CollidableSystem* sy
 			}
 		}
 
-		auto velocity = entry.velocity;
 		// update
-		{
-			auto tileWidth  = 16.0f;
-			auto tileHeight = 16.0f;
-
-			if( frameBoundary ) {
-				if( entry.groundedTile < 0 ) {
-					entry.velocity.y += Gravity;
-				}
+		if( frameBoundary ) {
+			if( !entry.grounded || entry.movement != CollidableMovement::Grounded ) {
+				entry.velocity.y += Gravity * entry.gravityModifier;
 			}
+		}
+		auto oldVelocity = entry.velocity;
 
-			processSpatialState( &entry, dt );
+		processSpatialState( &entry, dt );
 
-			auto vdt        = dt;
-			recti mapBounds = {0, 0, GAME_MAP_WIDTH, GAME_MAP_HEIGHT};
+		auto vdt        = dt;
+		recti mapBounds = {0, 0, GAME_MAP_WIDTH, GAME_MAP_HEIGHT};
 
-			// find position of gap and whether we should squeeze into it this frame
-			if( velocity.x != 0 && velocity.y != 0 ) {
-				auto entryGridX = (int32)floor( entry.position.x / tileWidth );
-				auto entryGridY = (int32)floor( entry.position.y / tileHeight );
-				auto entryGridYNext =
-				    (int32)floor( ( entry.position.y + entry.velocity.y * vdt ) / tileHeight );
-				if( entryGridY != entryGridYNext
-				    && ( entryGridY >= 0 && entryGridY < GAME_MAP_HEIGHT ) ) {
-					if( velocity.y > 0 ) {
-						++entryGridY;
-						++entryGridYNext;
+		auto isGroundBased = entry.movement == CollidableMovement::Grounded
+		                     && floatEqSoft( entry.bounceModifier, 1.0f );
+		// find position of gap and whether we should squeeze into it this frame
+		// entry must have ground based movement and bounceModifier of 1 (sliding behavior) for
+		// gap fitting
+		if( isGroundBased && oldVelocity.x != 0 && oldVelocity.y != 0 ) {
+			auto entryGridX = (int32)floor( entry.position.x / TileWidth );
+			auto entryGridY = (int32)floor( entry.position.y / TileHeight );
+			auto entryGridYNext =
+			    (int32)floor( ( entry.position.y + entry.velocity.y * vdt ) / TileHeight );
+			if( entryGridY != entryGridYNext
+			    && ( entryGridY >= 0 && entryGridY < GAME_MAP_HEIGHT ) ) {
+				if( oldVelocity.y > 0 ) {
+					++entryGridY;
+					++entryGridYNext;
+				}
+
+				bool gapExists = false;
+				int32 gapTileIndex;
+				int32 gapTileX = entryGridX;
+				int32 gapTileY = entryGridY;
+				if( oldVelocity.x < 0 ) {
+					gapTileX -= 1;
+				} else {
+					gapTileX += 1;
+				}
+				if( gapTileX >= 0 && gapTileX < GAME_MAP_WIDTH ) {
+					int32 step = 1;
+					if( oldVelocity.y < 0 ) {
+						step = -1;
 					}
-
-					bool gapExists = false;
-					int32 gapTileIndex;
-					int32 gapTileX = entryGridX;
-					int32 gapTileY = entryGridY;
-					if( velocity.x < 0 ) {
-						gapTileX -= 1;
-					} else {
-						gapTileX += 1;
-					}
-					if( gapTileX >= 0 && gapTileX < GAME_MAP_WIDTH ) {
-						int32 step = 1;
-						if( velocity.y < 0 ) {
-							step = -1;
+					for( gapTileY = entryGridY; gapTileY != entryGridYNext; gapTileY += step ) {
+						if( gapTileY < 0 || gapTileY >= GAME_MAP_HEIGHT ) {
+							continue;
 						}
-						for( gapTileY = entryGridY; gapTileY != entryGridYNext; gapTileY += step ) {
-							if( gapTileY < 0 || gapTileY >= GAME_MAP_HEIGHT ) {
+						gapTileIndex = grid.index( gapTileX, gapTileY );
+						auto gap     = grid[gapTileIndex];
+						if( !gap ) {
+							auto neighborTileX = gapTileX;
+							auto neighborTileY = gapTileY;
+							if( oldVelocity.y > 0 ) {
+								neighborTileY -= 1;
+							} else {
+								neighborTileY += 1;
+							}
+							if( !isPointInside( mapBounds, neighborTileX, neighborTileY ) ) {
 								continue;
 							}
-							gapTileIndex = grid.index( gapTileX, gapTileY );
-							auto gap     = grid[gapTileIndex];
-							if( !gap ) {
-								auto neighborTileX = gapTileX;
-								auto neighborTileY = gapTileY;
-								if( velocity.y > 0 ) {
-									neighborTileY -= 1;
-								} else {
-									neighborTileY += 1;
-								}
-								if( !isPointInside( mapBounds, neighborTileX, neighborTileY ) ) {
-									continue;
-								}
-								auto neighborIndex = grid.index( neighborTileX, neighborTileY );
-								auto neighbor      = grid[neighborIndex];
-								// check whether neighbor is solid
-								if( neighbor ) {
-									// gap exists and is valid candidate for squeezing in
-									gapExists = true;
-									break;
-								}
+							auto neighborIndex = grid.index( neighborTileX, neighborTileY );
+							auto neighbor      = grid[neighborIndex];
+							// check whether neighbor is solid
+							if( neighbor ) {
+								// gap exists and is valid candidate for squeezing in
+								gapExists = true;
+								break;
 							}
 						}
 					}
+				}
 
-					if( gapExists ) {
-						rectf gapBounds = RectWH( gapTileX * tileWidth, gapTileY * tileHeight,
-						                          tileWidth, tileHeight );
+				if( gapExists ) {
+					rectf gapBounds = RectWH( gapTileX * TileWidth, gapTileY * TileHeight,
+					                          TileWidth, TileHeight );
 #if 0
 						auto nextPlayerAab =
 						    translate( entry.aab, entry.position + entry.velocity * vdt );
-						assert( abs( velocity.x ) <= tileWidth );
+						assert( abs( velocity.x ) <= TileWidth );
 
 						auto currentPlayerAab = translate( entry.aab, entry.position );
 						auto yDelta = gapBounds.top - currentPlayerAab.top;
@@ -1201,137 +1371,259 @@ static void doCollisionDetection( AppData* app, Room* room, CollidableSystem* sy
 						auto ratio              = deltaLength / velocityMagnitude;
 						vdt -= ratio;
 #else
-						// instead of calculating velocity deltas, calculate t value of how
-						// much to apply velocity to be inside gap
-						auto yDelta = gapBounds.top - ( entry.aab.top + entry.position.y );
-						auto t      = yDelta / velocity.y;
-						entry.position += velocity * t;
-						vdt -= t;
+					// instead of calculating velocity deltas, calculate t value of how
+					// much to apply velocity to be inside gap
+					auto yDelta = gapBounds.top - ( entry.aab.top + entry.position.y );
+					auto t      = yDelta / oldVelocity.y;
+					entry.position += oldVelocity * t;
+					vdt -= t;
 #endif
-					}
 				}
 			}
+		}
 
-			// collision detection begins here
+		// collision detection begins here
+		auto velocity = entry.velocity * vdt;
 
-			// broadphase
+		// broadphase
+		// get the region of tiles that we actually touch when moving along velocity
+		auto tileGridRegion = getSweptTileGridRegion( &entry, velocity );
 
-			auto currentPlayerAab = translate( entry.aab, entry.position );
-			// sweep the bounding box along entry velocity to get bounding box of the sweep region
-			auto entrySweptAab = sweep( currentPlayerAab, entry.velocity * vdt );
-			// turn the swept bounding box to tile grid region that we need to check for collisions
-			// tiles outside this region can't possibly collide with the entry
-			auto tileGridRegion = RectTiledIndex( entrySweptAab, tileWidth, tileHeight );
-			tileGridRegion =
-			    RectMin( tileGridRegion, recti{0, 0, GAME_MAP_WIDTH, GAME_MAP_HEIGHT} );
-
-			// check grounded state of entry
-			if( entry.groundedTile >= 0 ) {
-				assert_init( auto tile = grid[entry.groundedTile], tile );
-				auto p = grid.coordinatesFromIndex( entry.groundedTile );
-				auto tileBounds =
-				    RectWH( p.x * tileWidth, p.y * tileHeight, tileWidth, tileHeight );
-				CollisionInfo info = {};
-				if( !testAabVsAab( entry.position, entry.aab, {0, 1}, tileBounds, 1, &info )
-				    || info.t > SafetyDistance + 0.00001f || info.t < 0 ) {
-					entry.groundedTile = -1;
+		// check grounded state of entry
+		if( entry.grounded ) {
+			switch( entry.grounded.type ) {
+				case CollidableRef::None: {
+					break;
 				}
-				if( entry.groundedTile < 0 ) {
-					auto findNewGround = [&]() {
-						for( int32 y = tileGridRegion.top; y < tileGridRegion.bottom; ++y ) {
-							for( int32 x = tileGridRegion.left; x < tileGridRegion.right; ++x ) {
-								auto index = grid.index( x, y );
-								auto tile  = grid[index];
-								if( tile ) {
-									auto tileBounds = RectWH( x * tileWidth, y * tileHeight,
-									                          tileWidth, tileHeight );
-									CollisionInfo info = {};
-									if( testAabVsAab( entry.position, entry.aab, {0, 1}, tileBounds,
-									                  1, &info ) ) {
-										if( info.normal.y < 0 && info.t >= 0
-										    && info.t < SafetyDistance + 0.00001f ) {
-											entry.position.y += info.t - SafetyDistance;
-											entry.groundedTile = index;
-											return;
-										}
+				case CollidableRef::Tile: {
+					assert_init( auto tile = grid[entry.grounded.index], tile );
+					auto p = grid.coordinatesFromIndex( entry.grounded.index );
+					auto tileBounds =
+					    RectWH( p.x * TileWidth, p.y * TileHeight, TileWidth, TileHeight );
+					CollisionInfo info = {};
+					if( !testAabVsAab( entry.position, entry.aab, {0, 1}, tileBounds, 1, &info )
+					    || info.t > SafetyDistance + eps || info.t < 0 ) {
+						entry.grounded.clear();
+					}
+					break;
+				}
+				case CollidableRef::Dynamic: {
+					auto other         = getDynamicFromCollidableRef( dynamics, entry.grounded );
+					CollisionInfo info = {};
+					if( !other
+					    || !testAabVsAab( entry.position, entry.aab, {0, 1},
+					                      translate( other->aab, other->position ), 1, &info )
+					    || info.t > SafetyDistance + eps || info.t < 0 ) {
+						entry.grounded.clear();
+					}
+					break;
+				}
+					InvalidDefaultCase;
+			}
+			if( !entry.grounded ) {
+				// try and find a static entry as new ground
+				auto findNewStaticGround = [&]() {
+					for( int32 y = tileGridRegion.top; y < tileGridRegion.bottom; ++y ) {
+						for( int32 x = tileGridRegion.left; x < tileGridRegion.right; ++x ) {
+							auto index = grid.index( x, y );
+							auto tile  = grid[index];
+							if( tile ) {
+								auto tileBounds =
+								    RectWH( x * TileWidth, y * TileHeight, TileWidth, TileHeight );
+								CollisionInfo info = {};
+								if( testAabVsAab( entry.position, entry.aab, {0, 1}, tileBounds, 1,
+								                  &info ) ) {
+									if( info.normal.y < 0 && info.t >= 0
+									    && info.t < SafetyDistance + eps ) {
+										entry.position.y += info.t - SafetyDistance;
+										entry.grounded.setTile( index );
+										return;
 									}
 								}
 							}
 						}
-					};
-					findNewGround();
-				}
-
-				if( entry.groundedTile < 0 ) {
-					setSpatialState( &entry, SpatialState::FallingOff );
-				}
+					}
+				};
+				findNewStaticGround();
 			}
-
-			float remaining = 1;
-			do {
-				float t                 = remaining;
-				vec2 normal             = {};
-				vec2 push               = {};
-				int32 collidedTileIndex = 0;
-				bool collided           = false;
-				for( int32 y = tileGridRegion.top; y < tileGridRegion.bottom; ++y ) {
-					for( int32 x = tileGridRegion.left; x < tileGridRegion.right; ++x ) {
-						auto index = grid.index( x, y );
-						auto tile  = grid[index];
-						if( tile ) {
-							rectf tileBounds =
-							    RectWH( x * tileWidth, y * tileHeight, tileWidth, tileHeight );
-							CollisionInfo info = {};
-							if( testAabVsAab( entry.position, entry.aab, entry.velocity * vdt,
-							                  tileBounds, t, &info ) ) {
-								if( info.t < t ) {
-									collided          = true;
-									t                 = info.t;
-									collidedTileIndex = index;
-									normal            = info.normal;
-									push              = info.push;
-								}
+			if( !entry.grounded ) {
+				// try and find a dynamic entry as new ground
+				auto findNewDynamicGround = [&]() {
+					FOR( other : dynamics ) {
+						if( &entry == &other ) {
+							continue;
+						}
+						CollisionInfo info = {};
+						if( testAabVsAab( entry.position, entry.aab, {0, 1},
+						                  translate( other.aab, other.position ), 1, &info ) ) {
+							if( info.normal.y < 0 && info.t >= 0
+							    && info.t < SafetyDistance + eps ) {
+								entry.position.y += info.t - SafetyDistance;
+								entry.grounded.setDynamic( indexof( dynamics, other ),
+								                           other.entity );
+								return;
 							}
 						}
 					}
+				};
+				findNewDynamicGround();
+			}
+
+			if( !entry.grounded ) {
+				setSpatialState( &entry, SpatialState::FallingOff );
+			}
+		}
+
+		if( entry.grounded && entry.grounded.type == CollidableRef::Dynamic ) {
+			if( auto dynamicGround = getDynamicFromCollidableRef( dynamics, entry.grounded ) ) {
+				velocity += dynamicGround->positionDelta;
+			}
+		}
+		// recalculate tileGridRegion with new velocity
+		tileGridRegion = getSweptTileGridRegion( &entry, velocity );
+
+		constexpr const auto maxIterations = 4;
+		float remaining                    = 1;
+		for( auto iterations = 0; iterations < maxIterations && remaining > 0.0f; ++iterations ) {
+			auto collision = detectCollisionVsTileGrid( &entry, velocity, grid,
+			                                            tileGridRegion, remaining );
+			if( !dynamic && ( !collision || collision.info.t > 0 ) ) {
+				auto dynamicCollision =
+				    detectCollisionVsDynamics( &entry, dynamics, remaining, vdt );
+				if( !collision
+				    || ( dynamicCollision && dynamicCollision.info.t < collision.info.t ) ) {
+					if( dynamicCollision.info.t < 0 ) {
+						// calculate max movement in given push direction by doing another round of
+						// tile grid collision detection
+						auto safety      = dynamicCollision.info.normal * SafetyDistance;
+						auto velocity    = dynamicCollision.info.push + safety;
+						auto sweptRegion = getSweptTileGridRegion( &entry, velocity );
+						auto maxMovementCollision =
+						    detectCollisionVsTileGrid( &entry, velocity, grid, sweptRegion, 1 );
+						if( maxMovementCollision ) {
+							if( maxMovementCollision.info.t > 0 ) {
+								// TODO: we are being squished between dynamic and tile, handle?
+
+								collision = dynamicCollision;
+								auto newSafety = maxMovementCollision.info.normal * SafetyDistance;
+								// recalculate push by taking into account the old and new
+								// safetyDistances
+								collision.info.push =
+								    velocity * maxMovementCollision.info.t - safety + newSafety;
+							} else {
+								InvalidCodePath();
+							}
+						} else {
+							collision = dynamicCollision;
+						}
+					} else {
+						collision = dynamicCollision;
+					}
 				}
-				if( !collided && !floatEqZero( entry.velocity.x ) ) {
-					entry.walljumpWindow = {0};
+			}
+
+			auto normal = collision.info.normal;
+			auto t      = collision.info.t;
+			if( entry.useForcedNormal() ) {
+				normal = entry.forcedNormal;
+				if( collision.info.normal.x < 0 ) {
+					normal.x = -normal.x;
 				}
-				if( t > 0 ) {
-					entry.position += entry.velocity * vdt * t;
-					if( collided ) {
+				if( collision.info.normal.y < 0 ) {
+					normal.y = -normal.y;
+				}
+			}
+			if( !collision && !floatEqZero( entry.velocity.x ) ) {
+				entry.walljumpWindow = {0};
+			}
+			if( t > 0 ) {
+				bool processCollision = true;
+				if( isGroundBased ) {
+					// check whether we just fell off and are trying to get back on top of previous
+					// ground
+					if( entry.spatialState == SpatialState::FallingOff
+					    && !floatEqZero( velocity.x ) && velocity.y > 0 ) {
+
+						// TODO: implement
+					}
+				}
+
+				if( processCollision ) {
+					entry.position += velocity * t;
+					if( collision ) {
 						entry.position += normal * SafetyDistance;
 					}
 					remaining -= t;
-				} else {
-					entry.position += push + normal * SafetyDistance;
 				}
-				if( entry.groundedTile < 0 && entry.velocity.y < 0 ) {
-					game->jumpHeight = entry.position.y - game->groundPosition;
+			} else {
+				entry.position += collision.info.push + normal * SafetyDistance;
+			}
+
+			if( normal.y < 0 ) {
+				entry.grounded = collision.collision;
+				setSpatialState( &entry, SpatialState::Grounded );
+			}
+
+#ifdef GAME_DEBUG
+			if( entry.grounded ) {
+				debug_Values->groundPosition = entry.position.y;
+			}
+			if( !entry.grounded && velocity.y < 0 ) {
+				debug_Values->jumpHeight = entry.position.y - debug_Values->groundPosition;
+			}
+			if( normal.y < 0 ) {
+				if( debug_Values->jumpHeight < debug_Values->maxJumpHeight ) {
+					debug_Values->maxJumpHeight = debug_Values->jumpHeight;
 				}
-				if( normal.y < 0 ) {
-					entry.groundedTile = collidedTileIndex;
-					setSpatialState( &entry, SpatialState::Grounded );
-					if( game->jumpHeight < game->maxJumpHeight ) {
-						game->maxJumpHeight = game->jumpHeight;
-					}
-					game->jumpHeightError = abs( game->jumpHeight - game->lastJumpHeight );
-					game->lastJumpHeight  = game->jumpHeight;
+				debug_Values->jumpHeightError =
+				    abs( debug_Values->jumpHeight - debug_Values->lastJumpHeight );
+				debug_Values->lastJumpHeight = debug_Values->jumpHeight;
+			}
+#endif  // defined( GAME_DEBUG )
+
+			// response
+			if( entry.response == CollidableResponse::FullStop ) {
+				if( collision ) {
+					break;
 				}
-				// reflect velocity based on the collision normal
-				entry.velocity = entry.velocity - normal * dot( normal, entry.velocity );
-				if( collided && normal.x != 0 && normal.y == 0 && entry.groundedTile < 0 ) {
-					entry.walljumpLeft   = ( normal.x < 0 );
+			} else if( entry.response == CollidableResponse::Bounce ) {
+				if( collision ) {
+					// reflect velocity based on the collision normal
+					entry.velocity -= entry.bounceModifier * normal * dot( normal, entry.velocity );
+					velocity -= entry.bounceModifier * normal * dot( normal, velocity );
+				}
+				if( collision && normal.x != 0 && normal.y == 0 && !entry.grounded
+				    && ( ( oldVelocity.x >= 0 ) == ( normal.x < 0 ) ) ) {
+
+					setFlagCond( entry.flags, CollidableComponent::WalljumpLeft, ( normal.x < 0 ) );
 					entry.walljumpWindow = {WalljumpWindowDuration};
 				}
 				auto lengthSquared = dot( entry.velocity, entry.velocity );
-				if( t >= 0 && ( t <= 0.000001f || lengthSquared < 0.00001f ) ) {
+				if( t >= 0 && ( t <= 0.000001f || lengthSquared < eps ) ) {
 					break;
 				}
-			} while( remaining > 0 );
+			} else {
+				InvalidCodePath();
+			}
 		}
+		if( remaining > 0.0f ) {
+			entry.position += velocity * remaining;
+		}
+		entry.positionDelta = entry.position - oldPosition;
 	}
+}
+
+static void doCollisionDetection( Room* room, CollidableSystem* system, float dt,
+                                  bool frameBoundary )
+{
+	using namespace GameConstants;
+	assert( room );
+
+	auto grid = room->layers[RL_Main].grid;
+
+	processCollidables( system->dynamicEntries(), grid, {}, true, dt, frameBoundary );
+	processCollidables( system->staticEntries(), grid, system->dynamicEntries(), false, dt,
+	                    frameBoundary );
 }
 
 static StringView detailedDebugOutput( AppData* app, char* buffer, int32 size )
@@ -1341,7 +1633,12 @@ static StringView detailedDebugOutput( AppData* app, char* buffer, int32 size )
 
 	auto info = app->platformInfo;
 
-	builder << "FrameTime: " << info->frameTime << "\nAverage FrameTime:" << info->averageFrameTime
+	builder << "FrameTime: " << info->totalFrameTime
+			<< "\nGameTime: " << info->gameTime
+			<< "\nRenderTime: " << info->renderTime
+	        << "\nAverage FrameTime:" << info->averageFrameTime
+	        << "\nAverage GameTime:" << info->averageGameTime
+	        << "\nAverage RenderTime:" << info->averageRenderTime
 	        << "\nMin FrameTime: " << info->minFrameTime
 	        << "\nMax FrameTime: " << info->maxFrameTime;
 
@@ -1363,9 +1660,9 @@ static StringView detailedDebugOutput( AppData* app, char* buffer, int32 size )
 		builder << "\nReplaying Inputs: " << info->recordingFrame;
 	}
 
-	builder << "\njumpHeight: " << app->gameState.jumpHeight
-	        << "\nmaxJumpHeight: " << app->gameState.maxJumpHeight
-	        << "\nJumpHeightError: " << app->gameState.jumpHeightError;
+	builder << "\njumpHeight: " << debug_Values->jumpHeight
+	        << "\nmaxJumpHeight: " << debug_Values->maxJumpHeight
+	        << "\nJumpHeightError: " << debug_Values->jumpHeightError;
 
 	builder << "\nWallJumpTimer: " << app->gameState.player->walljumpWindow.value
 	        << "\nWallJumpDuration: " << app->gameState.player->walljumpDuration.value;
@@ -1510,7 +1807,7 @@ static void processGameCamera( AppData* app, float dt, bool frameBoundary )
 			auto t            = quadratic( camera->turnTimer.value, 0 );
 			auto dir          = normalize( lerp( t, camera->nextLook, camera->prevLook ) );
 			*camera           = cameraLookDirection( *camera, dir );
-			camera->turnTimer = processCountdownTimer( camera->turnTimer, dt * 0.05f );
+			camera->turnTimer = processTimer( camera->turnTimer, dt * 0.05f );
 			if( !frameBoundary ) {
 				debugPrintln( "camera prev look: {}", camera->prevLook );
 				debugPrintln( "camera next look: {}", camera->nextLook );
@@ -1526,6 +1823,8 @@ static void processGameCamera( AppData* app, float dt, bool frameBoundary )
 static void doGame( AppData* app, GameInputs* inputs, bool focus, float dt, bool frameBoundary,
                     bool enableRender = true )
 {
+	PROFILE_FUNCTION();
+
 	auto renderer = &app->renderer;
 	// auto font      = &app->font;
 	auto game     = &app->gameState;
@@ -1534,7 +1833,6 @@ static void doGame( AppData* app, GameInputs* inputs, bool focus, float dt, bool
 	if( !game->initialized ) {
 		auto allocator             = &app->stackAllocator;
 		app->gameState.tileTexture = app->platform.loadTexture( "Data/Images/texture_map.png" );
-		auto tileTextureMap        = makeDefaultVoxelGridTextureMap( app->gameState.tileTexture );
 		if( loadVoxelCollection( allocator, "Data/voxels/default_tileset.json",
 		                         &app->gameState.tileSet ) ) {
 			app->gameState.tileMesh    = app->gameState.tileSet.frames[0].mesh;
@@ -1549,14 +1847,28 @@ static void doGame( AppData* app, GameInputs* inputs, bool focus, float dt, bool
 		game->collidableSystem = makeCollidableSystem( allocator, maxEntities );
 		game->controlSystem    = makeControlSystem( allocator, maxEntities );
 
-		auto playerHandle = addEntity( &game->entityHandles );
-		game->player      = addCollidableComponent( &game->collidableSystem, playerHandle );
-		game->player->aab = {-6, 0, 6, 26};
+		auto playerHandle      = addEntity( &game->entityHandles );
+		game->player           = addCollidableComponent( &game->collidableSystem, playerHandle );
+		game->player->aab      = {-6, 0, 6, 26};
+		game->player->position = {16 * 2};
+		game->player->movement = CollidableMovement::Grounded;
+		game->player->response = CollidableResponse::Bounce;
 		addControlComponent( &game->controlSystem, playerHandle );
 
-		auto enemyHandle = addEntity( &game->entityHandles );
-		auto enemy       = addCollidableComponent( &game->collidableSystem, enemyHandle );
-		enemy->aab       = {-8, 0, 8, 28};
+		auto addMovingPlatform = [&]( vec2arg pos ) {
+			auto handle        = addEntity( &game->entityHandles );
+			auto platform      = addCollidableComponent( &game->collidableSystem, handle, true );
+			platform->aab      = {-8, 0, 8, 28};
+			platform->position = pos;
+			platform->movement = CollidableMovement::Straight;
+			platform->response = CollidableResponse::Bounce;
+			platform->bounceModifier = 2;
+			platform->setForcedNormal( {1, 0} );
+			platform->velocity        = {1.0f, 0};
+			platform->gravityModifier = 0;
+		};
+		addMovingPlatform( {16 * 3} );
+		addMovingPlatform( {16 * 8} );
 
 		// auto followWidth         = app->width * 0.25f;
 		// auto followHeight        = app->height * 0.25f;
@@ -1600,8 +1912,7 @@ static void doGame( AppData* app, GameInputs* inputs, bool focus, float dt, bool
 	processGameCamera( app, dt, frameBoundary );
 	processControlSystem( &game->controlSystem, &game->collidableSystem, inputs, dt,
 	                      frameBoundary );
-	doCollisionDetection( app, &app->gameState.room, &app->gameState.collidableSystem, inputs, dt,
-	                      frameBoundary );
+	doCollisionDetection( &game->room, &game->collidableSystem, dt, frameBoundary );
 
 	if( enableRender ) {
 		setRenderState( renderer, RenderStateType::Lighting, game->lighting );
@@ -1614,8 +1925,10 @@ static void doGame( AppData* app, GameInputs* inputs, bool focus, float dt, bool
 		renderer->view = cameraTranslation * getViewMatrix( camera );
 
 		const mat4 rotations[] = {
-		    matrixIdentity(), matrixRotationZOrigin( HalfPi32, 8, 8 ),
-		    matrixRotationZOrigin( Pi32, 8, 8 ), matrixRotationZOrigin( Pi32 + HalfPi32, 8, 8 ),
+		    matrixIdentity(),
+		    matrixRotationZOrigin( HalfPi32, 8, 8 ),
+		    matrixRotationZOrigin( Pi32, 8, 8 ),
+		    matrixRotationZOrigin( Pi32 + HalfPi32, 8, 8 ),
 		};
 
 		{
@@ -1720,10 +2033,46 @@ void processIngameLogs( float dt )
 
 const float FrameTimeTarget = 1000.0f / 60.0f;
 
+static void doBlock( Array< ProfilingInfo > infos, ProfilingBlock* block )
+{
+	auto info = &infos[block->infoIndex];
+	debugPrintln( "Event: {{{} {:10} {:.2}%}", info->block, block->duration,
+	              block->absRatio * 100 );
+}
+static void visitBlock( Array< ProfilingInfo > infos, ProfilingBlock* block,
+                        int32 maxDepth = INT32_MAX );
+static void visitBlockChildren( Array< ProfilingInfo > infos, ProfilingBlock* block,
+                                int32 maxDepth )
+{
+	if( maxDepth > 0 ) {
+		doBlock( infos, block );
+	}
+	if( maxDepth > 1 ) {
+		for( auto child = block->child; child; child = child->next ) {
+			visitBlock( infos, child, maxDepth - 1 );
+		}
+	}
+};
+static void visitBlock( Array< ProfilingInfo > infos, ProfilingBlock* block, int32 maxDepth )
+{
+	if( maxDepth <= 0 ) {
+		return;
+	}
+	for( ; block; block = block->next ) {
+		doBlock( infos, block );
+		for( auto child = block->child; child; child = child->next ) {
+			visitBlockChildren( infos, child, maxDepth - 1 );
+		}
+	}
+}
+
 GAME_STORAGE struct RenderCommands* updateAndRender( void* memory, struct GameInputs* inputs,
                                                      float dt );
 UPDATE_AND_RENDER( updateAndRender )
 {
+	GlobalProfilingTable->eventsCount = 0;
+	BEGIN_PROFILING_BLOCK( "updateAndRender" );
+
 	auto app       = (AppData*)memory;
 	auto renderer  = &app->renderer;
 	auto font      = &app->font;
@@ -1805,10 +2154,6 @@ UPDATE_AND_RENDER( updateAndRender )
 	}
 	doTexturePack( app, inputs, app->focus == AppFocus::TexturePack, dt );
 
-	// gui code has to be outside of the frame independent movement code, so that we do not process
-	// inputs twice on frame boundaries
-	showGameDebugGui( app, inputs, true, dt );
-
 	addRenderCommandMesh( renderer, toMesh( debug_MeshStream ) );
 
 	setProjection( renderer, ProjectionType::Orthogonal );
@@ -1838,6 +2183,16 @@ UPDATE_AND_RENDER( updateAndRender )
 			y -= step;
 		}
 	}
+
+	END_PROFILING_BLOCK( "updateAndRender" );
+
+	TEMPORARY_MEMORY_BLOCK( &app->stackAllocator ) {
+		auto state = processProfilingEvents( &app->stackAllocator, GlobalProfilingTable );
+		debugPrintln( "Infos: {}", state.infos.size() );
+		visitBlock( state.infos, state.blocks.head, 2 );
+	}
+
+	showGameDebugGui( app, inputs, true, dt );
 
 	return renderer;
 }

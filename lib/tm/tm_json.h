@@ -1,5 +1,5 @@
 /*
-tm_json.h v.0.1.1b - public domain
+tm_json.h v.0.1.1c - public domain
 written by Tolga Mizrak 2016
 
 no warranty; use at your own risk
@@ -106,6 +106,7 @@ ISSUES
 	- missing documentation and example usage code
 
 HISTORY
+	v0.1.1c 07.11.16 minor edits, no runtime changes
 	v0.1.1b 10.10.16 fixed some warnings when tmj_size_t is signed
 	v0.1.1a 07.10.16 removed usage of unsigned arithmetic when tmj_size_t is signed
 	v0.1.1  13.09.16 changed JsonValue interface to have operator[] overloads for convenience
@@ -1928,10 +1929,7 @@ static tmj_bool jsonParseUnquotedPropertyName( JsonReader* reader, JsonContext c
 		}
 		reader->current.size = (tmj_size_t)( reader->data - reader->current.data );
 		reader->lastToken = JTOK_PROPERTYNAME;
-		if( !jsonParseColon( reader ) ) {
-			return TMJ_FALSE;
-		}
-		return TMJ_TRUE;
+		return jsonParseColon( reader );
 	}
 	return TMJ_FALSE;
 }
@@ -2510,7 +2508,7 @@ tmj_size_t jsonCopyConcatenatedString( JsonStringView str, char* buffer, tmj_siz
 
 JsonStringView jsonAllocateUnescapedString( JsonStackAllocator* allocator, JsonStringView str )
 {
-	JsonStringView result = {0};
+	JsonStringView result = {TMJ_NULL};
 	char* buffer = (char*)jsonAllocate( allocator, str.size, sizeof( char ) );
 	if( buffer ) {
 		result.size = jsonCopyUnescapedString( str, buffer, str.size );
@@ -2526,7 +2524,7 @@ JsonStringView jsonAllocateUnescapedString( JsonStackAllocator* allocator, JsonS
 }
 JsonStringView jsonAllocateConcatenatedString( JsonStackAllocator* allocator, JsonStringView str )
 {
-	JsonStringView result = {0};
+	JsonStringView result = {TMJ_NULL};
 	char* buffer = (char*)jsonAllocate( allocator, str.size, sizeof( char ) );
 	if( buffer ) {
 		result.size = jsonCopyConcatenatedString( str, buffer, str.size );
@@ -3141,7 +3139,7 @@ TMJ_DEF tmj_bool jsonIsString( JsonValueArg value )
 }
 TMJ_DEF JsonObject jsonGetObject( JsonValueArg value )
 {
-	JsonObject result = {0};
+	JsonObject result = {TMJ_NULL};
 	if( TMJ_DEREF( value ).type == JVAL_OBJECT ) {
 		result = TMJ_DEREF( value ).data.object;
 	}
@@ -3150,7 +3148,7 @@ TMJ_DEF JsonObject jsonGetObject( JsonValueArg value )
 TMJ_DEF JsonArray jsonGetArray( JsonValueArg value )
 
 {
-	JsonArray result = {0};
+	JsonArray result = {TMJ_NULL};
 	if( TMJ_DEREF( value ).type == JVAL_ARRAY ) {
 		result = TMJ_DEREF( value ).data.array;
 	}

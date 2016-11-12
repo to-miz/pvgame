@@ -8,7 +8,9 @@ struct JsonWriter {
 
 JsonWriter makeJsonWriter( char* buffer, int32 len )
 {
-	JsonWriter result = {string_builder{buffer, len}};
+	JsonWriter result               = {string_builder{buffer, len}};
+	result.builder.format.precision = 14;  // set floating point precision to highest value, so that
+	                                       // floating point values survive the roundtrip exactly
 	return result;
 }
 
@@ -111,7 +113,7 @@ void writeValue( JsonWriter* writer, StringView value )
 	FOR( c : value ) {
 		switch( c ) {
 			case '\n': {
-				writer->builder << "\\n";
+				writer->builder << '\n';
 				break;
 			}
 			case '\\': {

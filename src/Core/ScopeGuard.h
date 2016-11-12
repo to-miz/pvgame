@@ -9,7 +9,10 @@ class ScopeGuardBase
 {
 protected:
 	ScopeGuardBase() = default;
-	ScopeGuardBase( ScopeGuardBase&& other ) : active( other.active ) { other.active = false; }
+	ScopeGuardBase( ScopeGuardBase&& other ) noexcept : active( other.active )
+	{
+		other.active = false;
+	}
 
 public:
 	inline void dismiss() { active = false; }
@@ -25,7 +28,7 @@ public:
 	explicit ScopeGuard( Func&& func ) : func( std::move( func ) ) {}
 	explicit ScopeGuard( const Func& func ) : func( func ) {}
 
-	ScopeGuard( ScopeGuard&& other )
+	ScopeGuard( ScopeGuard&& other ) noexcept
 	: ScopeGuardBase( std::move( other ) ), func( std::move( other.func ) )
 	{
 	}

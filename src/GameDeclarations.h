@@ -48,9 +48,15 @@ struct PlatformRemapInfo {
 };
 
 struct PlatformInfo {
-	float frameTime;
-	float fps;
+	float totalFrameTime;  // total frame time
+	float gameTime;        // amount of time we spent on updating game
+	float renderTime;      // amount of time we spent on rendering
+
 	float averageFrameTime;
+	float averageGameTime;
+	float averageRenderTime;
+
+	float fps;
 	float averageFps;
 	float minFrameTime;
 	float minFps;
