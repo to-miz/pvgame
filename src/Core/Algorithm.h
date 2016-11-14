@@ -63,6 +63,7 @@ void insertion_sort( RandomAccessIterator first, RandomAccessIterator last, Pred
 	if( first != last ) {
 		for( auto next = first + 1; next < last; ++next ) {
 			// find insertion pos
+			// no binary search, because insertion sort is only used on small arrays
 			auto dest = first;
 			auto value = std::move( *next );
 			while( pred( *dest, value ) ) {

@@ -410,7 +410,7 @@ void win32Remap( PlatformRemapInfo* info )
 
 int CALLBACK WinMain( HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine, int nCmdShow )
 {
-	size_t memorySize = megabytes( 10 );
+	size_t memorySize = megabytes( 20 );
 	auto memory = VirtualAlloc( nullptr, memorySize, MEM_COMMIT | MEM_RESERVE, PAGE_READWRITE );
 	if( !memory ) {
 		LOG( ERROR, "Out of memory" );
@@ -475,8 +475,13 @@ int CALLBACK WinMain( HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdL
 	}
 	SetWindowLongPtrW( hwnd, GWLP_USERDATA, (LONG_PTR)&( Win32AppContext.window ) );
 
+	auto platformMemorySize = megabytes( 10 );
+	auto platformMemory =
+	    VirtualAlloc( nullptr, platformMemorySize, MEM_COMMIT | MEM_RESERVE, PAGE_READWRITE );
+	auto platformAllocator = makeStackAllocator( platformMemory, platformMemorySize );
+
 	auto hdc           = GetDC( hwnd );
-	auto openGlContext = win32CreateOpenGlContext( hdc );
+	auto openGlContext = win32CreateOpenGlContext( &platformAllocator, hdc );
 	if( !openGlContext.renderContext ) {
 		auto error = GetLastError();
 		switch( error ) {
@@ -501,8 +506,6 @@ int CALLBACK WinMain( HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdL
 		LOG( ERROR, "Failed to initialize OpenGL" );
 		return 0;
 	}
-	const int32 MaxOpenGlMeshCount = 10;
-	openGlContext.meshes = {new OpenGlMesh[MaxOpenGlMeshCount], 0, MaxOpenGlMeshCount};
 	Win32AppContext.openGlContext = &openGlContext;
 	ShowWindow( hwnd, SW_SHOW );
 

@@ -777,7 +777,7 @@ static void doVoxelGui( AppData* app, GameInputs* inputs, bool focus, float dt )
 	auto doButtons = [voxel]( StringView faceLabel, VoxelFaceValues face ) {
 		imguiSameLine( 8 );
 		imguiText( faceLabel, 35, 16 );
-		
+
 		auto innerHandle = imguiMakeHandle( &voxel->placingCell, ImGuiControlType::Button );
 		innerHandle.shortIndex = safe_truncate< uint8 >( valueof( face ) );
 		auto cell              = voxel->placingCell;

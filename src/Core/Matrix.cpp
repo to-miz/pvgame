@@ -25,7 +25,7 @@ mat4 matrixScale( float x, float y, float z )
 				   0, 0, 0, 1};
 	return result;
 }
-mat4 matrixRotationMatrix( float x, float y, float z )
+mat4 matrixRotation( float x, float y, float z )
 {
 	mat4 result;
 	auto sc = simd::sincos( x, y, z, 0 );

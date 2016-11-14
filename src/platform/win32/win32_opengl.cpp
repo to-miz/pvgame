@@ -450,6 +450,7 @@ MeshId win32UploadMeshToGpu( Mesh mesh )
 {
 	MeshId result = {};
 	auto context  = Win32AppContext.openGlContext;
+	assert( context->meshes.remaining() );
 	if( context->meshes.remaining() ) {
 		auto dest = context->meshes.emplace_back();
 		result.id = context->meshes.size();
@@ -666,7 +667,7 @@ static GLuint win32CreatePlainWhiteTexture()
 	return win32UploadImageToGpu( image );
 }
 
-static OpenGlContext win32CreateOpenGlContext( HDC hdc )
+static OpenGlContext win32CreateOpenGlContext( StackAllocator* allocator, HDC hdc )
 {
 	// TODO: check gpu capabilities
 	// TODO: GL_MAX_COMBINED_TEXTURE_IMAGE_UNITS needs to be at least 2
@@ -674,6 +675,9 @@ static OpenGlContext win32CreateOpenGlContext( HDC hdc )
 	assert( wglCreateContextAttribsARB );
 	assert( wglChoosePixelFormatARB );
 	OpenGlContext result = {};
+
+	const int32 MaxOpenGlMeshCount = 100;
+	result.meshes                  = makeUArray( allocator, OpenGlMesh, MaxOpenGlMeshCount );
 
 	const int pfAttribList[] = {
 		WGL_DRAW_TO_WINDOW_ARB, GL_TRUE,
