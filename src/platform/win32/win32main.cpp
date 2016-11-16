@@ -514,7 +514,8 @@ int CALLBACK WinMain( HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdL
 	GameInputs inputs = {};
 	GameInputs platformInputs = {};
 
-	float targetTime = 1000.0f / 60.0f;
+	// setting maxElapsedTime to a bigger value messes up stepping
+	float maxElapsedTime = ( 1000.0f / 60.0f ) /** 1.5f*/;
 	double frameTimeAcc = 0;
 	double gameTimeAcc = 0;
 	double renderTimeAcc = 0;
@@ -599,8 +600,8 @@ int CALLBACK WinMain( HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdL
 		// do stuff
 		// TODO: is this fine for production?
 		float clampedElapsedTime = (float)elapsedTime;
-		if( clampedElapsedTime > targetTime ) {
-			clampedElapsedTime = targetTime;
+		if( clampedElapsedTime > maxElapsedTime ) {
+			clampedElapsedTime = maxElapsedTime;
 		}
 
 		if( isHotkeyPressed( &platformInputs, KC_Key_P, KC_Control ) ) {

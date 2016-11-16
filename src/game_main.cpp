@@ -78,12 +78,13 @@ namespace GameConstants
 {
 constexpr const float Gravity                = 0.1f;
 constexpr const float MovementSpeed          = 1.1f;
-constexpr const float JumpingSpeed           = -2.8f;
-constexpr const float WalljumpingSpeed       = -2.8f;
+constexpr const float JumpingSpeed           = -3.3f;
+constexpr const float WalljumpingSpeed       = -3.3f;
 constexpr const float WalljumpMaxDuration    = 8;
 constexpr const float WalljumpFixDuration    = 4;
 constexpr const float WalljumpWindowDuration = 10;
 constexpr const float WalljumpMoveThreshold  = WalljumpMaxDuration - WalljumpFixDuration;
+constexpr const float WallslideFrictionCoefficient = 0.05f;
 
 constexpr const float TileWidth  = 16.0f;
 constexpr const float TileHeight = 16.0f;
@@ -251,6 +252,7 @@ struct VoxelCollection {
 	struct FrameInfo {
 		VoxelGridTextureMap textureMap;
 		recti textureRegion[VF_Count];
+		float frictionCoefficient;
 	};
 
 	struct Animation {
@@ -263,6 +265,37 @@ struct VoxelCollection {
 	Array< FrameInfo > frameInfos;
 	Array< Animation > animations;
 	string voxelsFilename;
+};
+
+struct TileInfo {
+	float frictionCoefficient;
+};
+struct TileSet {
+	VoxelCollection voxels;
+	Array< TileInfo > infos;
+};
+
+struct GameTile {
+	uint8 collection;
+	uint8 rotation;
+	trange< uint8 > frames;
+	inline explicit operator bool() const { return length( frames ) != 0; }
+};
+
+enum RoomLayerValues {
+	RL_Main,
+	RL_Back,
+	RL_Front,
+
+	RL_Count
+};
+typedef Grid< GameTile > TileGrid;
+struct Room {
+	struct Layer {
+		TileGrid grid;
+	};
+	Layer layers[RL_Count];
+	TileSet* tileSet;
 };
 
 rangeu16 getAnimationRange( VoxelCollection* collection, StringView name )
@@ -361,18 +394,26 @@ struct CollidableComponent {
 	vec2 position;
 	vec2 velocity;
 	rectf aab;
-	CollidableRef grounded;
+	CollidableRef grounded;             // collidable we are standing on
+	CollidableRef wallslideCollidable;  // collidable we are wallsliding against
 	vec2 positionDelta;
 
 	CountdownTimer walljumpWindow;    // time window in which we can perform a walljump
 	CountdownTimer walljumpDuration;  // how long the player can't move towards the wall
 
 	SpatialState spatialState;
-	float spatialStateTimer;
+	float spatialStateTimer;  // how long we have been in the current state
 
 	float gravityModifier;
 	float bounceModifier;  // value between 0 and 2 to specify bouncing behavior (0 = keep velocity
 	                       // on collision, 1 = slide along edge on collision, 2 = reflect)
+	float airFrictionCoeffictient;
+	float wallslideFrictionCoefficient;
+
+	CountdownTimer animationLockTimer;
+	float animationSpeed;
+	float currentFrame;
+	rangeu16 currentAnimation;
 
 	EntityHandle entity;
 
@@ -380,6 +421,7 @@ struct CollidableComponent {
 	CollidableResponse response;
 	vec2 forcedNormal;
 	uint8 flags;
+	CollidableFaceDirection prevFaceDirection;
 	CollidableFaceDirection faceDirection;
 
 	enum Flags : uint8 {
@@ -446,6 +488,50 @@ CollidableComponent* getDynamicFromCollidableRef( Array< CollidableComponent > d
 	auto handle = ref.handle;
 	return find_first_where( dynamics, it.entity == handle );
 }
+float getFrictionCoefficitonFromCollidableRef( Array< CollidableComponent > dynamics, TileGrid grid,
+                                               Array< TileInfo > infos, CollidableRef ref )
+{
+	switch( ref.type ) {
+		case CollidableRef::None: {
+			return 0;
+		}
+		case CollidableRef::Tile: {
+			auto tile = grid[ref.index];
+			if( tile ) {
+				return infos[tile.frames.min].frictionCoefficient;
+			}
+			break;
+		}
+		case CollidableRef::Dynamic: {
+			return dynamics[ref.index].wallslideFrictionCoefficient;
+		}
+		InvalidDefaultCase;
+	}
+	return 0;
+}
+rectf getBoundsFromCollidableRef( Array< CollidableComponent > dynamics, TileGrid grid,
+                                  CollidableRef ref )
+{
+	rectf result = {};
+	switch( ref.type ) {
+		case CollidableRef::None: {
+			break;
+		}
+		case CollidableRef::Tile: {
+			auto pos = grid.coordinatesFromIndex( ref.index );
+			using namespace GameConstants;
+			result = RectWH( pos.x * TileWidth, pos.y * TileHeight, TileWidth, TileHeight );
+			break;
+		}
+		case CollidableRef::Dynamic: {
+			auto dynamic = &dynamics[ref.index];
+			result = translate( dynamic->aab, dynamic->position );
+			break;
+		}
+		InvalidDefaultCase;
+	}
+	return result;
+}
 
 struct CollidableSystem {
 	UArray< CollidableComponent > entries;
@@ -482,10 +568,12 @@ CollidableComponent* addCollidableComponent( CollidableSystem* system, EntityHan
 			++system->entriesCount;
 		}
 		result->grounded.clear();
-		result->entity          = entity;
+		result->entity = entity;
 		setFlagCond( result->flags, CollidableComponent::Dynamic, dynamic );
 		result->gravityModifier = 1;
 		result->bounceModifier  = 1;
+		result->animationSpeed  = 0.1f;
+		result->airFrictionCoeffictient = 0.0f;
 	}
 	return result;
 }
@@ -579,7 +667,8 @@ void processControlSystem( ControlSystem* control, CollidableSystem* collidableS
 			if( frameBoundary && entry.jumpInputBuffer && isSpatialStateWalljumpable( collidable )
 			    && collidable->walljumpWindow ) {
 
-				collidable->walljumpWindow   = {0};
+				collidable->walljumpWindow   = {};
+				collidable->wallslideCollidable.clear();
 				collidable->velocity.y       = WalljumpingSpeed;
 				collidable->walljumpDuration = {WalljumpMaxDuration};
 				LOG( INFORMATION, "Walljump attempted" );
@@ -614,28 +703,6 @@ struct GameDebugGuiState {
 	bool show;
 	float fadeProgress;
 	bool initialized;
-};
-
-struct GameTile {
-	uint8 collection;
-	uint8 rotation;
-	trange< uint8 > frames;
-	inline explicit operator bool() const { return length( frames ) != 0; }
-};
-
-enum RoomLayerValues {
-	RL_Main,
-	RL_Back,
-	RL_Front,
-
-	RL_Count
-};
-typedef Grid< GameTile > TileGrid;
-struct Room {
-	struct Layer {
-		TileGrid grid;
-	};
-	Layer layers[RL_Count];
 };
 
 #define GAME_MAP_WIDTH 16
@@ -685,9 +752,10 @@ Room makeRoom( StackAllocator* allocator, int32 width, int32 height )
 	}
 	return result;
 }
-static Room debugGetRoom( StackAllocator* allocator )
+static Room debugGetRoom( StackAllocator* allocator, TileSet* tileSet )
 {
 	Room result = makeRoom( allocator, GAME_MAP_WIDTH, GAME_MAP_HEIGHT );
+	result.tileSet = tileSet;
 	auto back   = result.layers[RL_Back].grid;
 	fill( back.data(), {0, 0, 2, 3}, back.size() );
 	auto processLayer = []( TileGrid grid, const int8* map ) {
@@ -770,11 +838,82 @@ const char* HeroAnimationNames[] = {
     "Landing",
 };
 
+rectf gameToScreen( rectfarg rect )
+{
+	rectf result;
+	result.left   = rect.left;
+	result.top    = -rect.top;
+	result.right  = rect.right;
+	result.bottom = -rect.bottom;
+	return result;
+}
+
+struct ParticleSystem {
+	struct Particle {
+		vec2 position;
+		vec2 velocity;
+		float alive;
+		float invAlive;
+	};
+	UArray< Particle > particles;
+};
+
+ParticleSystem makeParticleSystem( StackAllocator* allocator, int32 maxParticles )
+{
+	ParticleSystem result = {};
+	result.particles = makeUArray( allocator, ParticleSystem::Particle, maxParticles );
+	return result;
+}
+void emitParticles( ParticleSystem* system, vec2arg position, int32 count )
+{
+	assert( system );
+	count = min( system->particles.remaining(), count );
+	if( count > 0 ) {
+		auto start = system->particles.size();
+		system->particles.resize( start + count );
+		auto added = makeRangeView( system->particles, start, start + count );
+		FOR( entry : added ) {
+			entry.position       = position;
+			entry.velocity       = {0, -0.1f};
+			const float MaxAlive = 60;
+			entry.alive          = MaxAlive;
+			entry.invAlive       = 1.0f / MaxAlive;
+		}
+	}
+}
+void processParticles( ParticleSystem* system, float dt )
+{
+	auto end = system->particles.end();
+	for( auto it = system->particles.begin(); it != end; ) {
+		it->position += it->velocity * dt;
+		it->alive -= dt;
+		if( it->alive <= 0 ) {
+			it  = unordered_erase( system->particles, it );
+			end = system->particles.end();
+			continue;
+		}
+		++it;
+	}
+}
+void renderParticles( RenderCommands* renderer, ParticleSystem* system )
+{
+	setRenderState( renderer, RenderStateType::DepthTest, false );
+	setTexture( renderer, 0, null );
+	MESH_STREAM_BLOCK( stream, renderer ) {
+		FOR( particle : system->particles ) {
+			stream->color = setAlpha( Color::White, particle.alive * particle.invAlive );
+			rectf rect = {-2, -2, 2, 2};
+			rect = gameToScreen( translate( rect, particle.position ) );
+			pushQuad( stream, rect );
+		}
+	}
+	setRenderState( renderer, RenderStateType::DepthTest, true );
+}
+
 struct GameState {
-	VoxelCollection tileSet;
-	MeshId tileMesh;
-	TextureId tileTexture;
+	TileSet tileSet;
 	HeroVoxelCollection heroVoxelCollection;
+	ParticleSystem particleSystem;
 
 	HandleManager entityHandles;
 	CollidableSystem collidableSystem;
@@ -1026,7 +1165,9 @@ bool loadVoxelCollectionTextureMapping( StackAllocator* allocator, StringView fi
 			auto destInfo  = &out->frameInfos[currentFrame];
 			++currentFrame;
 
-			*destFrame = {};
+			*destFrame                    = {};
+			*destInfo                     = {};
+			destInfo->frictionCoefficient = 1;
 
 			for( auto face = 0; face < VF_Count; ++face ) {
 				auto faceObject = frame[VoxelFaceStrings[face]].getObject();
@@ -1034,6 +1175,7 @@ bool loadVoxelCollectionTextureMapping( StackAllocator* allocator, StringView fi
 				destInfo->textureMap.texture = out->texture;
 				serialize( faceObject["rect"], destInfo->textureRegion[face] );
 				serialize( faceObject["texCoords"], destInfo->textureMap.entries[face].texCoords );
+				destInfo->frictionCoefficient = faceObject["frictionCoefficient"].getFloat( 1 );
 				FOR( vert : destInfo->textureMap.entries[face].texCoords.elements ) {
 					vert.x *= itw;
 					vert.y *= ith;
@@ -1108,6 +1250,18 @@ bool loadHeroVoxelCollection( StackAllocator* allocator, StringView filename,
 	return loadAnimatedVoxelCollection( allocator, filename, &out->voxels,
 	                                    makeArrayView( HeroAnimationNames ),
 	                                    makeArrayView( &out->idle, 12 ) );
+}
+bool loadTileSet( StackAllocator* allocator, StringView filename, TileSet* out ) {
+	if( !loadVoxelCollection( allocator, filename, &out->voxels ) ) {
+		return false;
+	}
+	out->infos = makeArray( allocator, TileInfo, out->voxels.frameInfos.size() );
+	for( auto i = 0; i < out->infos.size(); ++i ) {
+		auto dest = &out->infos[i];
+		*dest = {};
+		dest->frictionCoefficient = out->voxels.frameInfos[i].frictionCoefficient;
+	}
+	return true;
 }
 
 static void processCamera( GameInputs* inputs, GameSettings* settings, Camera* camera, float dt )
@@ -1312,9 +1466,49 @@ static recti getSweptTileGridRegion( const CollidableComponent* collidable, vec2
 	return tileGridRegion;
 }
 
-static void processCollidables( Array< CollidableComponent > entries, TileGrid grid,
-                                Array< CollidableComponent > dynamics, bool dynamic, float dt,
-                                bool frameBoundary )
+CollisionResult findCollision( CollidableComponent* collidable, vec2arg velocity, TileGrid grid,
+                               recti tileGridRegion, Array< CollidableComponent > dynamics,
+                               float maxT, bool dynamic )
+{
+	auto collision = detectCollisionVsTileGrid( collidable, velocity, grid, tileGridRegion, maxT );
+	if( !dynamic && ( !collision || collision.info.t > 0 ) ) {
+		auto dynamicCollision = detectCollisionVsDynamics( collidable, velocity, dynamics, maxT );
+		if( !collision || ( dynamicCollision && dynamicCollision.info.t < collision.info.t ) ) {
+			if( dynamicCollision.info.t < 0 ) {
+				// calculate max movement in given push direction by doing another round of
+				// tile grid collision detection
+				auto safety      = dynamicCollision.info.normal * SafetyDistance;
+				auto adjustedVel = dynamicCollision.info.push + safety;
+				auto sweptRegion = getSweptTileGridRegion( collidable, adjustedVel );
+				auto maxMovementCollision =
+				    detectCollisionVsTileGrid( collidable, adjustedVel, grid, sweptRegion, 1 );
+				if( maxMovementCollision ) {
+					if( maxMovementCollision.info.t > 0 ) {
+						// TODO: we are being squished between dynamic and tile, handle?
+
+						collision      = dynamicCollision;
+						auto newSafety = maxMovementCollision.info.normal * SafetyDistance;
+						// recalculate push by taking into account the old and new
+						// safetyDistances
+						collision.info.push =
+						    adjustedVel * maxMovementCollision.info.t - safety + newSafety;
+					} else {
+						// TODO: we are being squished between dynamic and tile, handle?
+					}
+				} else {
+					collision = dynamicCollision;
+				}
+			} else {
+				collision = dynamicCollision;
+			}
+		}
+	}
+	return collision;
+}
+
+void processCollidables( Array< CollidableComponent > entries, TileGrid grid,
+                         Array< TileInfo > infos, Array< CollidableComponent > dynamics,
+                         bool dynamic, float dt, bool frameBoundary )
 {
 	using namespace GameConstants;
 	constexpr const float eps = 0.00001f;
@@ -1325,6 +1519,16 @@ static void processCollidables( Array< CollidableComponent > entries, TileGrid g
 
 		entry.walljumpWindow   = processTimer( entry.walljumpWindow, dt );
 		entry.walljumpDuration = processTimer( entry.walljumpDuration, dt );
+
+		// animations
+		entry.currentFrame += entry.animationSpeed * dt;
+		if( !entry.grounded ) {
+			entry.animationLockTimer = {};
+		}
+		entry.animationLockTimer = processTimer( entry.animationLockTimer, dt );
+		if( !dynamic ) {
+			debugPrintln( "Anim Lock Time {}", entry.animationLockTimer.value );
+		}
 
 		// make entry move away from the wall if a walljump was executed
 		if( entry.walljumpDuration ) {
@@ -1342,6 +1546,13 @@ static void processCollidables( Array< CollidableComponent > entries, TileGrid g
 		if( frameBoundary ) {
 			if( !entry.grounded || entry.movement != CollidableMovement::Grounded ) {
 				entry.velocity.y += Gravity * entry.gravityModifier;
+				entry.velocity.y -= entry.airFrictionCoeffictient * entry.velocity.y;
+				if( entry.wallslideCollidable && entry.velocity.y > 0 ) {
+					// apply wallslide friction only if falling
+					auto friction = getFrictionCoefficitonFromCollidableRef(
+					    dynamics, grid, infos, entry.wallslideCollidable );
+					entry.velocity.y -= friction * WallslideFrictionCoefficient * entry.velocity.y;
+				}
 			}
 		}
 		auto oldVelocity = entry.velocity;
@@ -1549,52 +1760,10 @@ static void processCollidables( Array< CollidableComponent > entries, TileGrid g
 		// recalculate tileGridRegion with new velocity
 		tileGridRegion = getSweptTileGridRegion( &entry, velocity );
 
-		auto getNextCollision = [](
-		    CollidableComponent* collidable, vec2arg velocity, TileGrid grid, recti tileGridRegion,
-		    Array< CollidableComponent > dynamics, float maxT, bool dynamic ) {
-			auto collision =
-			    detectCollisionVsTileGrid( collidable, velocity, grid, tileGridRegion, maxT );
-			if( !dynamic && ( !collision || collision.info.t > 0 ) ) {
-				auto dynamicCollision =
-				    detectCollisionVsDynamics( collidable, velocity, dynamics, maxT );
-				if( !collision
-				    || ( dynamicCollision && dynamicCollision.info.t < collision.info.t ) ) {
-					if( dynamicCollision.info.t < 0 ) {
-						// calculate max movement in given push direction by doing another round of
-						// tile grid collision detection
-						auto safety      = dynamicCollision.info.normal * SafetyDistance;
-						auto adjustedVel = dynamicCollision.info.push + safety;
-						auto sweptRegion = getSweptTileGridRegion( collidable, adjustedVel );
-						auto maxMovementCollision = detectCollisionVsTileGrid(
-						    collidable, adjustedVel, grid, sweptRegion, 1 );
-						if( maxMovementCollision ) {
-							if( maxMovementCollision.info.t > 0 ) {
-								// TODO: we are being squished between dynamic and tile, handle?
-
-								collision      = dynamicCollision;
-								auto newSafety = maxMovementCollision.info.normal * SafetyDistance;
-								// recalculate push by taking into account the old and new
-								// safetyDistances
-								collision.info.push =
-								    adjustedVel * maxMovementCollision.info.t - safety + newSafety;
-							} else {
-								InvalidCodePath();
-							}
-						} else {
-							collision = dynamicCollision;
-						}
-					} else {
-						collision = dynamicCollision;
-					}
-				}
-			}
-			return collision;
-		};
-
 		constexpr const auto maxIterations = 4;
 		float remaining                    = 1;
 		for( auto iterations = 0; iterations < maxIterations && remaining > 0.0f; ++iterations ) {
-			auto collision = getNextCollision( &entry, velocity, grid, tileGridRegion, dynamics,
+			auto collision = findCollision( &entry, velocity, grid, tileGridRegion, dynamics,
 			                                   remaining, dynamic );
 
 			auto normal = collision.info.normal;
@@ -1667,8 +1836,10 @@ static void processCollidables( Array< CollidableComponent > entries, TileGrid g
 				if( collision && normal.x != 0 && normal.y == 0 && !entry.grounded
 				    && ( ( oldVelocity.x >= 0 ) == ( normal.x < 0 ) ) ) {
 
+					// we are wallsliding
 					setFlagCond( entry.flags, CollidableComponent::WalljumpLeft, ( normal.x < 0 ) );
 					entry.walljumpWindow = {WalljumpWindowDuration};
+					entry.wallslideCollidable = collision.collision;
 				}
 				auto lengthSquared = dot( entry.velocity, entry.velocity );
 				if( t >= 0 && ( t <= 0.000001f || lengthSquared < eps ) ) {
@@ -1683,24 +1854,41 @@ static void processCollidables( Array< CollidableComponent > entries, TileGrid g
 		}
 		entry.positionDelta = entry.position - oldPosition;
 
+		if( !entry.walljumpWindow ) {
+			entry.wallslideCollidable.clear();
+		}
 		if( entry.grounded ) {
 			entry.walljumpWindow = {};
+			entry.wallslideCollidable.clear();
 		}
 		// check that we are upholding safety distance to collidables in velocity direction
 		if( isGroundBased ) {
-			if( !floatEqZero( entry.velocity.x ) ) {
+			auto wasAlreadySliding = (bool)entry.wallslideCollidable;
+			if( !floatEqZero( entry.velocity.x ) || entry.wallslideCollidable ) {
 				vec2 searchDir = {1, 0};
 				if( entry.velocity.x < 0 ) {
 					searchDir = {-1, 0};
 				}
+				if( entry.wallslideCollidable ) {
+					if( !entry.walljumpLeft() ) {
+						searchDir = {-1, 0};
+					}
+				}
 				auto region = getSweptTileGridRegion( &entry, searchDir );
 				auto collision =
-				    getNextCollision( &entry, searchDir, grid, region, dynamics, 1, dynamic );
+				    findCollision( &entry, searchDir, grid, region, dynamics, 1, dynamic );
 				if( !collision || collision.info.normal.y != 0 ) {
+					// clear wallsliding
 					entry.walljumpWindow = {};
+					entry.wallslideCollidable.clear();
 				} else {
-					if( !entry.grounded ) {
+					if( !entry.grounded && wasAlreadySliding ) {
+						// reset wallsliding
+						// TODO: do we want to reset the walljump duration here?
+						// that means wallsliding will behave like a toggle (not requiring holding a
+						// button down)
 						entry.walljumpWindow = {WalljumpWindowDuration};
+						entry.wallslideCollidable = collision.collision;
 					}
 				}
 				// make sure that we are SafetyDistance away from the wall we are sliding against
@@ -1708,6 +1896,15 @@ static void processCollidables( Array< CollidableComponent > entries, TileGrid g
 					auto diff = SafetyDistance - collision.info.t;
 					entry.position.x += diff * collision.info.normal.x;
 					entry.velocity.x = 0;
+				}
+			}
+
+			// adjust face direction if we are wallsliding
+			if( entry.walljumpWindow ) {
+				if( entry.walljumpLeft() ) {
+					entry.faceDirection = CollidableFaceDirection::Left;
+				} else {
+					entry.faceDirection = CollidableFaceDirection::Right;
 				}
 			}
 		}
@@ -1723,9 +1920,10 @@ static void doCollisionDetection( Room* room, CollidableSystem* system, float dt
 
 	auto grid = room->layers[RL_Main].grid;
 
-	processCollidables( system->dynamicEntries(), grid, {}, true, dt, frameBoundary );
-	processCollidables( system->staticEntries(), grid, system->dynamicEntries(), false, dt,
+	processCollidables( system->dynamicEntries(), grid, room->tileSet->infos, {}, true, dt,
 	                    frameBoundary );
+	processCollidables( system->staticEntries(), grid, room->tileSet->infos,
+	                    system->dynamicEntries(), false, dt, frameBoundary );
 }
 
 static StringView detailedDebugOutput( AppData* app, char* buffer, int32 size )
@@ -1776,10 +1974,12 @@ static StringView detailedDebugOutput( AppData* app, char* buffer, int32 size )
 	builder.println( "Position: {}", camera->position );
 	builder.println( "Look: {}", camera->look );
 	builder.println( "Up: {}", camera->up );
+
+	// output debug player state
 	auto player = app->gameState.player;
 	builder.println( "CollidableComponent: {}\nCollidableComponent Time: {}",
 	                 getSpatialStateString( player->spatialState ), player->spatialStateTimer );
-	builder.println( "Player pos: {}, {}", player->position.x, player->position.y );
+	builder.println( "Player pos: {}\nPlayer velocity: {}", player->position, player->velocity );
 	builder.println( "Camera follow: {:.2}", app->gameState.cameraFollowRegion );
 
 	return asStringView( builder );
@@ -1923,26 +2123,44 @@ static void processGameCamera( AppData* app, float dt, bool frameBoundary )
 }
 
 Array< VoxelCollection::Frame > getHeroActionAnimation( HeroVoxelCollection* collection,
-                                                    CollidableComponent* collidable )
+                                                        CollidableComponent* collidable, float dt )
 {
-	Array< VoxelCollection::Frame > result = {};
-	result = getAnimationFrames( &collection->voxels, collection->idle );
-	if( collidable->grounded ) {
-		if( collidable->velocity.x != 0 ) {
-			result = getAnimationFrames( &collection->voxels, collection->walk );
-		}
-	} else {
-		if( collidable->walljumpWindow ) {
-			result = getAnimationFrames( &collection->voxels, collection->wallslide );
-		} else {
-			if( collidable->velocity.y < 0 ) {
-				result = getAnimationFrames( &collection->voxels, collection->jumpRising );
+	auto animation = collidable->currentAnimation;
+	if( isCountdownTimerExpired( collidable->animationLockTimer ) ) {
+		animation = collection->idle;
+		collidable->animationSpeed = 0.1f;
+		if( collidable->grounded ) {
+			if( collidable->spatialStateTimer <= 10.0f ) {
+				collidable->animationSpeed = 0.2f;
+				animation = collection->landing;
 			} else {
-				result = getAnimationFrames( &collection->voxels, collection->jumpFalling );
+				if( collidable->faceDirection != collidable->prevFaceDirection ) {
+					collidable->animationLockTimer = {5.0f};
+					animation = collection->turn;
+				} else {
+					if( collidable->velocity.x != 0 ) {
+						animation = collection->walk;
+					}
+				}
+			}
+		} else {
+			if( collidable->walljumpWindow ) {
+				animation = collection->wallslide;
+			} else {
+				if( collidable->velocity.y < 0 ) {
+					animation = collection->jumpRising;
+				} else {
+					animation = collection->jumpFalling;
+				}
 			}
 		}
+		if( collidable->currentAnimation != animation ) {
+			collidable->currentFrame = 0;
+		}
+		collidable->currentAnimation = animation;
+		collidable->prevFaceDirection = collidable->faceDirection;
 	}
-	return result;
+	return getAnimationFrames( &collection->voxels, animation );
 }
 
 static void doGame( AppData* app, GameInputs* inputs, bool focus, float dt, bool frameBoundary,
@@ -1956,13 +2174,10 @@ static void doGame( AppData* app, GameInputs* inputs, bool focus, float dt, bool
 	auto settings = &app->settings;
 
 	if( !game->initialized ) {
-		auto allocator             = &app->stackAllocator;
-		app->gameState.tileTexture = app->platform.loadTexture( "Data/Images/texture_map.png" );
-		if( loadVoxelCollection( allocator, "Data/voxels/default_tileset.json",
-		                         &app->gameState.tileSet ) ) {
-			app->gameState.tileMesh    = app->gameState.tileSet.frames[0].mesh;
-			app->gameState.tileTexture = app->gameState.tileSet.frameInfos[0].textureMap.texture;
-		}
+		auto allocator       = &app->stackAllocator;
+		game->particleSystem = makeParticleSystem( allocator, 200 );
+
+		loadTileSet( allocator, "Data/voxels/default_tileset.json", &app->gameState.tileSet );
 		loadHeroVoxelCollection( allocator, "Data/voxels/hero.json",
 		                         &app->gameState.heroVoxelCollection );
 		auto maxEntities       = 10;
@@ -1976,6 +2191,7 @@ static void doGame( AppData* app, GameInputs* inputs, bool focus, float dt, bool
 		game->player->position = {16 * 2};
 		game->player->movement = CollidableMovement::Grounded;
 		game->player->response = CollidableResponse::Bounce;
+		game->player->airFrictionCoeffictient = 0.025f;
 		addControlComponent( &game->controlSystem, playerHandle );
 
 		auto addMovingPlatform = [&]( vec2arg pos ) {
@@ -2000,7 +2216,7 @@ static void doGame( AppData* app, GameInputs* inputs, bool focus, float dt, bool
 		game->useGameCamera      = true;
 		game->lighting           = false;
 
-		game->room = debugGetRoom( allocator );
+		game->room = debugGetRoom( allocator, &game->tileSet );
 
 		game->initialized = true;
 	}
@@ -2036,6 +2252,33 @@ static void doGame( AppData* app, GameInputs* inputs, bool focus, float dt, bool
 	processControlSystem( &game->controlSystem, &game->collidableSystem, inputs, dt,
 	                      frameBoundary );
 	doCollisionDetection( &game->room, &game->collidableSystem, dt, frameBoundary );
+	processParticles( &game->particleSystem, dt );
+	FOR( entry : game->collidableSystem.entries ) {
+		if( entry.wallslideCollidable && entry.movement == CollidableMovement::Grounded ) {
+			auto feetPosition = entry.position;
+			feetPosition.y += height( entry.aab );
+			if( entry.walljumpLeft() ) {
+				feetPosition.x += entry.aab.right;
+			} else {
+				feetPosition.x += entry.aab.left;
+			}
+			vec2 searchDir = {1, 0};
+			if( !entry.walljumpLeft() ) {
+				searchDir = {-1, 0};
+			}
+			auto region         = getSweptTileGridRegion( &entry, searchDir );
+			auto oldBoundingBox = exchange( entry.aab, {-1, -1, 1, 1} );
+			auto oldPosition    = exchange( entry.position, feetPosition );
+			auto collisionAtFeet =
+			    findCollision( &entry, searchDir, game->room.layers[RL_Main].grid, region,
+			                   game->collidableSystem.dynamicEntries(), 1, false );
+			entry.aab      = oldBoundingBox;
+			entry.position = oldPosition;
+			if( collisionAtFeet /*&& collisionAtFeet.info.t < 1*/ ) {
+				emitParticles( &game->particleSystem, feetPosition, 1 );
+			}
+		}
+	}
 
 	if( enableRender ) {
 		setRenderState( renderer, RenderStateType::Lighting, game->lighting );
@@ -2055,15 +2298,15 @@ static void doGame( AppData* app, GameInputs* inputs, bool focus, float dt, bool
 		};
 
 		{
-			auto tileWidth  = TILE_WIDTH;
-			auto tileHeight = TILE_HEIGHT;
+			auto tileWidth  = GameConstants::TileWidth;
+			auto tileHeight = GameConstants::TileHeight;
 			const float zTranslation[] = {0, TILE_DEPTH, -TILE_DEPTH};
 			static_assert( countof( zTranslation ) == RL_Count, "" );
 			for( auto i = 0; i < RL_Count; ++i ) {
 				auto layer = &app->gameState.room.layers[i];
 				auto grid = layer->grid;
-				auto collection = &app->gameState.tileSet;
-				setTexture( renderer, 0, collection->texture );
+				auto tileSet = &app->gameState.tileSet;
+				setTexture( renderer, 0, tileSet->voxels.texture );
 				for( auto y = 0; y < grid.height; ++y ) {
 					for( auto x = 0; x < grid.width; ++x ) {
 						auto tile = grid.at( x, y );
@@ -2073,7 +2316,7 @@ static void doGame( AppData* app, GameInputs* inputs, bool focus, float dt, bool
 							           zTranslation[i] );
 							assert( tile.rotation < countof( rotations ) );
 							multMatrix( matrixStack, rotations[tile.rotation] );
-							auto entry = &collection->frames[tile.frames.min];
+							auto entry = &tileSet->voxels.frames[tile.frames.min];
 							addRenderCommandMesh( renderer, entry->mesh );
 							popMatrix( matrixStack );
 						}
@@ -2090,8 +2333,8 @@ static void doGame( AppData* app, GameInputs* inputs, bool focus, float dt, bool
 		}
 		// render player
 		for( auto& entry : game->collidableSystem.entries ) {
-			auto frames       = getHeroActionAnimation( &game->heroVoxelCollection, &entry );
-			auto currentFrame = &frames[0];
+			auto frames       = getHeroActionAnimation( &game->heroVoxelCollection, &entry, dt );
+			auto currentFrame = &frames[(int32)entry.currentFrame % frames.size()];
 
 			// 2d game world coordinates to 3d space coordinates
 			auto position = ( entry.position - currentFrame->offset ) * CELL_WIDTH;
@@ -2109,14 +2352,9 @@ static void doGame( AppData* app, GameInputs* inputs, bool focus, float dt, bool
 			mesh->screenDepthOffset = -0.01f;
 			popMatrix( matrixStack );
 		}
-		auto gameToScreen = []( rectfarg rect ) {
-			rectf result;
-			result.left   = rect.left;
-			result.top    = -rect.top;
-			result.right  = rect.right;
-			result.bottom = -rect.bottom;
-			return result;
-		};
+
+		// render particles
+		renderParticles( renderer, &game->particleSystem );
 #if 1
 		if( game->debugCamera ) {
 			// render camera follow region
@@ -2161,8 +2399,6 @@ void processIngameLogs( float dt )
 	}
 	GlobalIngameLog->count = array.size();
 }
-
-const float FrameTimeTarget = 1000.0f / 60.0f;
 
 static void doBlock( Array< ProfilingInfo > infos, ProfilingBlock* block )
 {
@@ -2262,6 +2498,7 @@ UPDATE_AND_RENDER( updateAndRender )
 	// whatever reason
 	// TODO: think about whether we want frameskips or let the game lag behind if we cross multiple
 	// frame boundaries
+	constexpr const float FrameTimeTarget = 1000.0f / 60.0f;
 	doVoxel( app, inputs, app->focus == AppFocus::Voxel, dt / FrameTimeTarget );
 	if( app->frameTimeAcc < FrameTimeTarget ) {
 		auto frameRatio = dt / FrameTimeTarget;

@@ -47,4 +47,15 @@ trange< C > Range( A min, B max )
 	return {(C)min, (C)max};
 }
 
+template < class T >
+bool operator==( trangearg< T > a, trangearg< T > b )
+{
+	return a.min == b.min && a.max == b.max;
+}
+template < class T >
+bool operator!=( trangearg< T > a, trangearg< T > b )
+{
+	return a.min != b.min || a.max != b.max;
+}
+
 #endif // _RANGE_H_INCLUDED_

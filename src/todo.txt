@@ -1,26 +1,22 @@
 todo:
-	update hero meshes and use animations
 	refactor write voxel saving to file system using voxels field of json
+	rework framerate independent movement, seems to have some problems
 
 bugs:
-	fix lighting (screenDepthOffset probably causing lighting errors)
 
 gameplay:
-	variable jump height based on how long the jump button is held down
-	sliding down walls should slow down descent
 	particles and decals when jumping/sliding/landing/shooting
-	animated movement sprites
-	different entity types
-	tick methods for all entity types
 	shooting
 	hit detection
+	screen shake
 	health, dying and restarting
+	hud display
+	different entity types
+	tick methods for all entity types
 	enemies
 	finalize room storage
-	room transitions
-	screen shake
 	tile layers and background sprites with scrolling
-	hud display
+	room transitions
 	bosses
 	upgrades
 		hovering
