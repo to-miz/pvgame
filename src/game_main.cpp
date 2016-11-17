@@ -253,6 +253,7 @@ struct VoxelCollection {
 		VoxelGridTextureMap textureMap;
 		recti textureRegion[VF_Count];
 		float frictionCoefficient;
+		// TODO: include more meta information like gun position
 	};
 
 	struct Animation {
@@ -390,12 +391,15 @@ struct CollidableRef {
 enum class CollidableMovement : int8 { Straight, Grounded };
 enum class CollidableResponse : int8 { FullStop, Bounce };
 enum class CollidableFaceDirection : int8 { Left, Right };
+enum class RenderType : int8 { Hero, Projectile };
+
 struct CollidableComponent {
 	vec2 position;
 	vec2 velocity;
 	rectf aab;
 	CollidableRef grounded;             // collidable we are standing on
 	CollidableRef wallslideCollidable;  // collidable we are wallsliding against
+	CollidableRef lastCollision;
 	vec2 positionDelta;
 
 	CountdownTimer walljumpWindow;    // time window in which we can perform a walljump
@@ -415,6 +419,9 @@ struct CollidableComponent {
 	float currentFrame;
 	rangeu16 currentAnimation;
 
+	CountdownTimer particleEmitTimer;
+	CountdownTimer shootingTimer;
+
 	EntityHandle entity;
 
 	CollidableMovement movement;
@@ -423,6 +430,8 @@ struct CollidableComponent {
 	uint8 flags;
 	CollidableFaceDirection prevFaceDirection;
 	CollidableFaceDirection faceDirection;
+
+	RenderType renderType;
 
 	enum Flags : uint8 {
 		WalljumpLeft    = BITFIELD( 0 ),  // whether we are doing a walljump to the left or right
@@ -474,6 +483,7 @@ const char* getSpatialStateString( SpatialState state )
 	assert( valueof( state ) < countof( SpatilStateStrings ) );
 	return SpatilStateStrings[valueof( state )];
 }
+bool canEntityShoot( CollidableComponent* collidable ) { return true; }
 
 CollidableComponent* getDynamicFromCollidableRef( Array< CollidableComponent > dynamics, CollidableRef ref )
 {
@@ -586,6 +596,7 @@ struct ControlComponent {
 	EntityHandle entity;
 
 	CountdownTimer jumpInputBuffer;
+	CountdownTimer shootInputBuffer;
 };
 struct ControlSystem {
 	UArray< ControlComponent > entries;
@@ -607,74 +618,6 @@ ControlComponent* addControlComponent( ControlSystem* system, EntityHandle entit
 		result->entity = entity;
 	}
 	return result;
-}
-
-void processControlSystem( ControlSystem* control, CollidableSystem* collidableSystem,
-                           GameInputs* inputs, float dt, bool frameBoundary )
-{
-	assert( control );
-	assert( collidableSystem );
-	assert( inputs );
-
-	using namespace GameConstants;
-
-	for( auto& entry : control->entries ) {
-		entry.jumpInputBuffer = processTimer( entry.jumpInputBuffer, dt );
-		if( auto collidable = findCollidableComponent( collidableSystem, entry.entity ) ) {
-			collidable->velocity.x = 0;
-			// TODO: do keymapping to actions
-			if( isKeyDown( inputs, KC_Left ) ) {
-				if( isCountdownTimerExpired( collidable->walljumpDuration )
-				    || collidable->walljumpLeft() ) {
-
-					collidable->velocity.x = -MovementSpeed;
-					if( collidable->walljumpWindow ) {
-						collidable->faceDirection = CollidableFaceDirection::Right;
-					} else {
-						collidable->faceDirection = CollidableFaceDirection::Left;
-					}
-				}
-			}
-			if( isKeyDown( inputs, KC_Right ) ) {
-				if( isCountdownTimerExpired( collidable->walljumpDuration )
-				    || !collidable->walljumpLeft() ) {
-
-					collidable->velocity.x = MovementSpeed;
-					if( !collidable->walljumpWindow ) {
-						collidable->faceDirection = CollidableFaceDirection::Right;
-					} else {
-						collidable->faceDirection = CollidableFaceDirection::Left;
-					}
-				}
-			}
-			if( isKeyPressed( inputs, KC_Up ) && !collidable->grounded ) {
-				entry.jumpInputBuffer = {4};
-			}
-			// TODO: input buffering
-			auto jumpDown = isKeyDown( inputs, KC_Up );
-			if( collidable->spatialState == SpatialState::Airborne && jumpDown
-			    && collidable->velocity.y < 0 ) {
-			} else {
-				if( collidable->velocity.y < 0 ) {
-					collidable->velocity.y = 0;
-				}
-			}
-			if( frameBoundary && jumpDown && isSpatialStateJumpable( collidable ) ) {
-				collidable->velocity.y = JumpingSpeed;
-				setSpatialState( collidable, SpatialState::Airborne );
-			}
-			// walljump
-			if( frameBoundary && entry.jumpInputBuffer && isSpatialStateWalljumpable( collidable )
-			    && collidable->walljumpWindow ) {
-
-				collidable->walljumpWindow   = {};
-				collidable->wallslideCollidable.clear();
-				collidable->velocity.y       = WalljumpingSpeed;
-				collidable->walljumpDuration = {WalljumpMaxDuration};
-				LOG( INFORMATION, "Walljump attempted" );
-			}
-		}
-	}
 }
 
 struct GameCamera : Camera {
@@ -848,38 +791,84 @@ rectf gameToScreen( rectfarg rect )
 	return result;
 }
 
+enum class ParticleEmitterId {
+	Dust,
+	LandingDust,
+};
+enum class ParticleTexture : int8 {
+	Dust,
+};
+namespace ParticleEmitterFlags
+{
+enum Values : uint32 {
+	AlternateSignX = BITFIELD( 0 ),
+};
+}
+struct ParticleEmitter {
+	int32 count;
+	float maxAlive;
+	vec2 velocity;
+	ParticleTexture textureId;
+	uint32 flags;
+};
+
 struct ParticleSystem {
 	struct Particle {
 		vec2 position;
 		vec2 velocity;
 		float alive;
 		float invAlive;
+		ParticleTexture textureId;
 	};
 	UArray< Particle > particles;
+
+	TextureId texture;
 };
 
 ParticleSystem makeParticleSystem( StackAllocator* allocator, int32 maxParticles )
 {
 	ParticleSystem result = {};
-	result.particles = makeUArray( allocator, ParticleSystem::Particle, maxParticles );
+	result.particles      = makeUArray( allocator, ParticleSystem::Particle, maxParticles );
 	return result;
 }
-void emitParticles( ParticleSystem* system, vec2arg position, int32 count )
+static const ParticleEmitter ParticleEmitters[] = {
+    {1, 20, {0, -0.1f}, ParticleTexture::Dust},  // Dust
+    {2,
+     10,
+     {0.5f, -0.1f},
+     ParticleTexture::Dust,
+     ParticleEmitterFlags::AlternateSignX},  // LandingDust
+};
+Array< ParticleSystem::Particle > emitParticles( ParticleSystem* system, vec2arg position,
+                                                 ParticleEmitterId emitterId )
 {
+	Array< ParticleSystem::Particle > result = {};
 	assert( system );
-	count = min( system->particles.remaining(), count );
+	assert( valueof( emitterId ) < countof( ParticleEmitters ) );
+	auto emitter = &ParticleEmitters[valueof( emitterId )];
+	auto count   = min( system->particles.remaining(), emitter->count );
 	if( count > 0 ) {
 		auto start = system->particles.size();
 		system->particles.resize( start + count );
-		auto added = makeRangeView( system->particles, start, start + count );
-		FOR( entry : added ) {
-			entry.position       = position;
-			entry.velocity       = {0, -0.1f};
-			const float MaxAlive = 60;
-			entry.alive          = MaxAlive;
-			entry.invAlive       = 1.0f / MaxAlive;
+		result = makeRangeView( system->particles, start, start + count );
+		FOR( entry : result ) {
+			entry.position  = position;
+			entry.velocity  = emitter->velocity;
+			entry.alive     = emitter->maxAlive;
+			entry.invAlive  = 1.0f / emitter->maxAlive;
+			entry.textureId = emitter->textureId;
+		}
+		if( emitter->flags & ParticleEmitterFlags::AlternateSignX ) {
+			bool sign = true;
+			FOR( entry : result ) {
+				if( sign ) {
+					entry.velocity.x = -entry.velocity.x;
+					sign = !sign;
+				}
+			}
 		}
 	}
+	return result;
 }
 void processParticles( ParticleSystem* system, float dt )
 {
@@ -898,13 +887,29 @@ void processParticles( ParticleSystem* system, float dt )
 void renderParticles( RenderCommands* renderer, ParticleSystem* system )
 {
 	setRenderState( renderer, RenderStateType::DepthTest, false );
-	setTexture( renderer, 0, null );
+	setTexture( renderer, 0, system->texture );
+	static const QuadTexCoords texCoords[] = {
+		makeQuadTexCoords( scale( RectWH(  0.0f, 0, 9, 9 ), 1 / 39.0f, 1 / 9.0f ) ),
+		makeQuadTexCoords( scale( RectWH( 10.0f, 0, 9, 9 ), 1 / 39.0f, 1 / 9.0f ) ),
+		makeQuadTexCoords( scale( RectWH( 20.0f, 0, 9, 9 ), 1 / 39.0f, 1 / 9.0f ) ),
+		makeQuadTexCoords( scale( RectWH( 30.0f, 0, 9, 9 ), 1 / 39.0f, 1 / 9.0f ) )
+	};
 	MESH_STREAM_BLOCK( stream, renderer ) {
 		FOR( particle : system->particles ) {
-			stream->color = setAlpha( Color::White, particle.alive * particle.invAlive );
-			rectf rect = {-2, -2, 2, 2};
+			auto t = particle.alive * particle.invAlive;
+			stream->color = Color::White;
+			// alpha blend between first and last couple of frames of the particles life time
+			if( t < 0.1f ) {
+				stream->color = setAlpha( Color::White, remap( t, 0, 0.1f, 0.0f, 1.0f ) );
+			} else if( t >= 0.9f ) {
+				stream->color = setAlpha( Color::White, remap( t, 0.9f, 1.0f, 1.0f, 0.0f ) );
+			}
+			rectf rect = {-4, -4, 5, 5};
 			rect = gameToScreen( translate( rect, particle.position ) );
-			pushQuad( stream, rect );
+			auto index = clamp( (int32)lerp( 1.0f - t, 0.0f, 4.0f ), 0, 3 );
+			// TODO: use a texture atlas for particles and a lookup table
+			assert( particle.textureId == ParticleTexture::Dust );
+			pushQuad( stream, rect, 0, texCoords[index] );
 		}
 	}
 	setRenderState( renderer, RenderStateType::DepthTest, true );
@@ -914,11 +919,13 @@ struct GameState {
 	TileSet tileSet;
 	HeroVoxelCollection heroVoxelCollection;
 	ParticleSystem particleSystem;
+	VoxelCollection projectile;
 
 	HandleManager entityHandles;
 	CollidableSystem collidableSystem;
 	ControlSystem controlSystem;
 	CollidableComponent* player;
+	UArray< EntityHandle > entityRemovalQueue;
 	bool initialized;
 
 	GameCamera camera;
@@ -936,6 +943,122 @@ struct GameState {
 	bool debugCamera;
 	bool debugCollisionBoxes;
 };
+
+bool emitProjectile( GameState* game, vec2arg origin, vec2arg velocity )
+{
+	// TODO: emit different types of projectile based on upgrades
+	auto projectileId = addEntity( &game->entityHandles );
+	auto projectile   = addCollidableComponent( &game->collidableSystem, projectileId );
+	if( projectile ) {
+		projectile->position                = origin;
+		projectile->velocity                = velocity;
+		projectile->aab                     = {-3, -3, 3, 3};
+		projectile->gravityModifier         = 0;
+		projectile->bounceModifier          = 2;
+		projectile->airFrictionCoeffictient = 0;
+		projectile->movement                = CollidableMovement::Straight;
+		projectile->response                = CollidableResponse::Bounce;
+		projectile->renderType              = RenderType::Projectile;
+		return true;
+	}
+	return false;
+}
+
+void processControlSystem( GameState* game, ControlSystem* control,
+                           CollidableSystem* collidableSystem, GameInputs* inputs, float dt,
+                           bool frameBoundary )
+{
+	assert( control );
+	assert( collidableSystem );
+	assert( inputs );
+
+	using namespace GameConstants;
+
+	for( auto& entry : control->entries ) {
+		if( auto collidable = findCollidableComponent( collidableSystem, entry.entity ) ) {
+			collidable->velocity.x = 0;
+			// TODO: do keymapping to actions
+			if( isKeyDown( inputs, KC_Left ) ) {
+				if( isCountdownTimerExpired( collidable->walljumpDuration )
+				    || collidable->walljumpLeft() ) {
+
+					collidable->velocity.x = -MovementSpeed;
+					if( collidable->walljumpWindow ) {
+						collidable->faceDirection = CollidableFaceDirection::Right;
+					} else {
+						collidable->faceDirection = CollidableFaceDirection::Left;
+					}
+				}
+			}
+			if( isKeyDown( inputs, KC_Right ) ) {
+				if( isCountdownTimerExpired( collidable->walljumpDuration )
+				    || !collidable->walljumpLeft() ) {
+
+					collidable->velocity.x = MovementSpeed;
+					if( !collidable->walljumpWindow ) {
+						collidable->faceDirection = CollidableFaceDirection::Right;
+					} else {
+						collidable->faceDirection = CollidableFaceDirection::Left;
+					}
+				}
+			}
+			if( isKeyPressed( inputs, KC_Up ) && !collidable->grounded ) {
+				entry.jumpInputBuffer = {4};
+			}
+			// TODO: input buffering
+			auto jumpDown = isKeyDown( inputs, KC_Up );
+			if( collidable->spatialState == SpatialState::Airborne && jumpDown
+			    && collidable->velocity.y < 0 ) {
+			} else {
+				if( collidable->velocity.y < 0 ) {
+					collidable->velocity.y = 0;
+				}
+			}
+			if( frameBoundary && jumpDown && isSpatialStateJumpable( collidable ) ) {
+				collidable->velocity.y = JumpingSpeed;
+				setSpatialState( collidable, SpatialState::Airborne );
+			}
+			// walljump
+			if( frameBoundary && entry.jumpInputBuffer && isSpatialStateWalljumpable( collidable )
+			    && collidable->walljumpWindow ) {
+
+				collidable->walljumpWindow   = {};
+				collidable->wallslideCollidable.clear();
+				collidable->velocity.y       = WalljumpingSpeed;
+				collidable->walljumpDuration = {WalljumpMaxDuration};
+				LOG( INFORMATION, "Walljump attempted" );
+			}
+
+			// shooting
+			if( isKeyPressed( inputs, KC_Space ) && canEntityShoot( collidable ) ) {
+				entry.shootInputBuffer = {1};
+			}
+			if( entry.shootInputBuffer && frameBoundary ) {
+				// consume input
+				entry.shootInputBuffer = {};
+
+				collidable->shootingTimer = {20};
+
+				// TODO: move this into a shoot projectile function
+				// TODO: load gun position dynamicly together with the voxel collection
+				vec2 gunOffset = {6, 14};
+				if( collidable->faceDirection == CollidableFaceDirection::Left ) {
+					gunOffset.x = -gunOffset.x;
+				}
+				auto gunPosition = collidable->position + gunOffset;
+				vec2 velocity = {3, 0};
+				if( collidable->faceDirection == CollidableFaceDirection::Left ) {
+					velocity.x = -velocity.x;
+				}
+				if( !emitProjectile( game, gunPosition, velocity ) ) {
+					collidable->shootingTimer = {};
+				}
+			}
+		}
+		entry.jumpInputBuffer  = processTimer( entry.jumpInputBuffer, dt );
+		entry.shootInputBuffer = processTimer( entry.shootInputBuffer, dt );
+	}
+}
 
 enum class AppFocus { Game, Voxel, TexturePack };
 
@@ -973,8 +1096,6 @@ struct AppData {
 	VoxelState voxelState;
 	GameState gameState;
 	TexturePackState texturePackState;
-
-	TextureId texture;
 
 	bool mouseLocked;
 	bool displayDebug;
@@ -1286,7 +1407,7 @@ static void processCamera( GameInputs* inputs, GameSettings* settings, Camera* c
 	if( isKeyDown( inputs, KC_Space ) ) {
 		camera->position.y += speed;
 	}
-	if( isKeyDown( inputs, KC_Control ) ) {
+	if( isKeyDown( inputs, KC_Down ) ) {
 		camera->position.y += -speed;
 	}
 
@@ -1506,6 +1627,7 @@ CollisionResult findCollision( CollidableComponent* collidable, vec2arg velocity
 	return collision;
 }
 
+// TODO: rename function, since CollidableComponent does way more than colliding
 void processCollidables( Array< CollidableComponent > entries, TileGrid grid,
                          Array< TileInfo > infos, Array< CollidableComponent > dynamics,
                          bool dynamic, float dt, bool frameBoundary )
@@ -1526,9 +1648,8 @@ void processCollidables( Array< CollidableComponent > entries, TileGrid grid,
 			entry.animationLockTimer = {};
 		}
 		entry.animationLockTimer = processTimer( entry.animationLockTimer, dt );
-		if( !dynamic ) {
-			debugPrintln( "Anim Lock Time {}", entry.animationLockTimer.value );
-		}
+
+		entry.shootingTimer = processTimer( entry.shootingTimer, dt );
 
 		// make entry move away from the wall if a walljump was executed
 		if( entry.walljumpDuration ) {
@@ -1762,6 +1883,7 @@ void processCollidables( Array< CollidableComponent > entries, TileGrid grid,
 
 		constexpr const auto maxIterations = 4;
 		float remaining                    = 1;
+		entry.lastCollision.clear();
 		for( auto iterations = 0; iterations < maxIterations && remaining > 0.0f; ++iterations ) {
 			auto collision = findCollision( &entry, velocity, grid, tileGridRegion, dynamics,
 			                                   remaining, dynamic );
@@ -1823,6 +1945,9 @@ void processCollidables( Array< CollidableComponent > entries, TileGrid grid,
 #endif  // defined( GAME_DEBUG )
 
 			// response
+			if( collision ) {
+				entry.lastCollision = collision.collision;
+			}
 			if( entry.response == CollidableResponse::FullStop ) {
 				if( collision ) {
 					break;
@@ -2042,6 +2167,7 @@ static void showGameDebugGui( AppData* app, GameInputs* inputs, bool focus, floa
 		}
 		imguiCheckbox( "Lighting", &game->lighting );
 		imguiCheckbox( "Camera turning", &app->settings.cameraTurning );
+		imguiCheckbox( "View collision boxes", &app->gameState.debugCollisionBoxes );
 	}
 	if( imguiDialog( "Debug Output", gui->debugOutputDialog ) ) {
 		imguiCheckbox( "Detailed Debug Output", &app->displayDebug );
@@ -2126,31 +2252,32 @@ Array< VoxelCollection::Frame > getHeroActionAnimation( HeroVoxelCollection* col
                                                         CollidableComponent* collidable, float dt )
 {
 	auto animation = collidable->currentAnimation;
+	bool shooting = (bool)collidable->shootingTimer;
 	if( isCountdownTimerExpired( collidable->animationLockTimer ) ) {
-		animation = collection->idle;
+		animation = ( shooting ) ? collection->idleShoot : collection->idle;
 		collidable->animationSpeed = 0.1f;
 		if( collidable->grounded ) {
-			if( collidable->spatialStateTimer <= 10.0f ) {
+			if( !shooting && collidable->spatialStateTimer <= 10.0f ) {
 				collidable->animationSpeed = 0.2f;
 				animation = collection->landing;
 			} else {
-				if( collidable->faceDirection != collidable->prevFaceDirection ) {
+				if( !shooting && collidable->faceDirection != collidable->prevFaceDirection ) {
 					collidable->animationLockTimer = {5.0f};
 					animation = collection->turn;
 				} else {
 					if( collidable->velocity.x != 0 ) {
-						animation = collection->walk;
+						animation = ( shooting ) ? collection->walkShoot : collection->walk;
 					}
 				}
 			}
 		} else {
 			if( collidable->walljumpWindow ) {
-				animation = collection->wallslide;
+				animation = ( shooting ) ? collection->wallslideShoot : collection->wallslide;
 			} else {
 				if( collidable->velocity.y < 0 ) {
-					animation = collection->jumpRising;
+					animation = ( shooting ) ? collection->jumpRisingShoot : collection->jumpRising;
 				} else {
-					animation = collection->jumpFalling;
+					animation = ( shooting ) ? collection->jumpFallingShoot : collection->jumpFalling;
 				}
 			}
 		}
@@ -2161,6 +2288,56 @@ Array< VoxelCollection::Frame > getHeroActionAnimation( HeroVoxelCollection* col
 		collidable->prevFaceDirection = collidable->faceDirection;
 	}
 	return getAnimationFrames( &collection->voxels, animation );
+}
+
+template < class Container >
+void unordered_remove_if_helper( Container& container, EntityHandle handle )
+{
+	unordered_remove_if( container, [handle]( typename const Container::reference component ) {
+		return component.entity == handle;
+	} );
+}
+template < class Container >
+void remove_if_helper( Container& container, EntityHandle handle )
+{
+	remove_if( container, [handle]( typename const Container::reference component ) {
+		return component.entity == handle;
+	} );
+}
+template < class GenericSystem >
+void removeEntity( GenericSystem* system, EntityHandle handle )
+{
+	unordered_remove_if_helper( system->entries, handle );
+}
+void removeEntity( CollidableSystem* system, EntityHandle handle )
+{
+	auto end = system->entries.end();
+	for( auto it = system->entries.begin(); it != end; ) {
+		if( it->entity == handle ) {
+			if( !it->dynamic() ) {
+				--system->entriesCount;
+			}
+			it  = system->entries.erase( it );
+			end = system->entries.end();
+			continue;
+		}
+		++it;
+	}
+}
+void processEntityRemovalQueue( GameState* game )
+{
+	assert( game );
+	FOR( handle : game->entityRemovalQueue ) {
+		removeEntity( &game->controlSystem, handle );
+	}
+	FOR( handle : game->entityRemovalQueue ) {
+		removeEntity( &game->collidableSystem, handle );
+	}
+	game->entityRemovalQueue.clear();
+}
+void removeEntity( GameState* game, EntityHandle handle )
+{
+	append_unique( game->entityRemovalQueue, handle );
 }
 
 static void doGame( AppData* app, GameInputs* inputs, bool focus, float dt, bool frameBoundary,
@@ -2174,16 +2351,19 @@ static void doGame( AppData* app, GameInputs* inputs, bool focus, float dt, bool
 	auto settings = &app->settings;
 
 	if( !game->initialized ) {
-		auto allocator       = &app->stackAllocator;
-		game->particleSystem = makeParticleSystem( allocator, 200 );
+		auto allocator               = &app->stackAllocator;
+		game->particleSystem         = makeParticleSystem( allocator, 200 );
+		game->particleSystem.texture = app->platform.loadTexture( "Data/Images/dust.png" );
+		loadVoxelCollection( allocator, "Data/voxels/projectile.json", &game->projectile );
 
 		loadTileSet( allocator, "Data/voxels/default_tileset.json", &app->gameState.tileSet );
 		loadHeroVoxelCollection( allocator, "Data/voxels/hero.json",
 		                         &app->gameState.heroVoxelCollection );
-		auto maxEntities       = 10;
-		game->entityHandles    = makeHandleManager();
-		game->collidableSystem = makeCollidableSystem( allocator, maxEntities );
-		game->controlSystem    = makeControlSystem( allocator, maxEntities );
+		auto maxEntities         = 10;
+		game->entityHandles      = makeHandleManager();
+		game->collidableSystem   = makeCollidableSystem( allocator, maxEntities );
+		game->controlSystem      = makeControlSystem( allocator, maxEntities );
+		game->entityRemovalQueue = makeUArray( allocator, EntityHandle, maxEntities );
 
 		auto playerHandle      = addEntity( &game->entityHandles );
 		game->player           = addCollidableComponent( &game->collidableSystem, playerHandle );
@@ -2230,6 +2410,10 @@ static void doGame( AppData* app, GameInputs* inputs, bool focus, float dt, bool
 	               isKeyDown( inputs, KC_Shift ) ? dt : ( dt * 0.25f ) );
 
 	if( !frameBoundary ) {
+		debugPrintln( "Active entities: {}", game->collidableSystem.entries.size() );
+	}
+
+	if( !frameBoundary ) {
 		if( isKeyPressed( inputs, KC_Key_H ) ) {
 			game->paused = !game->paused;
 		}
@@ -2246,14 +2430,16 @@ static void doGame( AppData* app, GameInputs* inputs, bool focus, float dt, bool
 		inputs->mouse.locked = app->mouseLocked;
 	}
 
-	auto player = game->player;
-
 	processGameCamera( app, dt, frameBoundary );
-	processControlSystem( &game->controlSystem, &game->collidableSystem, inputs, dt,
+	processControlSystem( game, &game->controlSystem, &game->collidableSystem, inputs, dt,
 	                      frameBoundary );
 	doCollisionDetection( &game->room, &game->collidableSystem, dt, frameBoundary );
 	processParticles( &game->particleSystem, dt );
+
+	// emitting particles
+	// TODO: factor this out into a processing function
 	FOR( entry : game->collidableSystem.entries ) {
+		// wallslide particles
 		if( entry.wallslideCollidable && entry.movement == CollidableMovement::Grounded ) {
 			auto feetPosition = entry.position;
 			feetPosition.y += height( entry.aab );
@@ -2274,11 +2460,39 @@ static void doGame( AppData* app, GameInputs* inputs, bool focus, float dt, bool
 			                   game->collidableSystem.dynamicEntries(), 1, false );
 			entry.aab      = oldBoundingBox;
 			entry.position = oldPosition;
-			if( collisionAtFeet /*&& collisionAtFeet.info.t < 1*/ ) {
-				emitParticles( &game->particleSystem, feetPosition, 1 );
+			if( collisionAtFeet ) {
+				entry.particleEmitTimer = processTimer( entry.particleEmitTimer, dt );
+				if( !entry.particleEmitTimer ) {
+					entry.particleEmitTimer = {6};
+					emitParticles( &game->particleSystem, feetPosition, ParticleEmitterId::Dust );
+				}
+			}
+		} else {
+			entry.particleEmitTimer = {};
+		}
+
+		// landing particles
+		if( entry.spatialState == SpatialState::Grounded
+		    && floatEqZero( entry.spatialStateTimer ) ) {
+
+			auto feetPosition = entry.position;
+			feetPosition.y += height( entry.aab );
+			auto emitted = emitParticles( &game->particleSystem, feetPosition,
+			                              ParticleEmitterId::LandingDust );
+		}
+	}
+
+	// entity behaviors
+	// TODO: move this into a seperate component?
+	FOR( entry : game->collidableSystem.staticEntries() ) {
+		// TODO: make this dependant on a behavior type
+		if( entry.renderType == RenderType::Projectile ) {
+			if( entry.lastCollision ) {
+				removeEntity( game, entry.entity );
 			}
 		}
 	}
+	processEntityRemovalQueue( game );
 
 	if( enableRender ) {
 		setRenderState( renderer, RenderStateType::Lighting, game->lighting );
@@ -2331,20 +2545,36 @@ static void doGame( AppData* app, GameInputs* inputs, bool focus, float dt, bool
 				pushQuad( stream, rectf{-500, 500, 500, -500} * TILE_WIDTH, 32 * CELL_DEPTH );
 			}
 		}
-		// render player
+		// render entities
 		for( auto& entry : game->collidableSystem.entries ) {
-			auto frames       = getHeroActionAnimation( &game->heroVoxelCollection, &entry, dt );
-			auto currentFrame = &frames[(int32)entry.currentFrame % frames.size()];
+			VoxelCollection::Frame* currentFrame = nullptr;
+			switch( entry.renderType ) {
+				case RenderType::Hero: {
+					setTexture( renderer, 0, game->heroVoxelCollection.voxels.texture );
+					auto frames  = getHeroActionAnimation( &game->heroVoxelCollection, &entry, dt );
+					currentFrame = &frames[(int32)entry.currentFrame % frames.size()];
+					break;
+				}
+				case RenderType::Projectile: {
+					setTexture( renderer, 0, game->projectile.texture );
+					auto frames  = game->projectile.frames;
+					currentFrame = &frames[0];
+					break;
+				}
+					InvalidDefaultCase;
+			}
+			assert( currentFrame );
 
 			// 2d game world coordinates to 3d space coordinates
-			auto position = ( entry.position - currentFrame->offset ) * CELL_WIDTH;
+			auto offset = currentFrame->offset;
+			// offset.x = -offset.x;
+			auto position = ( entry.position - offset ) * CELL_WIDTH;
 			position.y    = -position.y - CELL_HEIGHT * height( entry.aab );
-			position.x -= CELL_WIDTH * entry.aab.right;
-			setTexture( renderer, 0, game->heroVoxelCollection.voxels.texture );
+			// position.x -= CELL_WIDTH * entry.aab.right;
 			pushMatrix( matrixStack );
 			translate( matrixStack, position, 0 );
 			if( entry.faceDirection == CollidableFaceDirection::Left ) {
-				translate( matrixStack, width( entry.aab ) + 2 * currentFrame->offset.x, 0 );
+				translate( matrixStack, 2 * currentFrame->offset.x, 0 );
 				auto rot = matrixRotationY( Pi32 );
 				multMatrix( matrixStack, rot );
 			}
@@ -2367,20 +2597,17 @@ static void doGame( AppData* app, GameInputs* inputs, bool focus, float dt, bool
 		}
 #endif
 		if( game->debugCollisionBoxes ) {
-			// setRenderState( renderer, RenderStateType::DepthTest, true );
-			// render collision box
-			setRenderState( renderer, RenderStateType::DepthTest, false );
+			// setRenderState( renderer, RenderStateType::DepthTest, false );
 			setTexture( renderer, 0, null );
 			MESH_STREAM_BLOCK( stream, renderer ) {
 				stream->color   = setAlpha( Color::Blue, 0.5f );
-				auto position   = player->position;
-				position.y      = -position.y;
-				aabb playerAabb = {
-				    position.x + player->aab.left,  position.y + -player->aab.top,    -4,
-				    position.x + player->aab.right, position.y + -player->aab.bottom, 4};
-				pushAabb( stream, playerAabb * EDITOR_CELL_WIDTH );
+				FOR( entry : game->collidableSystem.entries ) {
+					auto screenRect = gameToScreen( translate( entry.aab, entry.position ) );
+					pushAabb( stream, screenRect.left, screenRect.bottom, -16, screenRect.right,
+					          screenRect.top, 16 );
+				}
 			}
-			setRenderState( renderer, RenderStateType::DepthTest, true );
+			// setRenderState( renderer, RenderStateType::DepthTest, true );
 		}
 	}
 }
@@ -2451,8 +2678,7 @@ UPDATE_AND_RENDER( updateAndRender )
 	app->frameTimeAcc += dt;
 
 	if( !app->resourcesLoaded ) {
-		app->texture = app->platform.loadTexture( "Data/Images/test.png" );
-		app->font    = app->platform.loadFont( allocator, "Arial", 11, 400, false,
+		app->font = app->platform.loadFont( allocator, "Arial", 11, 400, false,
 		                                    getDefaultFontUnicodeRanges() );
 		imguiLoadDefaultStyle( &app->guiState, &app->platform );
 		app->resourcesLoaded = true;

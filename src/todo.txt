@@ -5,8 +5,6 @@ todo:
 bugs:
 
 gameplay:
-	particles and decals when jumping/sliding/landing/shooting
-	shooting
 	hit detection
 	screen shake
 	health, dying and restarting

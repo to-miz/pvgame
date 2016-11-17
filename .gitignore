@@ -25,7 +25,7 @@ bld/
 [Ll]og/
 [Bb]uilds/
 
-# game data 
+# game data
 src/Data/
 
 # Visual Studio 2015 cache/options directory
@@ -262,3 +262,4 @@ src/startup_dev_pc.lnk
 commit_message.txt
 compress_tool.bat
 end_of_day.bat
+wip_graphics/

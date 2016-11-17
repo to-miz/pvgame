@@ -159,6 +159,23 @@ void unordered_remove_if( Container& container, UnaryPredicate pred )
 	}
 }
 
+template < class Container, class UnaryPredicate >
+void remove_if( Container& container, UnaryPredicate pred )
+{
+	// TODO: implement using find_if?
+	using std::begin;
+	using std::end;
+	auto last = end( container );
+	for( auto it = begin( container ); it != last; ) {
+		if( pred( *it ) ) {
+			it   = container.erase( it );
+			last = end( container );
+			continue;
+		}
+		++it;
+	}
+}
+
 template < class Container, class Value >
 bool find_and_erase( Container& container, Value&& value )
 {
@@ -166,7 +183,7 @@ bool find_and_erase( Container& container, Value&& value )
 	using std::begin;
 	using std::end;
 	auto end_ = end( container );
-	auto it = find( begin( container ), end_, value );
+	auto it   = find( begin( container ), end_, value );
 	if( it != end_ ) {
 		container.erase( it );
 		return true;
@@ -221,10 +238,32 @@ void iota_n( Iterator first, int32 n, ValueType val )
 	}
 }
 
+template < class Iterator, class T >
+Iterator find( Iterator first, Iterator last, const T& val )
+{
+	while( first != last ) {
+		if( *first == val ) {
+			return first;
+		}
+		++first;
+	}
+	return last;
+}
+template < class Iterator, class UnaryPredicate >
+inline Iterator find_if( Iterator first, Iterator last, UnaryPredicate pred )
+{
+	while( first != last ) {
+		if( pred( *first ) ) {
+			return first;
+		}
+		++first;
+	}
+	return last;
+}
+
 template < class Container, class T >
 inline bool exists( Container& container, const T& val )
 {
-	using std::find;
 	using std::begin;
 	using std::end;
 	auto end_ = end( container );
@@ -234,7 +273,6 @@ inline bool exists( Container& container, const T& val )
 template < class Container, class UnaryPredicate >
 inline bool exists_if( Container& container, UnaryPredicate&& pred )
 {
-	using std::find_if;
 	using std::begin;
 	using std::end;
 	auto end_ = end( container );
@@ -244,7 +282,6 @@ inline bool exists_if( Container& container, UnaryPredicate&& pred )
 template < class Container, class T >
 inline auto find( Container& container, const T& val ) -> decltype( std::begin( container ) )
 {
-	using std::find;
 	using std::begin;
 	using std::end;
 	return find( begin( container ), end( container ), val );
@@ -252,9 +289,8 @@ inline auto find( Container& container, const T& val ) -> decltype( std::begin( 
 
 template < class Container, class UnaryPredicate >
 inline auto find_if( Container& container, UnaryPredicate&& pred )
-	-> decltype( std::begin( container ) )
+    -> decltype( std::begin( container ) )
 {
-	using std::find_if;
 	using std::begin;
 	using std::end;
 	return find_if( begin( container ), end( container ), std::forward< UnaryPredicate >( pred ) );
@@ -327,7 +363,6 @@ inline NullableInt32 find_index_if( T* first, T* last, UnaryPredicate pred )
 template < class Container, class Value >
 bool append_unique( Container& container, Value&& value )
 {
-	using std::find;
 	using std::begin;
 	using std::end;
 	auto end_ = end( container );

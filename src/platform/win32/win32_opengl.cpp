@@ -1232,7 +1232,7 @@ static bool win32InitOpenGL( OpenGlContext* context, float width, float height )
 
 	// TODO: read up on vsync and targeting 60 fps
 	// TODO: do we need glFinish?
-	wglSwapIntervalEXT( 1 );
+	wglSwapIntervalEXT( 0 );
 
 	context->renderStates[valueof( RenderStateType::DepthTest )] = true;
 	context->renderStates[valueof( RenderStateType::Lighting )] = true;
