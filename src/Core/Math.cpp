@@ -117,10 +117,7 @@ float atan2( float y, float x )
 	return _mm_cvtss_f32( sse_result );
 }
 
-float sqrt( float x )
-{
-	return sqrt_ps( x );
-}
+float sqrt( float x ) { return sqrt_ps( x ); }
 float rsqrt( float x )
 {
 #ifdef MATH_FAST_RSQRT
@@ -130,63 +127,42 @@ float rsqrt( float x )
 	return _mm_cvtss_f32( val );
 #endif
 }
-float fast_rsqrt( float x )
-{
-	return rsqrt_ps( x );
-}
+float fast_rsqrt( float x ) { return rsqrt_ps( x ); }
 
-float degreesToRadians( float d )
-{
-	return d * ( TwoPi32 / 360 );
-}
-float radiansToDegrees( float r )
-{
-	return r * ( 360 / TwoPi32 );
-}
+float degreesToRadians( float d ) { return d * ( TwoPi32 / 360 ); }
+float radiansToDegrees( float r ) { return r * ( 360 / TwoPi32 ); }
 
 #if defined( _MSC_VER ) && !defined( __clang__ )
 	#ifdef ARCHITECTURE_X64
 		extern "C" {
 			float floorf( float );
 			float ceilf( float );
+			float fmodf( float, float );
 		}
-		#pragma intrinsic( floorf, ceilf )
-		float floor( float x )
-		{
-			return floorf( x );
-		}
-		float ceil( float x )
-		{
-			return ceilf( x );
-		}
+		#pragma intrinsic( floorf, ceilf, fmodf )
+        float floor( float x ) { return floorf( x ); }
+        float ceil( float x ) { return ceilf( x ); }
+        float fmod( float x, float y ) { return fmodf( x, y ); }
 	#elif ARCHITECTURE_X86
 		extern "C" {
 			double floor( double );
 			double ceil( double );
+			double fmod( double, double );
 		}
 		#pragma intrinsic( floor, ceil )
-		float floor( float x )
-		{
-			return (float)floor( (double)x );
-		}
-		float ceil( float x )
-		{
-			return (float)ceil( (double)x );
-		}
+        float floor( float x ) { return (float)floor( (double)x ); }
+        float ceil( float x ) { return (float)ceil( (double)x ); }
+        float fmod( float x, float y ) { return (float)fmod( (double)x, (double)y ); }
 	#endif
 #else
 	extern "C" {
 		float floorf( float );
 		float ceilf( float );
+		float fmodf( float, float );
 	}
-	float floor( float x )
-	{
-		return floorf( x );
-	}
-	float ceil( float x )
-	{
-		return ceilf( x );
-	}
+    float floor( float x ) { return floorf( x ); }
+    float ceil( float x ) { return ceilf( x ); }
+    float fmod( float x, float y ) { return fmodf( x, y ); }
 #endif
 
 float abs( float x )

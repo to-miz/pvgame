@@ -9,13 +9,16 @@ enum class RenderCommandEntryType : int8 {
 	StaticMesh,
 	SetTexture,
 	SetBlend,
-	SetProjection,
+	SetProjection,        // sets currently active projection type (perspective vs orthogonal)
+	SetProjectionMatrix,  // specifies matrix of projection type
+	SetScissorRect,
 	SetRenderState,
-	Jump, // jumps are used to enable reordering of commands already in the stream
+	Jump,  // jumps are used to enable reordering of commands already in the stream
 };
 enum class RenderStateType {
 	DepthTest,
 	Lighting,
+	Scissor,
 
 	Count
 };
@@ -84,6 +87,17 @@ struct RenderCommandSetProjection {
 	static const RenderCommandEntryType type = RenderCommandEntryType::SetProjection;
 
 	ProjectionType projectionType;
+};
+struct RenderCommandSetProjectionMatrix {
+	static const RenderCommandEntryType type = RenderCommandEntryType::SetProjectionMatrix;
+
+	ProjectionType projectionType;
+	mat4 matrix;
+};
+struct RenderCommandSetScissorRect {
+	static const RenderCommandEntryType type = RenderCommandEntryType::SetScissorRect;
+
+	recti scissor;
 };
 struct RenderCommandSetRenderState {
 	static const RenderCommandEntryType type = RenderCommandEntryType::SetRenderState;
@@ -230,38 +244,38 @@ void pushBox( MeshStream* stream, vec3 box[8] )
 	auto color    = stream->color;
 	// front-face
 	*( vertices++ ) = {box[0], color, 0, 0, normal_neg_z_axis};
-	*( vertices++ ) = {box[1], color, 0, 1, normal_neg_z_axis};
-	*( vertices++ ) = {box[2], color, 1, 0, normal_neg_z_axis};
+	*( vertices++ ) = {box[1], color, 1, 0, normal_neg_z_axis};
+	*( vertices++ ) = {box[2], color, 0, 1, normal_neg_z_axis};
 	*( vertices++ ) = {box[3], color, 1, 1, normal_neg_z_axis};
 
 	// top-face
 	*( vertices++ ) = {box[4], color, 0, 0, normal_pos_y_axis};
-	*( vertices++ ) = {box[5], color, 0, 1, normal_pos_y_axis};
-	*( vertices++ ) = {box[0], color, 1, 0, normal_pos_y_axis};
+	*( vertices++ ) = {box[5], color, 1, 0, normal_pos_y_axis};
+	*( vertices++ ) = {box[0], color, 0, 1, normal_pos_y_axis};
 	*( vertices++ ) = {box[1], color, 1, 1, normal_pos_y_axis};
 
 	// bottom-face
 	*( vertices++ ) = {box[6], color, 0, 0, normal_neg_y_axis};
-	*( vertices++ ) = {box[7], color, 0, 1, normal_neg_y_axis};
-	*( vertices++ ) = {box[2], color, 1, 0, normal_neg_y_axis};
+	*( vertices++ ) = {box[7], color, 1, 0, normal_neg_y_axis};
+	*( vertices++ ) = {box[2], color, 0, 1, normal_neg_y_axis};
 	*( vertices++ ) = {box[3], color, 1, 1, normal_neg_y_axis};
 
 	// right-face
 	*( vertices++ ) = {box[1], color, 0, 0, normal_pos_x_axis};
-	*( vertices++ ) = {box[5], color, 0, 1, normal_pos_x_axis};
-	*( vertices++ ) = {box[3], color, 1, 0, normal_pos_x_axis};
+	*( vertices++ ) = {box[5], color, 1, 0, normal_pos_x_axis};
+	*( vertices++ ) = {box[3], color, 0, 1, normal_pos_x_axis};
 	*( vertices++ ) = {box[7], color, 1, 1, normal_pos_x_axis};
 
 	// left-face
 	*( vertices++ ) = {box[4], color, 0, 0, normal_neg_x_axis};
-	*( vertices++ ) = {box[0], color, 0, 1, normal_neg_x_axis};
-	*( vertices++ ) = {box[6], color, 1, 0, normal_neg_x_axis};
+	*( vertices++ ) = {box[0], color, 1, 0, normal_neg_x_axis};
+	*( vertices++ ) = {box[6], color, 0, 1, normal_neg_x_axis};
 	*( vertices++ ) = {box[2], color, 1, 1, normal_neg_x_axis};
 
 	// back-face
 	*( vertices++ ) = {box[5], color, 0, 0, normal_pos_z_axis};
-	*( vertices++ ) = {box[4], color, 0, 1, normal_pos_z_axis};
-	*( vertices++ ) = {box[7], color, 1, 0, normal_pos_z_axis};
+	*( vertices++ ) = {box[4], color, 1, 0, normal_pos_z_axis};
+	*( vertices++ ) = {box[7], color, 0, 1, normal_pos_z_axis};
 	*( vertices++ ) = {box[6], color, 1, 1, normal_pos_z_axis};
 
 	auto currentVerticesCount = safe_truncate< uint16 >( stream->data.verticesCount );
@@ -286,12 +300,12 @@ void pushBox( MeshStream* stream, vec3 box[8] )
 
 	// bottom-face
 	*( indices++ ) = currentVerticesCount + 8;
-	*( indices++ ) = currentVerticesCount + 9;
 	*( indices++ ) = currentVerticesCount + 10;
-
-	*( indices++ ) = currentVerticesCount + 10;
-	*( indices++ ) = currentVerticesCount + 9;
 	*( indices++ ) = currentVerticesCount + 11;
+
+	*( indices++ ) = currentVerticesCount + 8;
+	*( indices++ ) = currentVerticesCount + 11;
+	*( indices++ ) = currentVerticesCount + 9;
 
 	// right-face
 	*( indices++ ) = currentVerticesCount + 12;
@@ -1061,6 +1075,26 @@ void setProjection( RenderCommands* renderCommands, ProjectionType type )
 	auto body            = allocateStruct( allocator, RenderCommandSetProjection );
 	body->projectionType = type;
 }
+void setProjectionMatrix( RenderCommands* renderCommands, ProjectionType type, mat4arg matrix )
+{
+	PROFILE_FUNCTION();
+
+	assert( isValid( renderCommands ) );
+	auto allocator = &renderCommands->allocator;
+	allocateRenderCommandHeader( allocator, RenderCommandSetProjectionMatrix );
+	auto body            = allocateStruct( allocator, RenderCommandSetProjectionMatrix );
+	body->projectionType = type;
+	body->matrix         = matrix;
+}
+void setScissorRect( RenderCommands* renderCommands, rectiarg rect )
+{
+	PROFILE_FUNCTION();
+	assert( isValid( renderCommands ) );
+	auto allocator = &renderCommands->allocator;
+	allocateRenderCommandHeader( allocator, RenderCommandSetScissorRect );
+	auto body     = allocateStruct( allocator, RenderCommandSetScissorRect );
+	body->scissor = rect;
+}
 void setRenderState( RenderCommands* renderCommands, RenderStateType type, bool enabled )
 {
 	PROFILE_FUNCTION();
@@ -1161,7 +1195,7 @@ void clip( Mesh* mesh, rectfarg rect )
 void clip( RenderCommandsStream stream, rectfarg rect )
 {
 	PROFILE_FUNCTION();
-	
+
 	while( stream.size ) {
 		auto header = getRenderCommandsHeader( &stream );
 		switch( header->type ) {

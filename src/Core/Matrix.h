@@ -22,10 +22,7 @@ mat4 matrixRotationX( float angle );
 mat4 matrixRotationY( float angle );
 mat4 matrixRotationZ( float angle );
 
-inline mat4 matrixTranslation( vec3 position )
-{
-	return matrixTranslation( position.x, position.y, position.z );
-}
+inline mat4 matrixTranslation( vec3arg v ) { return matrixTranslation( v.x, v.y, v.z ); }
 mat4 matrixOrthogonalProjection( float left, float top, float right, float bottom, float nearPlane,
                                  float farPlane );
 mat4 matrixPerspectiveProjection( float width, float height, float nearPlane, float farPlane );

@@ -1031,6 +1031,10 @@ static void win32SetRenderState( OpenGlContext* context, mat4* projections, Rend
 					openGlPrepareShader( context );
 					break;
 				}
+				case RenderStateType::Scissor: {
+					glEnable( GL_SCISSOR_TEST );
+					break;
+				}
 				InvalidDefaultCase;
 			}
 		} else {
@@ -1041,6 +1045,10 @@ static void win32SetRenderState( OpenGlContext* context, mat4* projections, Rend
 				}
 				case RenderStateType::Lighting: {
 					openGlPrepareShader( context );
+					break;
+				}
+				case RenderStateType::Scissor: {
+					glDisable( GL_SCISSOR_TEST );
 					break;
 				}
 				InvalidDefaultCase;
@@ -1177,6 +1185,33 @@ static void win32ProcessRenderCommands( OpenGlContext* context, RenderCommands* 
 				}
 				break;
 			}
+			case RenderCommandEntryType::SetProjectionMatrix: {
+				auto body =
+				    getRenderCommandBody( &stream, header, RenderCommandSetProjectionMatrix );
+				switch( body->projectionType ) {
+					case ProjectionType::Perspective: {
+						projections[0] = renderCommands->view * body->matrix;
+						break;
+					}
+					case ProjectionType::Orthogonal: {
+						projections[1] = body->matrix;
+						break;
+					}
+					InvalidDefaultCase;
+				}
+				if( context->currentProjectionType != body->projectionType ) {
+					win32RenderAndFlushBuffers( context, projections, GL_TRIANGLES );
+
+					openGlSetProjection( context, projections, body->projectionType );
+				}
+				break;
+			}
+			case RenderCommandEntryType::SetScissorRect: {
+				auto body = getRenderCommandBody( &stream, header, RenderCommandSetScissorRect );
+				glScissor( body->scissor.left, (int32)context->height - body->scissor.bottom,
+				           width( body->scissor ), height( body->scissor ) );
+				break;
+			}
 			case RenderCommandEntryType::SetRenderState: {
 				auto body = getRenderCommandBody( &stream, header, RenderCommandSetRenderState );
 				win32SetRenderState( context, projections, body->renderStateType, body->enabled );
@@ -1208,7 +1243,9 @@ static bool win32InitOpenGL( OpenGlContext* context, float width, float height )
 		return false;
 	}
 
-	auto aspect              = width / height;
+	// projections can be changed by the game layer, so do not rely on projections being exactly
+	// like initialized here
+	auto aspect = width / height;
 	context->projections[valueof( ProjectionType::Perspective )] =
 	    matrixPerspectiveFovProjection( degreesToRadians( 65 ), aspect, -1, 1 );
 	context->projections[valueof( ProjectionType::Orthogonal )] =

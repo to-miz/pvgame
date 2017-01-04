@@ -62,6 +62,19 @@
 #include "Graphics/Font.h"
 #include "TextureMap.cpp"
 
+global string_builder* GlobalDebugPrinter = nullptr;
+#if defined( GAME_DEBUG ) || ( GAME_DEBUG_PRINTING )
+	#define debugPrint( ... ) GlobalDebugPrinter->print( __VA_ARGS__ );
+	#define debugPrintln( ... ) GlobalDebugPrinter->println( __VA_ARGS__ );
+	#define debugPrintClear() GlobalDebugPrinter->clear()
+	#define debugPrintGetString() asStringView( *GlobalDebugPrinter )
+#else
+	#define debugPrint( ... )
+	#define debugPrintln( ... )
+	#define debugPrintClear()
+	#define debugPrintGetString() ( StringView{} )
+#endif
+
 #include "VirtualKeys.h"
 #include "Inputs.cpp"
 #include "GameDeclarations.h"
@@ -102,19 +115,6 @@ global ProfilingTable* GlobalProfilingTable     = nullptr;
 global MeshStream* debug_MeshStream = nullptr;
 global bool debug_FillMeshStream    = true;
 global DebugValues* debug_Values    = nullptr;
-
-global string_builder* GlobalDebugPrinter = nullptr;
-#if defined( GAME_DEBUG ) || ( GAME_DEBUG_PRINTING )
-	#define debugPrint( ... ) GlobalDebugPrinter->print( __VA_ARGS__ );
-	#define debugPrintln( ... ) GlobalDebugPrinter->println( __VA_ARGS__ );
-	#define debugPrintClear() GlobalDebugPrinter->clear()
-	#define debugPrintGetString() asStringView( *GlobalDebugPrinter )
-#else
-	#define debugPrint( ... )
-	#define debugPrintln( ... )
-	#define debugPrintClear()
-	#define debugPrintGetString() ( StringView{} )
-#endif
 
 struct DebugValues {
 	float groundPosition;
@@ -1060,9 +1060,10 @@ void processControlSystem( GameState* game, ControlSystem* control,
 	}
 }
 
-enum class AppFocus { Game, Voxel, TexturePack };
+enum class AppFocus { Game, Voxel, TexturePack, Animator };
 
 #include "Editor/TexturePack/TexturePack.h"
+#include "Editor/Animator/Animator.h"
 
 struct AppData {
 	PlatformServices platform;
@@ -1078,6 +1079,9 @@ struct AppData {
 	DebugValues debugValues;
 
 	float frameTimeAcc;
+
+	mat4 perspective;
+	mat4 orthogonal;
 
 	StackAllocator stackAllocator;
 	MatrixStack matrixStack;
@@ -1096,12 +1100,14 @@ struct AppData {
 	VoxelState voxelState;
 	GameState gameState;
 	TexturePackState texturePackState;
+	AnimatorState animatorState;
 
 	bool mouseLocked;
 	bool displayDebug;
 };
 
 #include "Editor/TexturePack/TexturePack.cpp"
+#include "Editor/Animator/Animator.cpp"
 
 void fillVoxelGridFromImage( VoxelGrid* grid, ImageData image )
 {
@@ -1188,6 +1194,10 @@ INITIALIZE_APP( initializeApp )
 	app->textureMap      = {makeUArray( allocator, TextureMapEntry, 100 )};
 	app->debugPrinter    = string_builder( allocateArray( allocator, char, 2048 ), 2048 );
 	auto result          = reloadApp( memory, size );
+
+	auto aspect      = app->width / app->height;
+	app->perspective = matrixPerspectiveFovProjection( degreesToRadians( 65 ), aspect, -1, 1 );
+	app->orthogonal  = matrixOrthogonalProjection( 0, 0, app->width, app->height, -1, 1 );
 
 	// custom data
 
@@ -2291,49 +2301,38 @@ Array< VoxelCollection::Frame > getHeroActionAnimation( HeroVoxelCollection* col
 }
 
 template < class Container >
-void unordered_remove_if_helper( Container& container, EntityHandle handle )
+void unordered_remove_if_helper( Container& container, Array< EntityHandle > handles )
 {
-	unordered_remove_if( container, [handle]( typename const Container::reference component ) {
-		return component.entity == handle;
-	} );
-}
-template < class Container >
-void remove_if_helper( Container& container, EntityHandle handle )
-{
-	remove_if( container, [handle]( typename const Container::reference component ) {
-		return component.entity == handle;
+	unordered_remove_if( container, [handles]( typename const Container::reference component ) {
+		return exists( handles, component.entity );
 	} );
 }
 template < class GenericSystem >
-void removeEntity( GenericSystem* system, EntityHandle handle )
+void removeEntities( GenericSystem* system, Array< EntityHandle > handles )
 {
-	unordered_remove_if_helper( system->entries, handle );
+	unordered_remove_if_helper( system->entries, handles );
 }
-void removeEntity( CollidableSystem* system, EntityHandle handle )
+void removeEntities( CollidableSystem* system, Array< EntityHandle > handles )
 {
-	auto end = system->entries.end();
-	for( auto it = system->entries.begin(); it != end; ) {
-		if( it->entity == handle ) {
-			if( !it->dynamic() ) {
+	erase_if( system->entries, [system, handles]( const CollidableComponent& component ) {
+		if( exists( handles, component.entity ) ) {
+			if( !component.dynamic() ) {
 				--system->entriesCount;
 			}
-			it  = system->entries.erase( it );
-			end = system->entries.end();
-			continue;
+			return true;
 		}
-		++it;
-	}
+		return false;
+	} );
 }
 void processEntityRemovalQueue( GameState* game )
 {
 	assert( game );
-	FOR( handle : game->entityRemovalQueue ) {
-		removeEntity( &game->controlSystem, handle );
+	if( game->entityRemovalQueue.size() ) {
+		auto handles = makeArrayView( game->entityRemovalQueue );
+		removeEntities( &game->controlSystem, handles );
+		removeEntities( &game->collidableSystem, handles );
+		game->entityRemovalQueue.clear();
 	}
-	FOR( handle : game->entityRemovalQueue ) {
-		removeEntity( &game->collidableSystem, handle );
-	}
-	game->entityRemovalQueue.clear();
 }
 void removeEntity( GameState* game, EntityHandle handle )
 {
@@ -2692,6 +2691,9 @@ UPDATE_AND_RENDER( updateAndRender )
 	renderer->ambientStrength = 0.1f;
 	renderer->lightColor      = Color::White;
 
+	setProjectionMatrix( renderer, ProjectionType::Perspective, app->perspective );
+	setProjectionMatrix( renderer, ProjectionType::Orthogonal, app->orthogonal );
+
 	debug_Clear();
 
 	// options
@@ -2710,6 +2712,9 @@ UPDATE_AND_RENDER( updateAndRender )
 	}
 	if( isKeyPressed( inputs, KC_F3 ) ) {
 		app->focus = AppFocus::TexturePack;
+	}
+	if( isKeyPressed( inputs, KC_F4 ) ) {
+		app->focus = AppFocus::Animator;
 	}
 	if( isHotkeyPressed( inputs, KC_Key_R, KC_Control ) ) {
 		renderer->lightPosition = app->voxelState.camera.position;
@@ -2747,6 +2752,7 @@ UPDATE_AND_RENDER( updateAndRender )
 		doGame( app, inputs, app->focus == AppFocus::Game, frameRatio, true );
 	}
 	doTexturePack( app, inputs, app->focus == AppFocus::TexturePack, dt );
+	doAnimator( app, inputs, app->focus == AppFocus::Animator, dt );
 
 	addRenderCommandMesh( renderer, toMesh( debug_MeshStream ) );
 

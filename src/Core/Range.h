@@ -7,6 +7,12 @@ template< class T >
 struct trange {
 	T min;
 	T max;
+
+	inline explicit operator bool() const
+	{
+		assert( min <= max );
+		return min < max;
+	}
 };
 
 #if RANGE_ARGS_AS_CONST_REF
@@ -58,4 +64,46 @@ bool operator!=( trangearg< T > a, trangearg< T > b )
 	return a.min != b.min || a.max != b.max;
 }
 
-#endif // _RANGE_H_INCLUDED_
+template < class T >
+bool isValid( trangearg< T > r )
+{
+	return r.min <= r.max;
+}
+template < class T >
+bool isEmpty( trangearg< T > r )
+{
+	return r.min == r.max;
+}
+template < class T, class U >
+bool isInRange( trangearg< T > r, U other )
+{
+	return other >= r.min && other < r.max;
+}
+
+// range based index loop
+
+struct range_iterator {
+	int32 value;
+
+	inline bool operator!=( range_iterator other ) { return this->value < other.value; }
+	inline bool operator==( range_iterator other ) { return this->value >= other.value; }
+	inline range_iterator& operator++()
+	{
+		++value;
+		return *this;
+	}
+	inline range_iterator operator++( int )
+	{
+		auto result = *this;
+		++value;
+		return result;
+	}
+
+	inline int32& operator*() { return value; }
+	inline const int32& operator*() const { return value; }
+};
+
+range_iterator begin( rangeiarg r ) { return {r.min}; }
+range_iterator end( rangeiarg r ) { return {r.max}; }
+
+#endif  // _RANGE_H_INCLUDED_

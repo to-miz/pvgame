@@ -110,7 +110,70 @@ size_t count( Iterator first, Iterator last, ValueType value )
 	return result;
 }
 
-template< class Container, class Iterator >
+template< class Iterator, class Comp >
+Iterator max_element( Iterator first, Iterator last, Comp comp )
+{
+	if( first == last ) {
+		return last;
+	}
+	Iterator max = first;
+	++first;
+	while( first != last ) {
+		if( comp( *max, *first ) ) {
+			max = first;
+		}
+		++first;
+	}
+	return max;
+}
+template< class Iterator >
+Iterator max_element( Iterator first, Iterator last )
+{
+	return max_element( first, last, less() );
+}
+template< class Container >
+typename Container::iterator max_element( const Container& container )
+{
+	return max_element( begin( container ), end( container ), less() );
+}
+template< class Container, class Comp >
+typename Container::iterator max_element( const Container& container, Comp comp )
+{
+	return max_element( begin( container ), end( container ), comp );
+}
+template< class Iterator, class Comp >
+Iterator min_element( Iterator first, Iterator last, Comp comp )
+{
+	if( first == last ) {
+		return last;
+	}
+	Iterator min = first;
+	++first;
+	while( first != last ) {
+		if( comp( *first, *min ) ) {
+			min = first;
+		}
+		++first;
+	}
+	return min;
+}
+template< class Iterator >
+Iterator min_element( Iterator first, Iterator last )
+{
+	return min_element( first, last, less() );
+}
+template< class Container >
+typename Container::iterator min_element( const Container& container )
+{
+	return min_element( begin( container ), end( container ), less() );
+}
+template< class Container, class Comp >
+typename Container::iterator min_element( const Container& container, Comp comp )
+{
+	return min_element( begin( container ), end( container ), comp );
+}
+
+template < class Container, class Iterator >
 Iterator unordered_erase( Container& container, Iterator it )
 {
 	if( it == container.end() - 1 ) {
@@ -120,6 +183,34 @@ Iterator unordered_erase( Container& container, Iterator it )
 	*it = std::move( container.back() );
 	container.pop_back();
 	return it;
+}
+
+// more efficient way to erase based on a predicate than calling container.erase in a loop
+template< class Iterator, class Pred >
+Iterator erase_if( Iterator first, Iterator last, Pred pred )
+{
+	assert( first <= last );
+
+	auto insertPos = find_if( first, last, pred );
+	if( insertPos == last ) {
+		return last;
+	}
+
+	auto it = insertPos + 1;
+	for( ; it != last; ++it ) {
+		if( !pred( *it ) ) {
+			*insertPos = std::move( *it );
+			++insertPos;
+		}
+	}
+	return insertPos;
+}
+
+template < class Container, class Pred >
+auto erase_if( Container& container, Pred pred ) -> typename Container::iterator
+{
+	auto last = end( container );
+	return container.erase( erase_if( begin( container ), last, pred ), last );
 }
 
 // removes elements from container that are equal to value, changing the size of the container
@@ -159,32 +250,12 @@ void unordered_remove_if( Container& container, UnaryPredicate pred )
 	}
 }
 
-template < class Container, class UnaryPredicate >
-void remove_if( Container& container, UnaryPredicate pred )
-{
-	// TODO: implement using find_if?
-	using std::begin;
-	using std::end;
-	auto last = end( container );
-	for( auto it = begin( container ); it != last; ) {
-		if( pred( *it ) ) {
-			it   = container.erase( it );
-			last = end( container );
-			continue;
-		}
-		++it;
-	}
-}
-
 template < class Container, class Value >
-bool find_and_erase( Container& container, Value&& value )
+bool find_and_erase( Container& container, const Value& value )
 {
-	using std::find;
-	using std::begin;
-	using std::end;
-	auto end_ = end( container );
-	auto it   = find( begin( container ), end_, value );
-	if( it != end_ ) {
+	auto last = end( container );
+	auto it   = find( begin( container ), last, value );
+	if( it != last ) {
 		container.erase( it );
 		return true;
 	}
@@ -199,7 +270,7 @@ bool find_and_erase_if( Container& container, UnaryPredicate&& pred )
 	using std::begin;
 	using std::end;
 	auto end_ = end( container );
-	auto it = find_if( begin( container ), end_, std::forward< UnaryPredicate >( pred ) );
+	auto it   = find_if( begin( container ), end_, std::forward< UnaryPredicate >( pred ) );
 	if( it != end_ ) {
 		container.erase( it );
 		return true;
@@ -275,8 +346,8 @@ inline bool exists_if( Container& container, UnaryPredicate&& pred )
 {
 	using std::begin;
 	using std::end;
-	auto end_ = end( container );
-	return find_if( begin( container ), end_, std::forward< UnaryPredicate >( pred ) ) != end_;
+	auto last = end( container );
+	return find_if( begin( container ), last, std::forward< UnaryPredicate >( pred ) ) != last;
 }
 
 template < class Container, class T >

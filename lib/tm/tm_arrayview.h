@@ -1,5 +1,5 @@
 /*
-tm_arrayview.h v1.1.2a - public domain
+tm_arrayview.h v1.1.3 - public domain
 written by Tolga Mizrak 2016
 
 no warranty; use at your own risk
@@ -36,6 +36,7 @@ SWITCHES
 	    std::container usage and UninitializedArrayView usage will require code changes.
 
 HISTORY
+	v1.1.3  07.12.16 added std::initializer_list assign to UninitializedArrayView
 	v1.1.2a 07.10.16 minor adjustment of size_t usage
 	                 fixed a minor assertion error
 	v1.1.2  07.10.16 removed get_index and unsigned int arithmetic when tma_size_t is signed
@@ -536,6 +537,12 @@ inline reference emplace_back()
 		for( tma_size_t i = 0; i < count; ++i ) {
 			ptr[i] = val;
 		}
+	}
+	inline void assign( const std::initializer_list< T >& list )
+	{
+		TMA_ASSERT( list.size() <= (size_t)capacity() );
+		sz = (size_type)list.size();
+		TMA_MEMCPY( ptr, list.begin(), sz * sizeof( value_type ) );
 	}
 
 	iterator insert( iterator position, size_type n, const value_type& val )

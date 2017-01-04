@@ -19,7 +19,7 @@ enum class ImGuiControlType : uint8 {
 	Point,
 	Rect,
 	Scrollable,
-	ScrollableRegion,
+	ScrollableRegion
 };
 union ImGuiHandle {
 	struct {
@@ -132,10 +132,11 @@ ImGuiStyle defaultImGuiStyle()
 namespace ImGuiContainerStateFlags
 {
 enum Values : uint16 {
-	Minimized = BITFIELD( 0 ),
-	Hidden    = BITFIELD( 1 ),
-	Dragging  = BITFIELD( 2 ),
-	Modal     = BITFIELD( 3 ),
+	Minimized         = BITFIELD( 0 ),
+	Hidden            = BITFIELD( 1 ),
+	Dragging          = BITFIELD( 2 ),
+	Modal             = BITFIELD( 3 ),
+	CanGrowHorizontal = BITFIELD( 4 ),
 };
 }
 
@@ -216,6 +217,7 @@ struct ImmediateModeGui {
 	int8 hoverContainer;  // the container the mouse is currently over
 	int8 modalContainer;
 	bool8 processInputs;
+	bool8 clearCapture;
 	ImGuiHandle capture;  // the container that has the mouse currently captured
 	ImGuiHandle focus;
 	vec2 mouseOffset;  // offset of mouse when dragging to the leftTop position of the container
@@ -327,8 +329,13 @@ void imguiClear()
 		container.xMax   = 0;
 	}
 
-	if( isKeyUp( ImGui->inputs, KC_LButton ) ) {
+	if( ImGui->clearCapture ) {
 		ImGui->capture = {};
+		ImGui->clearCapture = false;
+	}
+	if( isKeyUp( ImGui->inputs, KC_LButton ) ) {
+		// clear capture delayed by one frame, so that capturing controls can process key up
+		ImGui->clearCapture = true;
 	}
 	// set hover container
 	auto mousePosition = ImGui->inputs->mouse.position;
@@ -698,12 +705,20 @@ ImGuiContainerState* imguiCurrentContainer()
 }
 rectf imguiAddItem( float width, float height )
 {
-	auto container = imguiCurrentContainer();
-	width          = MIN( width, ::width( container->rect ) );
+	auto container         = imguiCurrentContainer();
+	auto canGrowHorizontal = ( container->flags & ImGuiContainerStateFlags::CanGrowHorizontal );
+	if( !canGrowHorizontal ) {
+		width = MIN( width, ::width( container->rect ) );
+	}
 	auto result    = RectWH( container->addPosition.x + ImGui->style.innerPadding,
-	                      container->addPosition.y, width, height );
+	                         container->addPosition.y, width, height );
 	if( result.right > container->rect.right ) {
-		result.right = container->rect.right;
+		if( !canGrowHorizontal ) {
+			// clamp result right since we can't grow horizontal
+			result.right = container->rect.right;
+		} else {
+			container->rect.right = result.right;
+		}
 	}
 	bool newline = false;
 	if( container->horizontalCount > 0 ) {
@@ -1451,6 +1466,72 @@ static bool imguiPaddle( ImGuiHandle handle, float* value, float min, float max,
 	return false;
 }
 
+// behaves like a slider but does not render anything
+// use sliderRect to render custom slider paddle
+struct ImGuiCustomSliderState {
+	uint8 flags;
+	rectf sliderRect;
+
+	enum Flags : uint8 {
+		Clicked = BITFIELD( 0 ),
+		Changed = BITFIELD( 1 ),
+	};
+	bool changed() const { return ( flags & Changed ) != 0; }
+	bool clicked() const { return ( flags & Clicked ) != 0; }
+};
+ImGuiCustomSliderState imguiCustomSlider( ImGuiHandle handle, float* value, float min, float max,
+                                          float width, float paddleWidth, float paddleHeight,
+                                          bool advance = true )
+{
+	assert( value );
+
+	using namespace ImGuiTexCoords;
+
+	auto inputs = ImGui->inputs;
+	auto style  = &ImGui->style;
+
+	auto container   = imguiCurrentContainer();
+	auto height      = paddleHeight + style->innerPadding * 2;
+	auto addPosition = container->addPosition;
+	auto rect        = imguiAddItem( width, height );
+	if( !advance ) {
+		container->addPosition = addPosition;
+	}
+	auto inner = imguiInnerRect( rect );
+
+	auto sliderArea = inner;
+	auto mm         = minmax( min, max );
+	*value          = clamp( *value, mm.min, mm.max );
+	sliderArea.right -= paddleWidth;
+	float paddlePosition = ( ( *value - min ) / ( max - min ) ) * ::width( sliderArea );
+
+	ImGuiCustomSliderState result = {};
+	result.sliderRect =
+	    RectWH( sliderArea.left + paddlePosition, sliderArea.top, paddleWidth, paddleHeight );
+
+	if( isKeyPressed( inputs, KC_LButton ) && imguiIsHover( handle )
+	    && isPointInside( result.sliderRect, inputs->mouse.position ) ) {
+		imguiFocus( handle );
+		imguiCapture( handle );
+		ImGui->mouseOffset = inputs->mouse.position - result.sliderRect.leftTop;
+		result.flags |= ImGuiCustomSliderState::Clicked;
+	}
+
+	if( imguiPaddle( handle, value, min, max, &result.sliderRect.left, sliderArea.left,
+	                 sliderArea.right, VectorComponent_X, ImGui->mouseOffset.x ) ) {
+		result.flags |= ImGuiCustomSliderState::Changed;
+		result.sliderRect.right = result.sliderRect.left + paddleWidth;
+	}
+	return result;
+}
+ImGuiCustomSliderState imguiCustomSlider( float* value, float min, float max, float width,
+                                          float paddleWidth, float paddleHeight,
+                                          bool advance = true )
+{
+	auto handle = imguiMakeHandle( value, ImGuiControlType::Slider );
+	return imguiCustomSlider( handle, value, min, max, width, paddleWidth, paddleHeight, advance );
+}
+
 bool imguiSlider( StringView name, float* value, float min, float max )
 {
 	assert( value );
@@ -1768,6 +1849,13 @@ void imguiNextColumn( ImGuiBeginColumnResult* columns, float width )
 	container->rect = RectSetWidth( container->rect, width );
 	columns->x      = container->rect.left;
 }
+void imguiEndColumn( ImGuiBeginColumnResult* columns )
+{
+	auto container         = imguiCurrentContainer();
+	container->rect        = columns->rect;
+	container->rect.top    = container->addPosition.y;
+	container->addPosition = container->rect.leftTop;
+}
 
 struct ImGuiListboxItem {
 	StringView text;
@@ -1902,7 +1990,7 @@ rectf imguiScrollable( vec2* scrollPos, rectfarg scrollDomain, float width, floa
 }
 
 struct ImGuiScrollableRegion {
-	float scrollPos;
+	vec2 scrollPos;
 	vec2 dim;
 };
 struct ImGuiScrollableRegionResult {
@@ -1910,9 +1998,10 @@ struct ImGuiScrollableRegionResult {
 	rectf prevRect;
 	char* clippingStart;
 	bool8 wasProcessingInputs;
+	bool8 wasGrowingHorizontal;
 };
 ImGuiScrollableRegionResult imguiBeginScrollableRegion( ImGuiScrollableRegion* region, float width,
-                                                        float height )
+                                                        float height, bool allowHorizontal = false )
 {
 	assert( region );
 	auto handle    = imguiMakeHandle( region, ImGuiControlType::ScrollableRegion );
@@ -1920,21 +2009,30 @@ ImGuiScrollableRegionResult imguiBeginScrollableRegion( ImGuiScrollableRegion* r
 	auto inputs    = ImGui->inputs;
 
 	ImGuiScrollableRegionResult result = {};
-	auto clipWidth = width;
-	if( region->dim.y > height - ImGui->style.innerPadding * 2 ) {
+	auto clipWidth                     = width;
+	auto clipHeight                    = height;
+	if( allowHorizontal && region->dim.x > width - ImGui->style.innerPadding * 2 ) {
+		clipHeight -= ImGui->style.scrollHeight + ImGui->style.innerPadding;
+	} else {
+		region->scrollPos.x = 0;
+	}
+	if( region->dim.y > clipHeight - ImGui->style.innerPadding * 2 ) {
 		clipWidth -= ImGui->style.scrollWidth + ImGui->style.innerPadding;
 	} else {
-		region->scrollPos = 0;
+		region->scrollPos.y = 0;
 	}
-	auto rect                          = imguiAddItem( clipWidth, height );
-	result.inner                       = imguiInnerRect( rect );
-	result.prevRect                    = container->rect;
-	result.clippingStart               = back( ImGui->renderer );
-	result.wasProcessingInputs         = ImGui->processInputs;
+	auto rect                  = imguiAddItem( clipWidth, clipHeight );
+	result.inner               = imguiInnerRect( rect );
+	result.prevRect            = container->rect;
+	result.clippingStart       = back( ImGui->renderer );
+	result.wasProcessingInputs = ImGui->processInputs;
+	result.wasGrowingHorizontal =
+	    isFlagSet( container->flags, ImGuiContainerStateFlags::CanGrowHorizontal );
+	setFlagCond( container->flags, ImGuiContainerStateFlags::CanGrowHorizontal, allowHorizontal );
 
 	container->rect.right  = result.inner.right;
-	container->rect.left   = result.inner.left;
-	container->rect.top    = result.inner.top - region->scrollPos;
+	container->rect.left   = result.inner.left - region->scrollPos.x;
+	container->rect.top    = result.inner.top - region->scrollPos.y;
 	container->rect.bottom = container->rect.top;
 	container->addPosition = container->rect.leftTop;
 
@@ -1957,23 +2055,38 @@ void imguiEndScrollableRegion( ImGuiScrollableRegion* region, ImGuiScrollableReg
 	                               ( size_t )( back( renderer ) - state->clippingStart )};
 	clip( stream, state->inner );
 
-	/*RENDER_COMMANDS_STATE_BLOCK( renderer ) {
-	    renderer->color = Color::White;
+#if 0
+	RENDER_COMMANDS_STATE_BLOCK( renderer ) {
+	    renderer->color = Color::Black;
 	    setTexture( renderer, 0, null );
 	    addRenderCommandSingleQuad( renderer, container->rect );
-	}*/
+	}
+#endif
 
 	auto containerHeight = height( container->rect );
+	auto containerWidth = width( container->rect );
 	auto innerHeight = height( state->inner );
+	auto innerWidth = width( state->inner );
 	ImGui->processInputs   = state->wasProcessingInputs;
+	setFlagCond( container->flags, ImGuiContainerStateFlags::CanGrowHorizontal,
+	             state->wasGrowingHorizontal );
+	if( containerWidth > innerWidth ) {
+		rectf scrollRect = state->inner;
+		scrollRect.top   = scrollRect.bottom;
+		scrollRect.bottom += ImGui->style.scrollHeight;
+		imguiScrollbar( &region->scrollPos.x, 0, containerWidth, innerWidth, stepSize, scrollRect,
+		                false );
+	} else {
+		region->scrollPos.y = 0;
+	}
 	if( containerHeight > innerHeight ) {
 		rectf scrollRect = state->inner;
 		scrollRect.left  = scrollRect.right;
 		scrollRect.right += ImGui->style.scrollWidth;
-		imguiScrollbar( &region->scrollPos, 0, containerHeight, innerHeight, stepSize, scrollRect,
+		imguiScrollbar( &region->scrollPos.y, 0, containerHeight, innerHeight, stepSize, scrollRect,
 		                true );
 	} else {
-		region->scrollPos = 0;
+		region->scrollPos.y = 0;
 	}
 	region->dim.x          = width( container->rect );
 	region->dim.y          = containerHeight;
