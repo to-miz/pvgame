@@ -45,12 +45,15 @@ typedef tvec2arg< int > vec2iarg;
 
 float cross( vec2arg a, vec2arg b );
 float dot( vec2arg a, vec2arg b );
-float length( vec2arg a );
+float length( vec2arg v );
+bool hasMagnitude( vec2arg v );
 vec2 normalize( vec2arg v );
 vec2 normalize( vec2arg v, float* outLength );
 vec2 safeNormalize( vec2arg v, vec2arg def = {} );
 vec2 safeNormalize( vec2arg v, float* outLength, vec2arg def = {} );
 
+float angle( vec2arg v );
+float angle( vec2arg a, vec2arg b );
 vec2 rotate( vec2arg v, float angle );
 vec2 rotate( vec2arg v, float sin, float cos );
 vec2 rotateAround( vec2arg v, vec2arg origin, float angle );

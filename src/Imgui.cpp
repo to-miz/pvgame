@@ -218,6 +218,7 @@ struct ImmediateModeGui {
 	int8 modalContainer;
 	bool8 processInputs;
 	bool8 clearCapture;
+	uint8 captureKey;
 	ImGuiHandle capture;  // the container that has the mouse currently captured
 	ImGuiHandle focus;
 	vec2 mouseOffset;  // offset of mouse when dragging to the leftTop position of the container
@@ -330,12 +331,14 @@ void imguiClear()
 	}
 
 	if( ImGui->clearCapture ) {
-		ImGui->capture = {};
+		ImGui->capture      = {};
 		ImGui->clearCapture = false;
 	}
-	if( isKeyUp( ImGui->inputs, KC_LButton ) ) {
+	if( ImGui->capture && isKeyUp( ImGui->inputs, ImGui->captureKey ) ) {
+		assert( ImGui->captureKey );
 		// clear capture delayed by one frame, so that capturing controls can process key up
 		ImGui->clearCapture = true;
+		ImGui->captureKey   = 0;
 	}
 	// set hover container
 	auto mousePosition = ImGui->inputs->mouse.position;
@@ -346,7 +349,7 @@ void imguiClear()
 		ImGui->hoverContainer = -1;
 		if( auto font = ImGui->font ) {
 			int8 z = -1;
-			for( intmax i = 0, count = ImGui->containersCount; i < count; ++i ) {
+			for( auto i = 0, count = ImGui->containersCount; i < count; ++i ) {
 				auto container = &ImGui->containers[i];
 				if( container->isHidden() ) {
 					continue;
@@ -496,9 +499,10 @@ bool imguiIsHover( ImGuiHandle handle ) {
 	       && ( ( ImGui->modalContainer < 0 && ImGui->hoverContainer == handle.container )
 	            || ( ImGui->modalContainer == handle.container ) );
 }
-void imguiCapture( ImGuiHandle handle )
+void imguiCapture( ImGuiHandle handle, uint8 captureKey = KC_LButton )
 {
 	ImGui->capture        = handle;
+	ImGui->captureKey     = captureKey;
 	ImGui->hoverContainer = handle.container;
 }
 void imguiBringToFront( int8 container )
@@ -1108,10 +1112,10 @@ bool imguiEditbox( StringView name, char* data, int32* length, int32 size )
 	                     ImGui->style.editboxHeight );
 }
 
-bool imguiEditbox( StringView name, float* value )
+bool imguiEditbox( ImGuiHandle handle, StringView name, float* value )
 {
 	assert( value );
-	auto handle = imguiMakeHandle( value, ImGuiControlType::Editbox );
+	handle.type = ImGuiControlType::Editbox;
 	if( imguiHasFocus( handle ) ) {
 		if( imguiEditbox( handle, name, ImGui->editboxStatic, &ImGui->editboxStaticCount,
 		                  countof( ImGui->editboxStatic ), ImGui->style.editboxWidth,
@@ -1131,10 +1135,15 @@ bool imguiEditbox( StringView name, float* value )
 		return result;
 	}
 }
-bool imguiEditbox( StringView name, int32* value )
+bool imguiEditbox( StringView name, float* value )
+{
+	auto handle = imguiMakeHandle( value, ImGuiControlType::Editbox );
+	return imguiEditbox( handle, name, value );
+}
+bool imguiEditbox( ImGuiHandle handle, StringView name, int32* value )
 {
 	assert( value );
-	auto handle = imguiMakeHandle( value, ImGuiControlType::Editbox );
+	handle.type = ImGuiControlType::Editbox;
 	if( imguiHasFocus( handle ) ) {
 		if( imguiEditbox( handle, name, ImGui->editboxStatic, &ImGui->editboxStaticCount,
 		                  countof( ImGui->editboxStatic ), ImGui->style.editboxWidth,
@@ -1153,6 +1162,11 @@ bool imguiEditbox( StringView name, int32* value )
 		}
 		return result;
 	}
+}
+bool imguiEditbox( StringView name, int32* value )
+{
+	auto handle = imguiMakeHandle( value, ImGuiControlType::Editbox );
+	return imguiEditbox( handle, name, value );
 }
 
 void imguiUpdate( float dt )
@@ -1532,32 +1546,20 @@ ImGuiCustomSliderState imguiCustomSlider( float* value, float min, float max, fl
 	return imguiCustomSlider( handle, value, min, max, width, paddleWidth, paddleHeight, advance );
 }
 
-bool imguiSlider( StringView name, float* value, float min, float max )
+bool imguiSlider( ImGuiHandle handle, float* value, float min, float max, rectfarg rect )
 {
-	assert( value );
-
 	using namespace ImGuiTexCoords;
 
-	auto renderer  = ImGui->renderer;
-	auto inputs    = ImGui->inputs;
-	auto font      = ImGui->font;
-	auto style     = &ImGui->style;
-	auto container = imguiCurrentContainer();
+	auto renderer = ImGui->renderer;
+	auto inputs   = ImGui->inputs;
+	auto style    = &ImGui->style;
+	handle.type   = ImGuiControlType::Slider;
 
-	auto handle  = imguiMakeHandle( value, ImGuiControlType::Slider );
-	auto changed = false;
-
-	auto width  = ::width( container->rect );
-	auto height = ::max( stringHeight( font ), ::height( style->rects[SliderKnob] ) )
-	              + style->innerPadding * 2;
-	auto rect  = imguiAddItem( width, height );
-	auto inner = imguiInnerRect( rect );
-
-	auto sliderArea = inner;
-	sliderArea.left += stringWidth( font, name ) + style->innerPadding;
-	auto mm = minmax( min, max );
-	*value = clamp( *value, mm.min, mm.max );
+	auto changed     = false;
+	auto mm          = minmax( min, max );
+	*value           = clamp( *value, mm.min, mm.max );
 	auto paddleWidth = ::width( style->rects[SliderKnob] );
+	auto sliderArea  = rect;
 	sliderArea.right -= paddleWidth;
 	float paddlePosition = ( ( *value - min ) / ( max - min ) ) * ::width( sliderArea );
 	rectf paddle =
@@ -1581,12 +1583,56 @@ bool imguiSlider( StringView name, float* value, float min, float max )
 		MESH_STREAM_BLOCK( stream, renderer ) {
 			pushQuad( stream, paddle, 0, makeQuadTexCoords( style->texCoords[SliderKnob] ) );
 		}
-		renderer->color = multiply( renderer->color, Color::White );
-		auto textArea   = inner;
-		renderTextClipped( renderer, font, name, textArea );
 	}
 
 	return changed;
+}
+
+bool imguiSlider( ImGuiHandle handle, float* value, float min, float max )
+{
+	assert( value );
+	using namespace ImGuiTexCoords;
+
+	auto style     = &ImGui->style;
+	auto container = imguiCurrentContainer();
+
+	auto width  = ::width( container->rect );
+	auto height = ::height( style->rects[SliderKnob] ) + style->innerPadding * 2;
+	auto rect   = imguiAddItem( width, height );
+	auto inner  = imguiInnerRect( rect );
+	return imguiSlider( handle, value, min, max, inner );
+}
+bool imguiSlider( float* value, float min, float max )
+{
+	auto handle = imguiMakeHandle( value, ImGuiControlType::Slider );
+	return imguiSlider( handle, value, min, max );
+}
+bool imguiSlider( StringView name, float* value, float min, float max )
+{
+	assert( value );
+
+	using namespace ImGuiTexCoords;
+
+	auto renderer  = ImGui->renderer;
+	auto font      = ImGui->font;
+	auto style     = &ImGui->style;
+	auto container = imguiCurrentContainer();
+
+	auto handle  = imguiMakeHandle( value, ImGuiControlType::Slider );
+
+	auto width  = ::width( container->rect );
+	auto height = ::max( stringHeight( font ), ::height( style->rects[SliderKnob] ) )
+	              + style->innerPadding * 2;
+	auto rect       = imguiAddItem( width, height );
+	auto inner      = imguiInnerRect( rect );
+	auto sliderArea = inner;
+	sliderArea.left += stringWidth( font, name ) + style->innerPadding;
+	RENDER_COMMANDS_STATE_BLOCK( renderer ) {
+		auto textArea   = inner;
+		renderer->color = multiply( renderer->color, Color::White );
+		renderTextClipped( renderer, font, name, textArea );
+	}
+	return imguiSlider( handle, value, min, max, sliderArea );
 }
 
 rectf imguiRegion( float width, float height )

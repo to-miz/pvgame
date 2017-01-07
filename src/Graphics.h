@@ -362,6 +362,19 @@ void pushAabb( MeshStream* stream, aabbarg aabb )
 	};
 	pushBox( stream, vertices );
 }
+void pushAabbTransformed( MeshStream* stream, float left, float bottom, float near, float right,
+                          float top, float far )
+{
+	PROFILE_FUNCTION();
+	auto& m          = currentMatrix( stream->matrixStack );
+	vec3 vertices[8] = {
+	    transformVector( m, {left, top, near} ),    transformVector( m, {right, top, near} ),
+	    transformVector( m, {left, bottom, near} ), transformVector( m, {right, bottom, near} ),
+	    transformVector( m, {left, top, far} ),     transformVector( m, {right, top, far} ),
+	    transformVector( m, {left, bottom, far} ),  transformVector( m, {right, bottom, far} ),
+	};
+	pushBox( stream, vertices );
+}
 
 void pushRay( MeshStream* stream, vec3arg start, vec3arg dirNormalized, float length )
 {

@@ -1188,6 +1188,9 @@ static void win32ProcessRenderCommands( OpenGlContext* context, RenderCommands* 
 			case RenderCommandEntryType::SetProjectionMatrix: {
 				auto body =
 				    getRenderCommandBody( &stream, header, RenderCommandSetProjectionMatrix );
+				if( context->currentProjectionType == body->projectionType ) {
+					win32RenderAndFlushBuffers( context, projections, GL_TRIANGLES );
+				}
 				switch( body->projectionType ) {
 					case ProjectionType::Perspective: {
 						projections[0] = renderCommands->view * body->matrix;
@@ -1198,11 +1201,6 @@ static void win32ProcessRenderCommands( OpenGlContext* context, RenderCommands* 
 						break;
 					}
 					InvalidDefaultCase;
-				}
-				if( context->currentProjectionType != body->projectionType ) {
-					win32RenderAndFlushBuffers( context, projections, GL_TRIANGLES );
-
-					openGlSetProjection( context, projections, body->projectionType );
 				}
 				break;
 			}

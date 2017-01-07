@@ -29,12 +29,12 @@ mat4 matrixRotation( float x, float y, float z )
 {
 	mat4 result;
 	auto sc = simd::sincos( x, y, z, 0 );
-	float A = sc.s[0];
-	float B = sc.c[0];
-	float C = sc.s[1];
-	float D = sc.c[1];
-	float E = sc.s[2];
-	float F = sc.c[2];
+	float A = sc.c[0];
+	float B = sc.s[0];
+	float C = sc.c[1];
+	float D = sc.s[1];
+	float E = sc.c[2];
+	float F = sc.s[2];
 
 	float AD = A * D;
 	float BD = B * D;
@@ -52,6 +52,10 @@ mat4 matrixRotation( float x, float y, float z )
 	result.m[3] = result.m[7] = result.m[11] = result.m[12] = result.m[13] = result.m[14] = 0;
 	result.m[15] = 1;
 	return result;
+}
+mat4 matrixRotation( vec3arg r )
+{
+	return matrixRotation( r.x, r.y, r.z );
 }
 mat4 matrixRotationX( float angle )
 {
@@ -287,16 +291,36 @@ mat4 matrixLookAt( vec3arg position, vec3arg lookAt, vec3 up /* = {0, 1, 0}*/ )
 mat4 operator*( mat4arg lhs, mat4arg rhs )
 {
 	mat4 result;
-	for( intmax i = 0; i <= 12; i += 4 ) {
-		for( intmax j = 0; j < 4; ++j ) {
-			result.m[i + j] = ( lhs.m[i + 0] * rhs.m[0 + j] ) + ( lhs.m[i + 1] * rhs.m[4 + j] )
-							  + ( lhs.m[i + 2] * rhs.m[8 + j] ) + ( lhs.m[i + 3] * rhs.m[12 + j] );
-		}
+	for( auto i = 0; i < 16; i += 4 ) {
+	    for( auto j = 0; j < 4; ++j ) {
+	        result.m[i + j] = ( lhs.m[i + 0] * rhs.m[0 + j] ) + ( lhs.m[i + 1] * rhs.m[4 + j] )
+	                          + ( lhs.m[i + 2] * rhs.m[8 + j] ) + ( lhs.m[i + 3] * rhs.m[12 + j] );
+	    }
 	}
 	return result;
 }
 
-vec3 transformVector( mat4arg matrix, vec3arg v )
+// all transformVector functions return homogeneous coords
+
+vec4 transformVector4( mat4arg matrix, vec4arg v )
+{
+	vec4 result;
+	result.x = matrix.m[0] * v.x + matrix.m[4] * v.y + matrix.m[8] * v.z + matrix.m[12] * v.w;
+	result.y = matrix.m[1] * v.x + matrix.m[5] * v.y + matrix.m[9] * v.z + matrix.m[13] * v.w;
+	result.z = matrix.m[2] * v.x + matrix.m[6] * v.y + matrix.m[10] * v.z + matrix.m[14] * v.w;
+	result.w = matrix.m[3] * v.x + matrix.m[7] * v.y + matrix.m[11] * v.z + matrix.m[15] * v.w;
+	return result;
+}
+vec4 transformVector4( mat4arg matrix, vec3arg v )
+{
+	vec4 result;
+	result.x = matrix.m[0] * v.x + matrix.m[4] * v.y + matrix.m[8] * v.z + matrix.m[12];
+	result.y = matrix.m[1] * v.x + matrix.m[5] * v.y + matrix.m[9] * v.z + matrix.m[13];
+	result.z = matrix.m[2] * v.x + matrix.m[6] * v.y + matrix.m[10] * v.z + matrix.m[14];
+	result.w = matrix.m[3] * v.x + matrix.m[7] * v.y + matrix.m[11] * v.z + matrix.m[15];
+	return result;
+}
+vec3 transformVector3( mat4arg matrix, vec3arg v )
 {
 	vec3 result;
 	result.x = matrix.m[0] * v.x + matrix.m[4] * v.y + matrix.m[8] * v.z + matrix.m[12];
@@ -304,10 +328,90 @@ vec3 transformVector( mat4arg matrix, vec3arg v )
 	result.z = matrix.m[2] * v.x + matrix.m[6] * v.y + matrix.m[10] * v.z + matrix.m[14];
 	return result;
 }
-vec2 transformVector( mat4arg matrix, vec2arg v )
+vec2 transformVector2( mat4arg matrix, vec2arg v )
 {
 	vec2 result;
 	result.x = matrix.m[0] * v.x + matrix.m[4] * v.y + matrix.m[12];
 	result.y = matrix.m[1] * v.x + matrix.m[5] * v.y + matrix.m[13];
 	return result;
+}
+vec3 transformVector( mat4arg matrix, vec3arg v ) { return transformVector3( matrix, v ); }
+vec2 transformVector( mat4arg matrix, vec2arg v ) { return transformVector2( matrix, v ); }
+
+vec3 toScreenSpace3( mat4arg worldViewProj, vec3arg v, float width, float height )
+{
+	// transform to homogeneous space
+	auto t = transformVector4( worldViewProj, v );
+	// to clip space
+	t.xyz /= t.w;
+	// to screen space
+	t.x = ( t.x + 1 ) * ( width * 0.5f );
+	// invert y because screen space origin is top left instead of bottom left
+	t.y = ( 1 - t.y ) * ( height * 0.5f );
+	t.z = ( t.z + 1 ) * 0.5f;
+	return t.xyz;
+}
+vec2 toScreenSpace( mat4arg worldViewProj, vec3arg v, float width, float height )
+{
+	return toScreenSpace3( worldViewProj, v, width, height ).xy;
+}
+
+vec3 toWorldSpace( mat4arg invertedWorldViewProj, vec3arg v, float width, float height )
+{
+	vec4 p = { ( v.x / width ) * 2 - 1, ( 1 - ( v.y / height ) * 2 ), v.z * 2 - 1, 1};
+	p = transformVector4( invertedWorldViewProj, p );
+	p.xyz *= 1.0f / p.w;
+	return p.xyz;
+}
+
+bool inverse( mat4arg mat, mat4* out )
+{
+	// formula from http://www.cg.info.hiroshima-cu.ac.jp/~miyazaki/knowledge/teche23.html
+	assert( out );
+
+	auto m11 = mat.m[0];
+	auto m12 = mat.m[1];
+	auto m13 = mat.m[2];
+	auto m14 = mat.m[3];
+	auto m21 = mat.m[4];
+	auto m22 = mat.m[5];
+	auto m23 = mat.m[6];
+	auto m24 = mat.m[7];
+	auto m31 = mat.m[8];
+	auto m32 = mat.m[9];
+	auto m33 = mat.m[10];
+	auto m34 = mat.m[11];
+	auto m41 = mat.m[12];
+	auto m42 = mat.m[13];
+	auto m43 = mat.m[14];
+	auto m44 = mat.m[15];
+	// clang-format off
+	out->m[ 0] = m22*m33*m44 + m23*m34*m42 + m24*m32*m43 - m22*m34*m43 - m23*m32*m44 - m24*m33*m42;
+	out->m[ 1] = m12*m34*m43 + m13*m32*m44 + m14*m33*m42 - m12*m33*m44 - m13*m34*m42 - m14*m32*m43;
+	out->m[ 2] = m12*m23*m44 + m13*m24*m42 + m14*m22*m43 - m12*m24*m43 - m13*m22*m44 - m14*m23*m42;
+	out->m[ 3] = m12*m24*m33 + m13*m22*m34 + m14*m23*m32 - m12*m23*m34 - m13*m24*m32 - m14*m22*m33;
+	out->m[ 4] = m21*m34*m43 + m23*m31*m44 + m24*m33*m41 - m21*m33*m44 - m23*m34*m41 - m24*m31*m43;
+	out->m[ 5] = m11*m33*m44 + m13*m34*m41 + m14*m31*m43 - m11*m34*m43 - m13*m31*m44 - m14*m33*m41;
+	out->m[ 6] = m11*m24*m43 + m13*m21*m44 + m14*m23*m41 - m11*m23*m44 - m13*m24*m41 - m14*m21*m43;
+	out->m[ 7] = m11*m23*m34 + m13*m24*m31 + m14*m21*m33 - m11*m24*m33 - m13*m21*m34 - m14*m23*m31;
+	out->m[ 8] = m21*m32*m44 + m22*m34*m41 + m24*m31*m42 - m21*m34*m42 - m22*m31*m44 - m24*m32*m41;
+	out->m[ 9] = m11*m34*m42 + m12*m31*m44 + m14*m32*m41 - m11*m32*m44 - m12*m34*m41 - m14*m31*m42;
+	out->m[10] = m11*m22*m44 + m12*m24*m41 + m14*m21*m42 - m11*m24*m42 - m12*m21*m44 - m14*m22*m41;
+	out->m[11] = m11*m24*m32 + m12*m21*m34 + m14*m22*m31 - m11*m22*m34 - m12*m24*m31 - m14*m21*m32;
+	out->m[12] = m21*m33*m42 + m22*m31*m43 + m23*m32*m41 - m21*m32*m43 - m22*m33*m41 - m23*m31*m42;
+	out->m[13] = m11*m32*m43 + m12*m33*m41 + m13*m31*m42 - m11*m33*m42 - m12*m31*m43 - m13*m32*m41;
+	out->m[14] = m11*m23*m42 + m12*m21*m43 + m13*m22*m41 - m11*m22*m43 - m12*m23*m41 - m13*m21*m42;
+	out->m[15] = m11*m22*m33 + m12*m23*m31 + m13*m21*m32 - m11*m23*m32 - m12*m21*m33 - m13*m22*m31;
+	// clang-format on
+
+	auto det = m11 * out->m[0] + m12 * out->m[4] + m13 * out->m[8] + m14 * out->m[12];
+	if( det == 0 ) {
+		return false;
+	}
+
+	auto inv = 1.0f / det;
+	for( auto i = 0; i < 16; ++i ) {
+		out->m[i] *= inv;
+	}
+	return true;
 }

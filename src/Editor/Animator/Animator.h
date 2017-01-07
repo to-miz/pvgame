@@ -7,6 +7,10 @@ struct AnimatorNode {
 	vec3 translation;
 	vec3 rotation;
 	float length;
+	bool8 selected;
+
+	mat4 local;
+	mat4 world;
 };
 
 typedef int16 GroupId;
@@ -31,6 +35,15 @@ struct AnimatorGroupDisplay {
 
 struct AnimatorEditor {
 	vec3 rotation;
+	vec3 translation;
+	float scale;
+
+	bool editorSettingsExpanded;
+	bool propertiesExpanded;
+
+	bool moving;
+	AnimatorNode* clickedNode;
+	vec2 mouseOffset;
 };
 
 struct AnimatorState {

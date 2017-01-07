@@ -17,30 +17,25 @@ ShortestLineBetweenLinesResult shortestLineBetweenLines( vec3arg aStart, vec3arg
 	result.tB  = ( aa * pb - ab * pa ) * denom;
 	return result;
 }
-bool testRayVsPlane( vec3arg rayOrigin, vec3arg rayDir, vec3arg planeOrigin, vec3arg planeNormal,
-                     float* t = nullptr )
+struct testRayVsPlaneResult {
+	float t;
+	inline explicit operator bool() const { return t != FLOAT_MAX; }
+};
+testRayVsPlaneResult testRayVsPlane( vec3arg rayOrigin, vec3arg rayDir, vec3arg planeOrigin,
+                                     vec3arg planeNormal )
 {
+	testRayVsPlaneResult result = {FLOAT_MAX};
+
 	auto denom = dot( rayDir, planeNormal );
 	if( denom == 0 ) {
 		auto projection = dot( planeOrigin - rayOrigin, planeNormal );
-		if( projection > -0.0001f && projection < 0.0001f ) {
-			if( t ) {
-				*t = 0;
-			}
-			return true;
+		if( floatEqZero( projection ) ) {
+			result.t = 0;
 		}
-		return false;
+	} else {
+		result.t = dot( planeOrigin - rayOrigin, planeNormal ) / denom;
 	}
-
-	auto relative = planeOrigin - rayOrigin;
-	auto t_       = dot( relative, planeNormal ) / denom;
-	if( t_ >= 0 ) {
-		if( t ) {
-			*t = t_;
-		}
-		return true;
-	}
-	return false;
+	return result;
 }
 bool testRayVsAabb( vec3arg rayOrigin, vec3arg rayDir, aabbarg box, float* t = nullptr )
 {

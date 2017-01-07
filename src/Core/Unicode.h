@@ -175,6 +175,48 @@ int32 countCodepoints( const char* str, int32 size );
 		return convertUtf16ToUtf8( (const uint16*)utf16Start, utf16Length );
 	}
 #endif
+
+// forward iterator for range based for loops
+struct iterator {
+	uint32 codepoint;
+	const char* data;
+	int32 size;
+
+	iterator( const char* data, int32 size ) : codepoint( 0xFFFFFFFF ), data( data ), size( size )
+	{
+		if( !next( this->data, this->size, &codepoint ) ) {
+			codepoint = 0xFFFFFFFF;
+		}
+	}
+	const uint32 operator*() const { return codepoint; }
+	iterator& operator++()
+	{
+		if( !size ) {
+			codepoint = 0xFFFFFFFF;
+		} else {
+			if( !next( data, size, &codepoint ) ) {
+				codepoint = 0xFFFFFFFF;
+				data += size;
+				size = 0;
+			}
+		}
+		return *this;
+	}
+	bool operator==( const iterator& other ) const
+	{
+		return other.codepoint == codepoint && other.data == data && other.size == size;
+	}
+	bool operator!=( const iterator& other ) const
+	{
+		return other.codepoint != codepoint || other.data != data || other.size != size;
+	}
+};
+struct view {
+	StringView str;
+	view( StringView str ) : str( str ){};
+	iterator begin() { return {str.begin(), str.size()}; }
+	iterator end() { return {str.end(), 0}; }
+};
 }
 
 #endif

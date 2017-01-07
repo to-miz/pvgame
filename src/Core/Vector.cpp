@@ -7,6 +7,10 @@ float length( vec2arg v )
 	auto lengthSquared = dot( v, v );
 	return sqrt( lengthSquared );
 }
+bool hasMagnitude( vec2arg v )
+{
+	return dot( v, v ) > Float::Epsilon;
+}
 vec2 normalize( vec2arg v )
 {
 	auto lengthSquared = dot( v, v );
@@ -43,6 +47,9 @@ vec2 safeNormalize( vec2arg v, float* outLength, vec2arg def /* = {}*/ )
 	*outLength  = length;
 	return v / length;
 }
+
+float angle( vec2arg v ) { return atan2( v.y, v.x ); }
+float angle( vec2arg a, vec2arg b ) { return atan2( cross( a, b ), dot( a, b ) ); }
 
 vec2 rotate( vec2arg v, float angle )
 {
@@ -140,6 +147,16 @@ vec3 safeNormalize( vec3arg v, float* outLength, vec3arg def /* = {}*/ )
 	auto length = sqrt( lengthSquared );
 	*outLength  = length;
 	return v / length;
+}
+
+float angle( vec3arg a, vec3arg b, vec3arg n )
+{
+	return atan2( dot( cross( a, b ), n ), dot( a, b ) );
+	// return atan2( length( cross( a, b ) ), dot( a, b ) ) * sign( dot( cross( a, b ), n ) );
+}
+float angle( vec3arg a, vec3arg b )
+{
+	return atan2( length( cross( a, b ) ), dot( a, b ) );
 }
 
 vec3 rotate( vec3arg v, float angle, vec3arg normal )

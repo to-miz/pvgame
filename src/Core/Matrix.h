@@ -6,7 +6,7 @@
 struct mat4 {
 	float m[16];
 
-	float operator[]( intmax i )
+	float operator[]( int32 i )
 	{
 		assert( i >= 0 );
 		assert( i < 16 );

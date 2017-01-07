@@ -10,13 +10,7 @@ struct GameInputKey {
 	uint8 composite;
 };
 struct GameMouseInput {
-	union {
-		vec2 position;
-		struct {
-			float x;
-			float y;
-		};
-	};
+	vec2 position;
 	vec2 prev;
 
 	// mouse position relative to window size
@@ -27,6 +21,9 @@ struct GameMouseInput {
 
 	// how much the mouse moved since last frame relative to window size
 	vec2 relativeDelta;
+
+	// scalar mouse wheel delta
+	float wheel;
 
 	// tell the platform layer to lock mouse position
 	bool locked;

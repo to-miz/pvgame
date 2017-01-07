@@ -446,8 +446,7 @@ TextChain renderText( MeshStream* stream, FontInfo* info, FontRenderOptions* opt
 		{0, 0, z, stream->color, 0, 0},
 	};
 
-	while( text.size() ) {
-		auto codepoint = utf8::next( &text );
+	FOR( codepoint : utf8::view( text ) ) {
 		kerningKey = nextKerningKey( kerningKey, codepoint );
 		pos.x += getKerningAmount( &info->kerning, kerningKey ) * scale;
 		auto range = findFontRange( info->ranges, codepoint );
@@ -557,7 +556,7 @@ TextChain renderText( RenderCommands* renderer, Font* font, StringView text, rec
                       float z = 0, TextChain chain = {} )
 {
 	PROFILE_FUNCTION();
-	
+
 	auto info = getFontInfo( font );
 	setTexture( renderer, 0, info->ranges[0].texture );
 	MESH_STREAM_BLOCK( stream, renderer ) {

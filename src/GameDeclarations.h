@@ -43,8 +43,11 @@ struct PlatformServices {
 // structures that get passed into the platform layer, get filled and passed back
 struct PlatformRemapInfo {
 	bool success;
-	IngameLog* logStorage;	// log structure for the platform layer to fill 
-	TextureMap* textureMap; // textureMap for the platform layer to fill
+	IngameLog* logStorage;   // log structure for the platform layer to fill
+	TextureMap* textureMap;  // textureMap for the platform layer to fill
+
+	int32 width;  // requested window size
+	int32 height;
 };
 
 struct PlatformInfo {
@@ -78,10 +81,9 @@ struct PlatformInfo {
 	#define GAME_STORAGE
 #endif
 
-#define INITIALIZE_APP( name )                                                                    \
-	GAME_STORAGE PlatformRemapInfo name(                                                          \
-	    void* memory, size_t size, PlatformServices platformServices, PlatformInfo* platformInfo, \
-	    float viewportWidth, float viewportHeight )
+#define INITIALIZE_APP( name )           \
+	GAME_STORAGE PlatformRemapInfo name( \
+	    void* memory, size_t size, PlatformServices platformServices, PlatformInfo* platformInfo )
 #define UPDATE_AND_RENDER( name ) \
 	GAME_STORAGE struct RenderCommands* name( void* memory, struct GameInputs* inputs, float dt )
 #define RELOAD_APP( name ) GAME_STORAGE PlatformRemapInfo name( void* memory, size_t size )

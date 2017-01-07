@@ -1,10 +1,11 @@
-constexpr const float PaddleWidth           = 5;
-constexpr const float PaddleHeight          = 10;
-constexpr const float KeyframePrecision     = 1.0f / 5.0f;
-constexpr const float PropertiesColumnWidth = 200;
-constexpr const float NamesWidth            = 100;
-constexpr const float RegionWidth           = 300;
-constexpr const float RegionHeight          = 200;
+constexpr const float PaddleWidth            = 5;
+constexpr const float PaddleHeight           = 10;
+constexpr const float KeyframePrecision      = 1.0f / 5.0f;
+constexpr const float PropertiesColumnWidth  = 200;
+constexpr const float NamesWidth             = 100;
+constexpr const float RegionWidth            = 300;
+constexpr const float RegionHeight           = 200;
+static const vec3 AnimatorInitialRotation = {0, -0.2f, 0};
 
 static const StringView NodeNames[] = {"Translation", "Rotation", "Scale"};
 
@@ -26,7 +27,7 @@ bool compareKeyframes( const AnimatorKeyframe* a, const AnimatorKeyframe* b )
 {
 	return a->t < b->t;
 }
-void clearSelected( AnimatorState* animator )
+void clearSelectedKeyframes( AnimatorState* animator )
 {
 	FOR( frame : animator->keyframes ) {
 		frame->selected = false;
@@ -35,10 +36,17 @@ void clearSelected( AnimatorState* animator )
 	animator->selectionRectValid = false;
 	animator->clickedGroup       = -1;
 }
+void clearSelectedNodes( AnimatorState* animator )
+{
+	FOR( entry : animator->nodes ) {
+		entry.selected = false;
+	}
+}
 
 Array< AnimatorGroup > addAnimatorGroups( AnimatorState* animator, StringView parentName,
                                           Array< const StringView > childNames )
 {
+	// FIXME: the strings need to be stored in pools, otherwise dll hotloading breaks
 	Array< AnimatorGroup > result = {};
 	auto count                    = childNames.size() + 1;
 	if( animator->groups.remaining() >= count ) {
@@ -187,7 +195,7 @@ void doKeyframesSelection( AppData* app, GameInputs* inputs,
 				animator->selectionA         = inputs->mouse.position - scrollable->inner.leftTop
 				                       - animator->scrollableRegion.scrollPos;
 				animator->selectionA.x /= PaddleWidth;
-				clearSelected( animator );
+				clearSelectedKeyframes( animator );
 			}
 		}
 
@@ -330,7 +338,7 @@ bool doKeyframesDisplay( AppData* app, GameInputs* inputs, const GroupId group )
 				clickedT   = oldT;
 				if( !isKeyDown( inputs, KC_Control ) ) {
 					if( !frame->selected || group != animator->clickedGroup ) {
-						clearSelected( animator );
+						clearSelectedKeyframes( animator );
 						frame->selected = true;
 						animator->selected.push_back( frame );
 					}
@@ -421,6 +429,53 @@ void doKeyframesControl( AppData* app, GameInputs* inputs )
 	imguiEndScrollableRegion( &animator->scrollableRegion, &scrollable );
 }
 
+void doProperties( AppData* app, GameInputs* inputs, rectfarg rect )
+{
+	auto renderer = &app->renderer;
+	auto animator = &app->animatorState;
+	auto editor   = &animator->editor;
+
+	setTexture( renderer, 0, null );
+	renderer->color = 0xFF29373B;
+	addRenderCommandSingleQuad( renderer, rect );
+
+	auto doRotation = []( StringView text, float* val ) {
+		imguiSameLine( 2 );
+		auto handle = imguiMakeHandle( val, ImGuiControlType::None );
+		float adjusted = radiansToDegrees( *val );
+		if( imguiEditbox( handle, text, &adjusted ) ) {
+			*val = degreesToRadians( adjusted );
+		}
+		if( imguiSlider( handle, &adjusted, -180, 180 ) ) {
+			*val = degreesToRadians( adjusted );
+		}
+	};
+
+	renderer->color = Color::White;
+	if( imguiBeginDropGroup( "Editor", &editor->editorSettingsExpanded ) ) {
+		imguiSlider( "Scale", &editor->scale, 0.1f, 10.0f );
+		if( imguiButton( "Reset View" ) ) {
+			editor->translation = {};
+			editor->rotation    = AnimatorInitialRotation;
+			editor->scale       = 1;
+		}
+		imguiEndDropGroup();
+	}
+	if( imguiBeginDropGroup( "Properties", &editor->propertiesExpanded ) ) {
+		FOR( node : animator->nodes ) {
+			if( node.selected ) {
+				imguiEditbox( "Translation X", &node.translation.x );
+				imguiEditbox( "Translation Y", &node.translation.y );
+				imguiEditbox( "Translation Z", &node.translation.z );
+				doRotation( "Rotation X", &node.rotation.x );
+				doRotation( "Rotation Y", &node.rotation.y );
+				doRotation( "Rotation Z", &node.rotation.z );
+				break;
+			}
+		}
+	}
+}
+
 void doEditor( AppData* app, GameInputs* inputs, rectfarg rect )
 {
 	auto renderer = &app->renderer;
@@ -429,7 +484,7 @@ void doEditor( AppData* app, GameInputs* inputs, rectfarg rect )
 	auto handle   = imguiMakeHandle( editor, ImGuiControlType::None );
 
 	auto aspect = width( rect ) / height( rect );
-	// we need to translate in homogenous coordinates to offset the origin of the projection matrix
+	// we need to translate in homogeneous coordinates to offset the origin of the projection matrix
 	// to the center of the editor frame, hence the division by app->width
 	auto offset = matrixTranslation( rect.left / app->width, 0, 0 );
 	auto perspective = matrixPerspectiveFovProjection( degreesToRadians( 65 ), aspect, -1, 1 );
@@ -440,22 +495,45 @@ void doEditor( AppData* app, GameInputs* inputs, rectfarg rect )
 	setRenderState( renderer, RenderStateType::Scissor, true );
 	setScissorRect( renderer, Rect< int32 >( rect ) );
 
-	auto mat = matrixRotationY( editor->rotation.x ) * matrixRotationX( editor->rotation.y );
-	vec3 tr = {0, 0, 200};
-	renderer->view = mat * matrixTranslation( tr );
+	auto mat = matrixRotationY( editor->rotation.x ) * matrixRotationX( editor->rotation.y )
+	           * matrixTranslation( editor->translation )
+	           * matrixScale( editor->scale, editor->scale, 1 ) * matrixTranslation( 0, 0, 200 );
+	renderer->view = mat;
 
-	if( isPointInside( rect, inputs->mouse.position ) ) {
-		if( isKeyPressed( inputs, KC_LButton ) ) {
-			imguiFocus( handle );
-			imguiCapture( handle );
+	auto handleMouse = [&]( uint8 button,
+	                        void ( *proc )( AnimatorEditor * editor, GameInputs * inputs ) ) {
+		auto pressed = isKeyPressed( inputs, button );
+		if( ( isPointInside( rect, inputs->mouse.position ) && pressed )
+		    || imguiHasCapture( handle ) ) {
+
+			if( pressed ) {
+				imguiFocus( handle );
+				imguiCapture( handle, button );
+			}
+			if( imguiIsHover( handle ) && isKeyDown( inputs, button ) ) {
+				proc( editor, inputs );
+			}
 		}
-		if( imguiIsHover( handle ) && isKeyDown( inputs, KC_LButton ) ) {
-			editor->rotation.xy += inputs->mouse.delta * 0.01f;
-		}
+	};
+
+	handleMouse( KC_RButton, []( AnimatorEditor* editor, GameInputs* inputs ) {
+		auto delta = inputs->mouse.delta * 0.01f;
+		editor->rotation.x -= delta.x;
+		editor->rotation.y -= delta.y;
+	} );
+	handleMouse( KC_MButton, []( AnimatorEditor* editor, GameInputs* inputs ) {
+		auto delta = inputs->mouse.delta * 0.5f / editor->scale;
+		editor->translation.x += delta.x;
+		editor->translation.y -= delta.y;
+	} );
+	if( ( isPointInside( rect, inputs->mouse.position ) || imguiHasFocus( handle ) )
+	    && !floatEqZero( inputs->mouse.wheel ) ) {
+
+		editor->scale += inputs->mouse.wheel * 0.1f;
 	}
 
 	// render grid
-	addRenderCommandSingleQuad( renderer, {0, 0, 10, 10}, 170 );
+	setTexture( renderer, 0, null );
 	LINE_MESH_STREAM_BLOCK( stream, renderer ) {
 		rectf bounds  = {-8 * 12, -8 * 12, 8 * 12, 8 * 12};
 		stream->color = 0x80FFFFFF;
@@ -469,8 +547,96 @@ void doEditor( AppData* app, GameInputs* inputs, rectfarg rect )
 		}
 	}
 
-	setRenderState( renderer, RenderStateType::Scissor, false );
+	// update transforms
+	FOR( node : animator->nodes ) {
+		node.local = matrixRotation( node.rotation ) * matrixTranslation( node.translation );
+		node.world = node.local;
+	}
+
+	// render skeleton
+	LINE_MESH_STREAM_BLOCK( stream, renderer ) {
+		stream->color = Color::White;
+		FOR( node : animator->nodes ) {
+			auto& mat     = node.world;
+			vec3 origin   = {};
+			vec3 base     = transformVector( mat, origin );
+			vec3 head     = transformVector( mat, vec3{node.length} );
+			stream->color = Color::Blue;
+			pushLine( stream, origin, base );
+			stream->color = Color::White;
+			pushLine( stream, base, head );
+		}
+	}
+
 	setProjection( renderer, ProjectionType::Orthogonal );
+
+	// render controls
+	auto viewProj = renderer->view * projection;
+	// auto viewProj = mat * perspective;
+	bool selectedAny = false;
+	LINE_MESH_STREAM_BLOCK( stream, renderer ) {
+		stream->color = Color::White;
+		FOR( node : animator->nodes ) {
+			auto mat      = node.world * viewProj;
+			auto head     = toScreenSpace( mat, {node.length}, app->width, app->height );
+			auto headRect = RectHalfSize( head, 5, 5 );
+			if( isPointInside( headRect, inputs->mouse.position )
+			    && isKeyPressed( inputs, KC_LButton ) ) {
+
+				selectedAny = true;
+				if( isKeyDown( inputs, KC_Control ) ) {
+					node.selected = !node.selected;
+				} else {
+					if( !node.selected ) {
+						clearSelectedNodes( animator );
+						node.selected = true;
+					} else {
+						editor->moving      = true;
+						editor->mouseOffset = head - inputs->mouse.position;
+						editor->clickedNode = &node;
+					}
+				}
+			}
+
+			stream->color = ( node.selected ) ? ( Color::Red ) : ( Color::White );
+			pushQuadOutline( stream, headRect );
+		}
+	}
+	if( isPointInside( rect, inputs->mouse.position ) && isKeyPressed( inputs, KC_LButton )
+	    && !selectedAny ) {
+
+		clearSelectedNodes( animator );
+		editor->moving = false;
+	}
+	if( isKeyUp( inputs, KC_LButton ) ) {
+		editor->moving = false;
+	}
+	if( editor->moving && hasMagnitude( inputs->mouse.delta ) ) {
+		// rotate selected nodes along plane
+		if( auto node = editor->clickedNode ) {
+			mat4 inv;
+			inverse( viewProj, &inv );
+			auto mat         = node->world;
+			auto base        = transformVector3( mat, {} );
+			vec3 head        = transformVector3( mat, {node->length} );
+			vec3 planeNormal = {0, 0, -1};
+			auto mouse       = inputs->mouse.position + editor->mouseOffset;
+			vec3 rayStart    = toWorldSpace( inv, Vec3( mouse, 0 ), app->width, app->height );
+			vec3 rayEnd      = toWorldSpace( inv, Vec3( mouse, 1 ), app->width, app->height );
+			vec3 rayDir      = rayEnd - rayStart;
+			vec3 rayOrigin   = rayStart;
+
+			if( auto result = testRayVsPlane( rayOrigin, rayDir, base, planeNormal ) ) {
+				auto intersection      = rayOrigin + rayDir * result.t;
+				auto deltaIntersection = intersection - base;
+				auto deltaHead         = head - base;
+				auto deltaRotation     = angle( deltaIntersection, deltaHead, planeNormal );
+				node->rotation.z       = simplifyAngle( node->rotation.z + deltaRotation );
+			}
+		}
+	}
+
+	setRenderState( renderer, RenderStateType::Scissor, false );
 }
 
 void doAnimator( AppData* app, GameInputs* inputs, bool focus, float dt )
@@ -507,7 +673,13 @@ void doAnimator( AppData* app, GameInputs* inputs, bool focus, float dt )
 
 		animator->duration = ( *max_element( animator->keyframes, compareKeyframes ) )->t;
 
-		animator->editor.rotation = {0, -0.2f, 0};
+		animator->editor.rotation = AnimatorInitialRotation;
+		animator->editor.scale    = 1;
+
+#if 1
+		// debug
+		animator->nodes.push_back( {{}, {0, 0, HalfPi32}, 40, {1}} );
+#endif
 
 		animator->initialized = true;
 	}
@@ -527,14 +699,11 @@ void doAnimator( AppData* app, GameInputs* inputs, bool focus, float dt )
 	auto mainRowHeight  = app->height - RegionHeight - 30;
 	auto editorWidth    = app->width - PropertiesColumnWidth;
 	auto layout         = imguiBeginColumn( PropertiesColumnWidth );
-	auto propertiesRect = imguiAddItem( PropertiesColumnWidth, mainRowHeight );
+
+	doProperties( app, inputs, RectSetHeight( imguiCurrentContainer()->rect, mainRowHeight ) );
+
 	imguiNextColumn( &layout, editorWidth );
 	auto editorRect = imguiAddItem( editorWidth, mainRowHeight );
-
-	setTexture( renderer, 0, null );
-	renderer->color = Color::White;
-	addRenderCommandSingleQuad( renderer, propertiesRect );
-
 	doEditor( app, inputs, editorRect );
 
 	imguiEndColumn( &layout );
@@ -543,6 +712,4 @@ void doAnimator( AppData* app, GameInputs* inputs, bool focus, float dt )
 
 	imguiUpdate( dt );
 	imguiFinalize();
-
-	debugPrintln( "{}", animator->keyframes[0]->t );
 }

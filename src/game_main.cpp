@@ -1026,7 +1026,7 @@ void processControlSystem( GameState* game, ControlSystem* control,
 				collidable->wallslideCollidable.clear();
 				collidable->velocity.y       = WalljumpingSpeed;
 				collidable->walljumpDuration = {WalljumpMaxDuration};
-				LOG( INFORMATION, "Walljump attempted" );
+				// LOG( INFORMATION, "Walljump attempted" );
 			}
 
 			// shooting
@@ -1061,6 +1061,8 @@ void processControlSystem( GameState* game, ControlSystem* control,
 }
 
 enum class AppFocus { Game, Voxel, TexturePack, Animator };
+
+#include "PhysicsHitTest.cpp"
 
 #include "Editor/TexturePack/TexturePack.h"
 #include "Editor/Animator/Animator.h"
@@ -1166,8 +1168,7 @@ VoxelGridTextureMap makeHeroVoxelGridTextureMap( TextureId texture )
 
 GAME_STORAGE PlatformRemapInfo initializeApp( void* memory, size_t size,
                                               PlatformServices platformServices,
-                                              PlatformInfo* platformInfo, float viewportWidth,
-                                              float viewportHeight );
+                                              PlatformInfo* platformInfo );
 INITIALIZE_APP( initializeApp )
 {
 	char* p  = (char*)memory;
@@ -1187,8 +1188,8 @@ INITIALIZE_APP( initializeApp )
 	app->matrixStack            = makeMatrixStack( allocator, 16 );
 	app->renderer = makeRenderCommands( allocator, renderCommandsCapacity, &app->matrixStack );
 	app->settings = makeDefaultGameSettings();
-	app->width    = viewportWidth;
-	app->height   = viewportHeight;
+	app->width    = 1600;
+	app->height   = 900;
 
 	app->debugMeshStream = makeMeshStream( allocator, 4000, 12000, nullptr );
 	app->textureMap      = {makeUArray( allocator, TextureMapEntry, 100 )};
@@ -1217,10 +1218,13 @@ GAME_STORAGE PlatformRemapInfo reloadApp( void* memory, size_t size );
 RELOAD_APP( reloadApp )
 {
 	PlatformRemapInfo result = {};
-
-	auto app                       = (AppData*)memory;
+	auto app                 = (AppData*)memory;
 	assert( isAligned( app ) );
 	assert( size >= sizeof( AppData ) );
+	assert( app->width > 1 && app->height > 1 );
+
+	result.width                   = (int32)app->width;
+	result.height                  = (int32)app->height;
 	debug_MeshStream               = &app->debugMeshStream;
 	GlobalPlatformServices         = &app->platform;
 	GlobalIngameLog                = &app->log;
@@ -1236,8 +1240,6 @@ RELOAD_APP( reloadApp )
 	ImGui             = &app->guiState;
 	return result;
 }
-
-#include "PhysicsHitTest.cpp"
 
 bool loadVoxelCollectionTextureMapping( StackAllocator* allocator, StringView filename,
                                         VoxelCollection* out )

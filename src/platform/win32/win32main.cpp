@@ -125,9 +125,9 @@ static void win32ResetInputs( GameInputs* inputs )
 			entry.composite = 0;
 		}
 	}
-	inputs->mouse.prev = inputs->mouse.position;
-
-	inputs->count = 0;
+	inputs->mouse.prev  = inputs->mouse.position;
+	inputs->mouse.wheel = 0;
+	inputs->count       = 0;
 }
 static GameInputKey win32SetKeyStatus( GameInputKey key, bool down )
 {
@@ -252,16 +252,21 @@ static void win32HandleInputs( HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam
 			// TODO: do we ever handle this?
 			break;
 		}
+		case WM_MOUSEWHEEL: {
+			auto delta = GET_WHEEL_DELTA_WPARAM( wParam );
+			inputs->mouse.wheel = (float)delta / WHEEL_DELTA;
+			break;
+		}
 	}
 }
 static void win32FillMouseData( GameMouseInput* mouse, float width, float height )
 {
 	assert( width > 0 );
 	assert( height > 0 );
-	mouse->relative.x      = mouse->x / width;
-	mouse->relative.y      = mouse->y / height;
-	mouse->delta.x         = mouse->x - mouse->prev.x;
-	mouse->delta.y         = mouse->y - mouse->prev.y;
+	mouse->relative.x      = mouse->position.x / width;
+	mouse->relative.y      = mouse->position.y / height;
+	mouse->delta.x         = mouse->position.x - mouse->prev.x;
+	mouse->delta.y         = mouse->position.y - mouse->prev.y;
 	mouse->relativeDelta.x = mouse->delta.x / width;
 	mouse->relativeDelta.y = mouse->delta.y / height;
 }
@@ -416,8 +421,6 @@ int CALLBACK WinMain( HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdL
 		LOG( ERROR, "Out of memory" );
 		return 0;
 	}
-	LONG width  = 800;
-	LONG height = 800;
 
 	auto dll = win32MakeGameDllNames( L"game_dll.dll", L"game_copy.dll", L"lock.tmp" );
 	win32LoadGameDll( &dll );
@@ -431,9 +434,8 @@ int CALLBACK WinMain( HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdL
 	                                     &win32UploadMeshToGpu,   &win32GetOpenFilename,
 	                                     &win32GetSaveFilename,   &win32GetKeyboardKeyName};
 	PlatformInfo info    = {};
-	Win32AppContext.info = &info;
-	auto initializeResult =
-	    initializeApp( memory, memorySize, platformServices, &info, (float)width, (float)height );
+	Win32AppContext.info  = &info;
+	auto initializeResult = initializeApp( memory, memorySize, platformServices, &info );
 	if( !initializeResult.success ) {
 		LOG( ERROR, "App initialization failed" );
 		return 0;
@@ -442,6 +444,8 @@ int CALLBACK WinMain( HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdL
 	if( !win32BindOpenGlFunctions() ) {
 		return 0;
 	}
+	auto width  = initializeResult.width;
+	auto height = initializeResult.height;
 
 	DWORD style      = WS_OVERLAPPEDWINDOW;
 	DWORD exstyle    = WS_EX_OVERLAPPEDWINDOW;
@@ -576,8 +580,8 @@ int CALLBACK WinMain( HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdL
 			ClipCursor( &rect );
 			SetCursorPos( point.x + Win32AppContext.window.width / 2,
 			              point.y + Win32AppContext.window.height / 2 );
-			inputs.mouse.x = (float)( Win32AppContext.window.width / 2 );
-			inputs.mouse.y = (float)( Win32AppContext.window.height / 2 );
+			inputs.mouse.position.x = (float)( Win32AppContext.window.width / 2 );
+			inputs.mouse.position.y = (float)( Win32AppContext.window.height / 2 );
 		} else {
 			ClipCursor( nullptr );
 		}

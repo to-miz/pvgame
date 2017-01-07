@@ -5,7 +5,7 @@ namespace simd
 struct vec4 {
 	__m128 data;
 
-	static vec4 make( float a, float b, float c, float d ) { return {_mm_set_ps( a, b, c, d )}; }
+	static vec4 make( float a, float b, float c, float d ) { return {_mm_set_ps( d, c, b, a )}; }
 };
 
 struct vec4result {
@@ -129,9 +129,6 @@ float rsqrt( float x )
 }
 float fast_rsqrt( float x ) { return rsqrt_ps( x ); }
 
-float degreesToRadians( float d ) { return d * ( TwoPi32 / 360 ); }
-float radiansToDegrees( float r ) { return r * ( 360 / TwoPi32 ); }
-
 #if defined( _MSC_VER ) && !defined( __clang__ )
 	#ifdef ARCHITECTURE_X64
 		extern "C" {
@@ -172,3 +169,29 @@ float abs( float x )
 	return bit_cast< float >( abs_bits );
 }
 float round( float x ) { return floor( x + 0.5f ); }
+
+float degreesToRadians( float d ) { return d * ( TwoPi32 / 360 ); }
+float radiansToDegrees( float r ) { return r * ( 360 / TwoPi32 ); }
+float simplifyAngle( float angle )
+{
+	angle = fmod( angle, 2.0f * Pi32 );
+	if( angle < -Pi32 ) {
+		angle += 2.0f * Pi32;
+	} else if( angle > Pi32 ) {
+		angle -= 2.0f * Pi32;
+	}
+	return angle;
+}
+
+// returns -1 if < 0, 0 if == 0, 1 if > 0
+int32 signum( float x ) { return ( 0.0f < x ) - ( x < 0.0f ); }
+int32 signum( int32 x ) { return ( 0 < x ) - ( x < 0 ); }
+
+// returns -1 if < 0, 1 if >= 0
+float sign( float x ) { return ( x >= 0.0f ) ? 1.0f : -1.0f; }
+int32 sign( int32 x ) { return ( x >= 0 ) ? 1 : -1; }
+
+bool even( int8 x ) { return ( x % 2 ) == 0; }
+bool even( int32 x ) { return ( x % 2 ) == 0; }
+bool odd( int8 x ) { return ( x % 2 ) == 1; }
+bool odd( int32 x ) { return ( x % 2 ) == 1; }
