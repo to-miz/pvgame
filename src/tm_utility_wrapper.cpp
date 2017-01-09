@@ -36,3 +36,9 @@ using utility::median;
 
 // c++17 for as macro
 #define FOR( x ) for( auto&& x )
+
+template < class T >
+int32 distance( T* a, T* b )
+{
+	return safe_truncate< int32 >( b - a );
+}

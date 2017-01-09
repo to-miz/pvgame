@@ -383,7 +383,7 @@ void imguiBind( ImmediateModeGui* guiState, RenderCommands* renderer, Font* font
 	imguiClear();
 }
 
-ImGuiHandle imguiMakeHandle( void* ptr, ImGuiControlType type )
+ImGuiHandle imguiMakeHandle( void* ptr, ImGuiControlType type = ImGuiControlType::None )
 {
 	return {( uint32 )( (uintptr)ptr - (uintptr)ImGui->base ), 0, type, ImGui->container};
 }
@@ -841,6 +841,7 @@ bool imguiPushButton( ImGuiHandle handle, StringView name, bool* pushed, float w
 	auto renderer = ImGui->renderer;
 	auto font     = ImGui->font;
 
+	handle.type = ImGuiControlType::PushButton;
 	reset( font );
 	auto textWidth  = stringWidth( font, name ) + ImGui->style.innerPadding * 2;
 	auto textHeight = stringHeight( font, name ) + ImGui->style.innerPadding * 2;
@@ -879,6 +880,11 @@ bool imguiPushButton( ImGuiHandle handle, StringView name, bool* pushed, float w
 	}
 
 	return changed;
+}
+bool imguiPushButton( ImGuiHandle handle, StringView name, bool pushed )
+{
+	return imguiPushButton( handle, name, &pushed, ImGui->style.buttonWidth,
+	                        ImGui->style.buttonHeight );
 }
 bool imguiPushButton( StringView name, bool* pushed )
 {

@@ -22,7 +22,8 @@
 #define PP_JOIN( a, b ) PP_JOIN2( a, b )
 
 #ifdef GAME_DEBUG
-	#define debug_error( x ) assert( 0 && x )
+	#define assert_m( x, msg ) assert( ( x ) && ( msg ) )
+	#define debug_error( x ) assert( 0 && ( x ) )
 	#define OutOfMemory() assert( 0 && "Out Of Memory" )
 	#define InvalidCodePath() assert( 0 && "InvalidCodePath" );
 	// const_assert allows assertions in constexpr functions in debug builds (consexpr is only
@@ -34,6 +35,7 @@
 			__debugbreak(); \
 		}
 #else
+	#define assert_m( x, msg ) ( (void)0 )
 	#define OutOfMemory() ( (void)0 )
 	#define debug_error( x ) ( (void)0 )
 	#define break_if( x ) ( (void)0 )

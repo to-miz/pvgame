@@ -86,6 +86,7 @@ global string_builder* GlobalDebugPrinter = nullptr;
 #include "tm_json_wrapper.cpp"
 
 #include "Core/Hash.cpp"
+#include "Core/FixedSizeAllocator.cpp"
 
 namespace GameConstants
 {

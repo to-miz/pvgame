@@ -1,5 +1,4 @@
 struct FixedSizeAllocatoreFreeEntry {
-	int32 prev;
 	int32 next;
 };
 
@@ -10,6 +9,7 @@ struct FixedSizeAllocator {
 	uint16 elementSize;
 	uint16 alignment;
 	int32 firstFree;
+	int32 elementCount;
 };
 
 char* back( FixedSizeAllocator* allocator )
@@ -42,22 +42,47 @@ size_t remaining( FixedSizeAllocator* allocator )
 	return allocator->capacity - allocator->size;
 }
 
+char* getElement( FixedSizeAllocator* allocator, int32 index )
+{
+	assert( index >= 0 );
+	assert( index < allocator->capacity );
+	assert( isAligned( allocator->ptr + index, allocator->alignment ) );
+	return allocator->ptr + index;
+}
+
 void* allocate( FixedSizeAllocator* allocator, size_t size, uint32 alignment )
 {
 	assert( isValid( allocator ) );
-	assert( size % allocator->elementSize == 0 );
+	assert_m( size == allocator->elementSize, "array allocation not supported" );
 	assert( alignment == allocator->alignment );
-	not_implemented();
-	return nullptr;
+
+	void* result = nullptr;
+	if( allocator->firstFree < 0 ) {
+		if( size > remaining( allocator ) ) {
+			OutOfMemory();
+		} else {
+			result = back( allocator );
+			allocator->size += allocator->elementSize;
+			++allocator->elementCount;
+		}
+	} else {
+		result = getElement( allocator, allocator->firstFree );
+		FixedSizeAllocatoreFreeEntry entry;
+		memcpy( &entry, result, sizeof( FixedSizeAllocatoreFreeEntry ) );
+		allocator->firstFree = entry.next;
+		++allocator->elementCount;
+	}
+	assert( !result
+	        || ( isAligned( result, alignment ) && isAligned( result, allocator->alignment ) ) );
+	return result;
 }
 void* reallocate( FixedSizeAllocator* allocator, void* ptr, size_t newSize, size_t oldSize,
                   uint32 alignment )
 {
 	assert( isValid( allocator ) );
-	assert( newSize % allocator->elementSize == 0 );
-	assert( oldSize % allocator->elementSize == 0 );
+	assert_m( oldSize == allocator->elementSize, "array allocation not supported" );
+	assert_m( newSize == allocator->elementSize, "array allocation not supported" );
 	assert( alignment == allocator->alignment );
-	not_implemented();
 	if( newSize == oldSize ) {
 		return ptr;
 	}
@@ -66,16 +91,40 @@ void* reallocate( FixedSizeAllocator* allocator, void* ptr, size_t newSize, size
 void free( FixedSizeAllocator* allocator, void* ptr, size_t size, uint32 alignment )
 {
 	assert( isValid( allocator ) );
-	not_implemented();
+	assert_m( size == allocator->elementSize, "array allocation not supported" );
+	assert( alignment == allocator->alignment );
+	assert( size >= sizeof( FixedSizeAllocatoreFreeEntry ) );
+
+	if( ptr ) {
+		assert( (char*)ptr >= begin( allocator ) && (char*)ptr < end( allocator ) );
+		assert( isAligned( ptr, allocator->alignment ) );
+
+		if( (char*)ptr + size == back( allocator ) ) {
+			allocator->size -= safe_truncate< int32 >( size );
+		} else {
+			FixedSizeAllocatoreFreeEntry newFreeElem = {allocator->firstFree};
+			memcpy( ptr, &newFreeElem, sizeof( FixedSizeAllocatoreFreeEntry ) );
+			allocator->firstFree = distance( allocator->ptr, (char*)ptr );
+		}
+		--allocator->elementCount;
+		if( allocator->elementCount <= 0 ) {
+			allocator->size = 0;
+			allocator->elementCount = 0;
+			allocator->firstFree = -1;
+		}
+	}
 }
 
-FixedSizeAllocator makeFixedSizeAllocator( FixedSizeAllocator* allocator, int32 capacity,
+FixedSizeAllocator makeFixedSizeAllocator( StackAllocator* allocator, int32 count,
                                            uint16 elementSize, uint16 alignment )
 {
-	return {allocateArray( allocator, char, capacity ), 0, capacity, elementSize, alignment, -1};
+	assert( elementSize >= sizeof( FixedSizeAllocatoreFreeEntry ) );
+	auto size = count * elementSize;
+	return {allocateArray( allocator, char, size ), 0, size, elementSize, alignment, -1};
 }
-FixedSizeAllocator makeFixedSizeAllocator( void* ptr, int32 capacity, uint16 elementSize,
+FixedSizeAllocator makeFixedSizeAllocator( void* ptr, int32 count, uint16 elementSize,
                                            uint16 alignment )
 {
-	return {(char*)ptr, 0, capacity, elementSize, alignment};
+	assert( elementSize >= sizeof( FixedSizeAllocatoreFreeEntry ) );
+	return {(char*)ptr, 0, count * elementSize, elementSize, alignment};
 }

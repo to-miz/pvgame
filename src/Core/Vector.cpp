@@ -149,10 +149,11 @@ vec3 safeNormalize( vec3arg v, float* outLength, vec3arg def /* = {}*/ )
 	return v / length;
 }
 
+// returns angle between a and b along normal n
+// n should be normalized
 float angle( vec3arg a, vec3arg b, vec3arg n )
 {
 	return atan2( dot( cross( a, b ), n ), dot( a, b ) );
-	// return atan2( length( cross( a, b ) ), dot( a, b ) ) * sign( dot( cross( a, b ), n ) );
 }
 float angle( vec3arg a, vec3arg b )
 {

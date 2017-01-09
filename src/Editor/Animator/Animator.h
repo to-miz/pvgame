@@ -7,10 +7,16 @@ struct AnimatorNode {
 	vec3 translation;
 	vec3 rotation;
 	float length;
+
+	int16 parentId;
+	int16 id;
+	AnimatorNode* parent;
+
 	bool8 selected;
 
-	mat4 local;
+	mat4 base;
 	mat4 world;
+
 };
 
 typedef int16 GroupId;
@@ -33,6 +39,24 @@ struct AnimatorGroupDisplay {
 	GroupChildren children;
 };
 
+enum class AnimatorMouseMode : int8 {
+	Select,
+	Translate,
+	Rotate,
+};
+enum class AnimatorTranslateOptions : int8 {
+	World,
+	LocalAlong,
+	LocalPerpendicular,
+	ParentAlong,
+	ParentPerpendicular
+};
+enum class AnimatorMousePlane : int8 {
+	XY,
+	YZ,
+	XZ
+};
+
 struct AnimatorEditor {
 	vec3 rotation;
 	vec3 translation;
@@ -40,7 +64,12 @@ struct AnimatorEditor {
 
 	bool editorSettingsExpanded;
 	bool propertiesExpanded;
+	bool optionsExpanded;
+	bool planeExpanded;
 
+	AnimatorMouseMode mouseMode;
+	AnimatorTranslateOptions translateOptions;
+	AnimatorMousePlane mousePlane;
 	bool moving;
 	AnimatorNode* clickedNode;
 	vec2 mouseOffset;
@@ -56,7 +85,8 @@ struct AnimatorState {
 	UArray< AnimatorKeyframe* > selected;
 	UArray< AnimatorGroup > groups;
 	UArray< AnimatorGroupDisplay > visibleGroups;
-	UArray< AnimatorNode > nodes;
+	UArray< AnimatorNode* > nodes;
+	FixedSizeAllocator nodeAllocator;
 	float duration;
 
 	bool8 mouseSelecting;
@@ -74,6 +104,7 @@ struct AnimatorState {
 	float scale;
 
 	GroupId ids;
+	int16 nodeIds;
 	AnimatorEditor editor;
 };
 
