@@ -372,13 +372,13 @@ tvec3< T > operator-( tvec3arg< T > lhs, tvec3arg< T > rhs )
 {
 	return {lhs.x - rhs.x, lhs.y - rhs.y, lhs.z - rhs.z};
 }
-template < class T >
-tvec3< T > operator*( tvec3arg< T > v, T s )
+template < class T, class U >
+tvec3< T > operator*( tvec3arg< T > v, U s )
 {
 	return {v.x * s, v.y * s, v.z * s};
 }
-template < class T >
-tvec3< T > operator*( T s, tvec3arg< T > v )
+template < class T, class U >
+tvec3< T > operator*( U s, tvec3arg< T > v )
 {
 	return {v.x * s, v.y * s, v.z * s};
 }

@@ -1356,19 +1356,15 @@ bool imguiRadiobox( StringView name, bool* checked )
 #endif
 }
 
-bool imguiBeginDropGroup( StringView name, bool* expanded )
+bool imguiBeginDropGroup( ImGuiHandle handle, StringView name, bool expanded )
 {
-	assert( expanded );
-
 	auto renderer  = ImGui->renderer;
 	auto font      = ImGui->font;
 	auto style     = &ImGui->style;
 	auto container = imguiCurrentContainer();
 
-	auto handle  = imguiMakeHandle( expanded, ImGuiControlType::DropGroup );
-
 	using namespace ImGuiTexCoords;
-	auto index = ( *expanded ) ? ( DropGroupExpanded ) : ( DropGroupRetracted );
+	auto index = ( expanded ) ? ( DropGroupExpanded ) : ( DropGroupRetracted );
 
 	auto width = ::width( container->rect ) - style->innerPadding * 2;
 	auto height =
@@ -1378,9 +1374,9 @@ bool imguiBeginDropGroup( StringView name, bool* expanded )
 	auto buttonRect = translate( style->rects[index], inner.leftTop );
 
 	if( imguiKeypressButton( handle, inner ) ) {
-		*expanded = !*expanded;
+		expanded = !expanded;
 	}
-	if( *expanded ) {
+	if( expanded ) {
 		container->rect.left += style->innerPadding;
 		container->addPosition.x = container->rect.left;
 		container->horizontalCount = 0;
@@ -1402,7 +1398,21 @@ bool imguiBeginDropGroup( StringView name, bool* expanded )
 		renderTextCenteredClipped( renderer, font, name, textArea );
 	}
 
-	return *expanded;
+	return expanded;
+}
+bool imguiBeginDropGroup( StringView name, bool* expanded )
+{
+	assert( expanded );
+	auto handle = imguiMakeHandle( expanded, ImGuiControlType::DropGroup );
+	return imguiBeginDropGroup( handle, name, *expanded );
+}
+bool imguiBeginDropGroup( StringView name, uint32* flags, uint32 flag )
+{
+	assert( flags );
+	auto handle       = imguiMakeHandle( flags, ImGuiControlType::DropGroup );
+	handle.shortIndex = (uint8)bitScanForward( flag );
+	setFlagCond( *flags, flag, imguiBeginDropGroup( handle, name, ( *flags & flag ) != 0 ) );
+	return ( *flags & flag ) != 0;
 }
 void imguiEndDropGroup()
 {

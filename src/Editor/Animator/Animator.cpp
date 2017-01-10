@@ -455,7 +455,7 @@ void doProperties( AppData* app, GameInputs* inputs, rectfarg rect )
 	};
 
 	renderer->color = Color::White;
-	if( imguiBeginDropGroup( "Editor", &editor->editorSettingsExpanded ) ) {
+	if( imguiBeginDropGroup( "Editor", &editor->expandedFlags, AnimatorEditor::EditorSettings ) ) {
 		imguiSlider( "Scale", &editor->scale, AnimatorMinScale, AnimatorMaxScale );
 		if( imguiButton( "Reset View" ) ) {
 			editor->translation = {};
@@ -464,7 +464,7 @@ void doProperties( AppData* app, GameInputs* inputs, rectfarg rect )
 		}
 		imguiEndDropGroup();
 	}
-	if( imguiBeginDropGroup( "Properties", &editor->propertiesExpanded ) ) {
+	if( imguiBeginDropGroup( "Properties", &editor->expandedFlags, AnimatorEditor::Properties ) ) {
 		FOR( node : animator->nodes ) {
 			if( node->selected ) {
 				imguiEditbox( "Translation X", &node->translation.x );
@@ -492,7 +492,7 @@ void doProperties( AppData* app, GameInputs* inputs, rectfarg rect )
 		pushButton( pushHandle, 2, "Rotate", AnimatorMouseMode::Rotate, editor );
 	}
 
-	if( imguiBeginDropGroup( "Plane", &editor->planeExpanded ) ) {
+	if( imguiBeginDropGroup( "Plane", &editor->expandedFlags, AnimatorEditor::Plane ) ) {
 		auto pushHandle = imguiMakeHandle( editor );
 		auto pushButton = []( ImGuiHandle handle, uint8 index, StringView name,
 		                      AnimatorMousePlane mode, AnimatorEditor* editor ) {
@@ -506,7 +506,7 @@ void doProperties( AppData* app, GameInputs* inputs, rectfarg rect )
 		pushButton( pushHandle, 32, "XZ", AnimatorMousePlane::XZ, editor );
 		imguiEndDropGroup();
 	}
-	if( imguiBeginDropGroup( "Options", &editor->optionsExpanded ) ) {
+	if( imguiBeginDropGroup( "Options", &editor->expandedFlags, AnimatorEditor::Options ) ) {
 		switch( editor->mouseMode ) {
 			case AnimatorMouseMode::Select: {
 				break;
@@ -534,6 +534,13 @@ void doProperties( AppData* app, GameInputs* inputs, rectfarg rect )
 			case AnimatorMouseMode::Rotate: {
 				break;
 			}
+		}
+		imguiEndDropGroup();
+	}
+	if( imguiBeginDropGroup( "Voxels", &editor->expandedFlags, AnimatorEditor::Voxels ) ) {
+		auto voxels = &animator->voxels;
+		FOR( entry : voxels->animations ) {
+			imguiButton( entry.name );
 		}
 		imguiEndDropGroup();
 	}
@@ -609,6 +616,9 @@ void doEditor( AppData* app, GameInputs* inputs, rectfarg rect )
 			float z = i * 16.0f - 8 * 12;
 			pushLine( stream, {bounds.left, 0, z}, {bounds.right, 0, z} );
 		}
+
+		// render origin indicator
+		pushLine( stream, {0, -10, 0}, {0, 10, 0} );
 	}
 
 	// update transforms
@@ -687,15 +697,15 @@ void doEditor( AppData* app, GameInputs* inputs, rectfarg rect )
 		debugPrintln( "base {}", base );
 		debugPrintln( "head {}", head );
 	}
-	if( editor->moving && editor->clickedNode && hasMagnitude( inputs->mouse.delta ) ) {
 
-		// TODO: implement node translation along plane of nodes with parent nodes
+	if( editor->clickedNode ) {
+		auto node = editor->clickedNode;
 
 		// get plane normal
 		vec3 planeNormal = {};
 		switch( editor->mousePlane ) {
 			case AnimatorMousePlane::XY: {
-				planeNormal = {0, 0, -1};
+				planeNormal = {0, 0, 1};
 				break;
 			}
 			case AnimatorMousePlane::YZ: {
@@ -708,126 +718,210 @@ void doEditor( AppData* app, GameInputs* inputs, rectfarg rect )
 			}
 			InvalidDefaultCase;
 		}
-
-		auto node = editor->clickedNode;
-		if( auto inv = inverse( viewProj ) ) {
-			auto base        = transformVector3( node->base, {} );
-			vec3 head        = transformVector3( node->world, {} );
-
-			auto mouse       = inputs->mouse.position + editor->mouseOffset;
-			auto width       = app->width;
-			auto height      = app->height;
-			vec3 rayStart    = toWorldSpace( inv.matrix, Vec3( mouse, 0 ), width, height );
-			vec3 rayEnd      = toWorldSpace( inv.matrix, Vec3( mouse, 1 ), width, height );
-			vec3 rayDir      = rayEnd - rayStart;
-			vec3 rayOrigin   = rayStart;
-
-			auto fromPlane = []( vec3arg rayOrigin, vec3arg rayDir, vec3arg base,
-			                     vec3arg planeNormal ) {
-				vec3 result = {};
-				if( auto hit = testRayVsPlane( rayOrigin, rayDir, base, planeNormal ) ) {
-					result = rayOrigin + rayDir * hit.t;
-					// calculating result like this sometimes loses some accuracy
-					// we basically do result.z = base.z in case its the xy plane etc
-
-					// project result onto plane
-					result = result - dot( result, planeNormal ) * planeNormal;
-					// add plane normal component of base to result
-					result = result + dot( base, planeNormal ) * planeNormal;
-				}
-				return result;
-			};
-			auto fromLine = []( vec3arg aStart, vec3arg aDir, vec3arg bStart, vec3arg bDir ) {
-				auto hit = shortestLineBetweenLines( aStart, aDir, bStart, bDir );
-				return bStart + bDir * hit.tB;
-			};
-
-			vec3 destination = head;
-			switch( editor->mouseMode ) {
-				case AnimatorMouseMode::Select: {
-					break;
-				}
-				case AnimatorMouseMode::Translate: {
-					switch( editor->translateOptions ) {
-						case AnimatorTranslateOptions::World: {
-							destination = fromPlane( rayOrigin, rayDir, head, planeNormal );
-							break;
-						}
-						case AnimatorTranslateOptions::LocalAlong: {
-							destination = fromLine( rayStart, rayDir, head, base - head );
-							break;
-						}
-						case AnimatorTranslateOptions::LocalPerpendicular: {
-							destination = fromLine( rayStart, rayDir, head,
-							                        cross( head - base, planeNormal ) );
-							break;
-						}
-						case AnimatorTranslateOptions::ParentAlong: {
-							if( node->parent ) {
-								auto parentBase = transformVector3( node->parent->base, {} );
-								vec3 parentHead = transformVector3( node->parent->world, {} );
-								destination =
-								    fromLine( rayStart, rayDir, head, parentBase - parentHead );
-							} else {
-								destination = fromLine( rayStart, rayDir, head, base - head );
-							}
-							break;
-						}
-						case AnimatorTranslateOptions::ParentPerpendicular: {
-							if( node->parent ) {
-								auto parentBase = transformVector3( node->parent->base, {} );
-								vec3 parentHead = transformVector3( node->parent->world, {} );
-								vec3 parentNormal =
-								    transformVector3( node->parent->base, {0, 0, -1} ) - parentBase;
-
-								destination =
-								    fromLine( rayStart, rayDir, head, parentBase - parentHead );
-								destination =
-								    fromLine( rayStart, rayDir, head,
-								              cross( parentHead - parentBase, parentNormal ) );
-							} else {
-								destination = fromLine( rayStart, rayDir, head,
-								                        cross( head - base, planeNormal ) );
-							}
-							break;
-						}
-					}
-					break;
-				}
-				case AnimatorMouseMode::Rotate: {
-					destination = fromPlane( rayOrigin, rayDir, base, planeNormal );
-					break;
-				}
-			}
-			switch( editor->mouseMode ) {
-				case AnimatorMouseMode::Select: {
-					break;
-				}
-				case AnimatorMouseMode::Translate: {
-					// destination is in world space, convert to local space
-					mat4 mat = matrixIdentity();
+		auto base        = transformVector3( node->base, {} );
+		vec3 head        = transformVector3( node->world, {} );
+		vec3 rotationNormal = planeNormal;
+		if( editor->mouseMode == AnimatorMouseMode::Rotate ) {
+			switch( editor->mousePlane ) {
+				case AnimatorMousePlane::XY: {
+					planeNormal = {0, 0, 1};
 					if( node->parent ) {
-						if( auto invWorld = inverse( node->parent->world ) ) {
-							mat = invWorld.matrix;
-						}
+						auto parentBase = transformVector3( node->parent->world, {} );
+						planeNormal     = safeNormalize(
+						    transformVector3( node->parent->world, {0, 0, 1} ) - parentBase,
+						    {0, 0, 1} );
 					}
-
-					// transform world coordinates into local coordinates
-					destination = transformVector3( mat, destination );
-					head        = transformVector3( mat, head );
-					auto delta  = destination - head;
-
-					node->translation += delta;
 					break;
 				}
-				case AnimatorMouseMode::Rotate: {
-					auto deltaIntersection = destination - base;
-					auto deltaHead         = head - base;
-					auto deltaRotation     = angle( deltaIntersection, deltaHead, planeNormal );
-					node->rotation.z       = simplifyAngle( node->rotation.z + deltaRotation );
+				case AnimatorMousePlane::YZ: {
+					planeNormal = safeNormalize( head - base, {1, 0, 0} );
+					break;
+				}
+				case AnimatorMousePlane::XZ: {
+					if( node->parent ) {
+						auto parentBase = transformVector3( node->parent->world, {} );
+						planeNormal =
+						    safeNormalize( transformVector3( matrixRotationZ( node->rotation.z )
+						                                         * node->parent->world,
+						                                     {0, 1, 0} )
+						                       - parentBase,
+						                   {0, 1, 0} );
+					} else {
+						planeNormal = safeNormalize(
+						    transformVector3( matrixRotationZ( node->rotation.z ), {0, 1, 0} ),
+						    {0, 1, 0} );
+					}
 					break;
 				}
 				InvalidDefaultCase;
+			}
+		}
+
+		// render reference plane for transformations/rotations
+		if( editor->mouseMode == AnimatorMouseMode::Rotate
+		    || ( editor->mouseMode == AnimatorMouseMode::Translate
+		         && editor->translateOptions == AnimatorTranslateOptions::World ) ) {
+
+			setProjection( renderer, ProjectionType::Perspective );
+			const float size = 10;
+			LINE_MESH_STREAM_BLOCK( stream, renderer ) {
+				stream->color = Color::White;
+				pushLine( stream, head - planeNormal * size, head + planeNormal * size );
+			}
+			setRenderState( renderer, RenderStateType::BackCulling, false );
+
+			auto mat      = matrixFromNormal( planeNormal );
+			vec3 verts[4] = {head + transformVector3( mat, {-size, size, 0} ),
+			                 head + transformVector3( mat, {size, size, 0} ),
+			                 head + transformVector3( mat, {-size, -size, 0} ),
+			                 head + transformVector3( mat, {size, -size, 0} )};
+			renderer->color = 0x40FFFFFF;
+			setTexture( renderer, 0, null );
+			addRenderCommandSingleQuad( renderer, verts );
+
+			setRenderState( renderer, RenderStateType::BackCulling, true );
+			setProjection( renderer, ProjectionType::Orthogonal );
+		}
+
+
+		if( editor->moving && hasMagnitude( inputs->mouse.delta ) ) {
+			if( auto inv = inverse( viewProj ) ) {
+				auto mouse       = inputs->mouse.position + editor->mouseOffset;
+				auto width       = app->width;
+				auto height      = app->height;
+				vec3 rayStart    = toWorldSpace( inv.matrix, Vec3( mouse, 0 ), width, height );
+				vec3 rayEnd      = toWorldSpace( inv.matrix, Vec3( mouse, 1 ), width, height );
+				vec3 rayDir      = rayEnd - rayStart;
+				vec3 rayOrigin   = rayStart;
+
+				auto fromPlane = []( vec3arg rayOrigin, vec3arg rayDir, vec3arg base,
+				                     vec3arg planeNormal ) {
+					vec3 result = {};
+					if( auto hit = testRayVsPlane( rayOrigin, rayDir, base, planeNormal ) ) {
+						result = rayOrigin + rayDir * hit.t;
+						// calculating result like this sometimes loses some accuracy
+						// we basically do result.z = base.z in case its the xy plane etc
+
+						// project result onto plane
+						result = result - dot( result, planeNormal ) * planeNormal;
+						// add plane normal component of base to result
+						result = result + dot( base, planeNormal ) * planeNormal;
+					}
+					return result;
+				};
+				auto fromLine = []( vec3arg aStart, vec3arg aDir, vec3arg bStart, vec3arg bDir ) {
+					auto hit = shortestLineBetweenLines( aStart, aDir, bStart, bDir );
+					return bStart + bDir * hit.tB;
+				};
+
+				vec3 destination = head;
+				switch( editor->mouseMode ) {
+					case AnimatorMouseMode::Select: {
+						break;
+					}
+					case AnimatorMouseMode::Translate: {
+						switch( editor->translateOptions ) {
+							case AnimatorTranslateOptions::World: {
+								destination = fromPlane( rayOrigin, rayDir, head, planeNormal );
+								break;
+							}
+							case AnimatorTranslateOptions::LocalAlong: {
+								destination = fromLine( rayStart, rayDir, head, base - head );
+								break;
+							}
+							case AnimatorTranslateOptions::LocalPerpendicular: {
+								destination = fromLine( rayStart, rayDir, head,
+								                        cross( head - base, planeNormal ) );
+								break;
+							}
+							case AnimatorTranslateOptions::ParentAlong: {
+								if( node->parent ) {
+									auto parentBase = transformVector3( node->parent->base, {} );
+									vec3 parentHead = transformVector3( node->parent->world, {} );
+									destination =
+									    fromLine( rayStart, rayDir, head, parentBase - parentHead );
+								} else {
+									destination = fromLine( rayStart, rayDir, head, base - head );
+								}
+								break;
+							}
+							case AnimatorTranslateOptions::ParentPerpendicular: {
+								if( node->parent ) {
+									auto parentBase = transformVector3( node->parent->base, {} );
+									vec3 parentHead = transformVector3( node->parent->world, {} );
+									vec3 parentNormal =
+									    transformVector3( node->parent->base, {0, 0, -1} ) - parentBase;
+
+									destination =
+									    fromLine( rayStart, rayDir, head, parentBase - parentHead );
+									destination =
+									    fromLine( rayStart, rayDir, head,
+									              cross( parentHead - parentBase, parentNormal ) );
+								} else {
+									destination = fromLine( rayStart, rayDir, head,
+									                        cross( head - base, planeNormal ) );
+								}
+								break;
+							}
+						}
+						break;
+					}
+					case AnimatorMouseMode::Rotate: {
+						destination = fromPlane( rayOrigin, rayDir, head, planeNormal );
+						break;
+					}
+				}
+				switch( editor->mouseMode ) {
+					case AnimatorMouseMode::Select: {
+						break;
+					}
+					case AnimatorMouseMode::Translate: {
+						// destination is in world space, convert to local space
+						mat4 mat = matrixIdentity();
+						if( node->parent ) {
+							if( auto invWorld = inverse( node->parent->world ) ) {
+								mat = invWorld.matrix;
+							}
+						}
+
+						// transform world coordinates into local coordinates
+						destination = transformVector3( mat, destination );
+						head        = transformVector3( mat, head );
+						auto delta  = destination - head;
+
+						node->translation += delta;
+						break;
+					}
+					case AnimatorMouseMode::Rotate: {
+						if( editor->mousePlane == AnimatorMousePlane::YZ ) {
+							// there is no good reference vector for this rotation
+							auto deltaIntersection = destination - head;
+							auto other    = vec3{-planeNormal.z, 0, planeNormal.y};
+							auto rotation = angle( deltaIntersection, other, planeNormal );
+							node->rotation -=
+							    dot( rotationNormal, node->rotation ) * rotationNormal;
+							node->rotation -= rotationNormal * rotation;
+						} else {
+							auto deltaIntersection = destination - base;
+							auto deltaHead         = head - base;
+
+							// we want the two vectors to be on the same plane for better accuracy
+							deltaIntersection -=
+							    dot( deltaIntersection, planeNormal ) * planeNormal;
+							deltaHead -= dot( deltaHead, planeNormal ) * planeNormal;
+
+							// get angle of the two vectors guided by the plane normal
+							auto deltaRotation = angle( deltaIntersection, deltaHead, planeNormal );
+
+							node->rotation = node->rotation - rotationNormal * deltaRotation;
+							FOR( element : node->rotation.elements ) {
+								element = simplifyAngle( element );
+							}
+						}
+						break;
+					}
+					InvalidDefaultCase;
+				}
 			}
 		}
 	}
@@ -899,6 +993,8 @@ void doAnimator( AppData* app, GameInputs* inputs, bool focus, float dt )
 		// debug
 		animator->nodes.push_back( allocateNode( animator, {{}, {0, 0, HalfPi32}, 40, -1} ) );
 		animator->nodes.push_back( allocateNode( animator, {{}, {0, 0, HalfPi32}, 40, 0} ) );
+
+		loadVoxelCollection( allocator, "Data/voxels/hero.json", &animator->voxels );
 #endif
 
 		animator->initialized = true;

@@ -471,11 +471,11 @@ inline int mapToRange( int value, int min, int max )
 // float
 namespace Float
 {
-static const float Epsilon = 0.000001f;  // error tolerance for check
-static const float BigEpsilon = 0.001f;  // bigger error tolerance
-static const int DecimalTolerance = 6;   // decimal places for float rounding
-static const float AbsTolerance = 0.000001f;
-static const float RelTolerance = 0.000001f;
+static const float Epsilon        = 0.000001f;  // error tolerance for check
+static const float BigEpsilon     = 0.001f;     // bigger error tolerance
+static const int DecimalTolerance = 6;          // decimal places for float rounding
+static const float AbsTolerance   = 0.000001f;
+static const float RelTolerance   = 0.000001f;
 }
 // set float to 0 if within tolerance
 #define floatZeroClamp( x ) ( ( TMUT_ABS( x ) < Float::Epsilon ) ? ( 0.0f ) : ( x ) )

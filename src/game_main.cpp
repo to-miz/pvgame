@@ -75,6 +75,8 @@ global string_builder* GlobalDebugPrinter = nullptr;
 	#define debugPrintGetString() ( StringView{} )
 #endif
 
+#include "Core/BitTwiddlings.h"
+
 #include "VirtualKeys.h"
 #include "Inputs.cpp"
 #include "GameDeclarations.h"
@@ -1108,6 +1110,8 @@ struct AppData {
 	bool mouseLocked;
 	bool displayDebug;
 };
+
+bool loadVoxelCollection( StackAllocator* allocator, StringView filename, VoxelCollection* out );
 
 #include "Editor/TexturePack/TexturePack.cpp"
 #include "Editor/Animator/Animator.cpp"

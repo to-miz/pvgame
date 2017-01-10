@@ -62,10 +62,14 @@ struct AnimatorEditor {
 	vec3 translation;
 	float scale;
 
-	bool editorSettingsExpanded;
-	bool propertiesExpanded;
-	bool optionsExpanded;
-	bool planeExpanded;
+	enum : uint32 {
+		EditorSettings = BITFIELD( 0 ),
+		Properties     = BITFIELD( 1 ),
+		Options        = BITFIELD( 2 ),
+		Plane          = BITFIELD( 3 ),
+		Voxels         = BITFIELD( 4 ),
+	};
+	uint32 expandedFlags;
 
 	AnimatorMouseMode mouseMode;
 	AnimatorTranslateOptions translateOptions;
@@ -87,6 +91,9 @@ struct AnimatorState {
 	UArray< AnimatorGroupDisplay > visibleGroups;
 	UArray< AnimatorNode* > nodes;
 	FixedSizeAllocator nodeAllocator;
+
+	VoxelCollection voxels;
+
 	float duration;
 
 	bool8 mouseSelecting;

@@ -422,3 +422,33 @@ MatrixInverseResult inverse( mat4arg mat )
 
 	return result;
 }
+
+mat4 matrixFromColumns( vec3arg column0, vec3arg column1, vec3arg column2 )
+{
+	mat4 result;
+	result.m[0]  = column0.x;
+	result.m[1]  = column0.y;
+	result.m[2]  = column0.z;
+	result.m[3]  = 0;
+	result.m[4]  = column1.x;
+	result.m[5]  = column1.y;
+	result.m[6]  = column1.z;
+	result.m[7]  = 0;
+	result.m[8]  = column2.x;
+	result.m[9]  = column2.y;
+	result.m[10] = column2.z;
+	result.m[11] = result.m[12] = result.m[13] = result.m[14] = 0;
+	result.m[15]                                              = 1;
+	return result;
+}
+
+mat4 matrixFromNormal( vec3arg normal )
+{
+	vec3 tangent0 = cross( normal, vec3{1, 0, 0} );
+	if( dot( tangent0, tangent0 ) < Float::Epsilon ) {
+		tangent0 = cross( normal, vec3{0, 1, 0} );
+	}
+	tangent0      = normalize( tangent0 );
+	vec3 tangent1 = normalize( cross( normal, tangent0 ) );
+	return matrixFromColumns( tangent0, tangent1, normal );
+}

@@ -1035,6 +1035,10 @@ static void win32SetRenderState( OpenGlContext* context, mat4* projections, Rend
 					glEnable( GL_SCISSOR_TEST );
 					break;
 				}
+				case RenderStateType::BackCulling: {
+					glEnable( GL_CULL_FACE );
+					break;
+				}
 				InvalidDefaultCase;
 			}
 		} else {
@@ -1049,6 +1053,10 @@ static void win32SetRenderState( OpenGlContext* context, mat4* projections, Rend
 				}
 				case RenderStateType::Scissor: {
 					glDisable( GL_SCISSOR_TEST );
+					break;
+				}
+				case RenderStateType::BackCulling: {
+					glDisable( GL_CULL_FACE );
 					break;
 				}
 				InvalidDefaultCase;

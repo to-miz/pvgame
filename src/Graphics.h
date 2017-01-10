@@ -19,6 +19,7 @@ enum class RenderStateType {
 	DepthTest,
 	Lighting,
 	Scissor,
+	BackCulling,
 
 	Count
 };
@@ -933,6 +934,28 @@ RenderCommandMesh* addRenderCommandSingleQuad( RenderCommands* renderCommands, r
 	    {rect.left, rect.bottom, z}, color, texCoords.elements[2], normal_neg_z_axis};
 	result->mesh.vertices[3] = {
 	    {rect.right, rect.bottom, z}, color, texCoords.elements[3], normal_neg_z_axis};
+
+	result->mesh.indices[0] = 0;
+	result->mesh.indices[1] = 1;
+	result->mesh.indices[2] = 2;
+
+	result->mesh.indices[3] = 2;
+	result->mesh.indices[4] = 1;
+	result->mesh.indices[5] = 3;
+	return result;
+}
+RenderCommandMesh* addRenderCommandSingleQuad( RenderCommands* renderCommands, vec3 quad[4],
+                                               QuadTexCoordsArg texCoords = makeQuadTexCoordsDef() )
+{
+	PROFILE_FUNCTION();
+
+	// TODO: calculate normal?
+	auto color               = renderCommands->color;
+	auto result              = addRenderCommandMesh( renderCommands, 4, 6 );
+	result->mesh.vertices[0] = {quad[0], color, texCoords.elements[0], normal_neg_z_axis};
+	result->mesh.vertices[1] = {quad[1], color, texCoords.elements[1], normal_neg_z_axis};
+	result->mesh.vertices[2] = {quad[2], color, texCoords.elements[2], normal_neg_z_axis};
+	result->mesh.vertices[3] = {quad[3], color, texCoords.elements[3], normal_neg_z_axis};
 
 	result->mesh.indices[0] = 0;
 	result->mesh.indices[1] = 1;
