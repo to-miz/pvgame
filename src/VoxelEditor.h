@@ -4,7 +4,7 @@ enum class EditMode {
 
 	Count
 };
-static const char* EditModeStrings[] = {
+static const char* const EditModeStrings[] = {
     "Build", "Select",
 };
 

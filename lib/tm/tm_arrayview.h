@@ -1,5 +1,5 @@
 /*
-tm_arrayview.h v1.1.3 - public domain
+tm_arrayview.h v1.1.4 - public domain
 written by Tolga Mizrak 2016
 
 no warranty; use at your own risk
@@ -36,6 +36,8 @@ SWITCHES
 	    std::container usage and UninitializedArrayView usage will require code changes.
 
 HISTORY
+	v1.1.4  10.01.17 added a conversion operator overload from ArrayView< T > to
+	                 ArrayView< const T >
 	v1.1.3  07.12.16 added std::initializer_list assign to UninitializedArrayView
 	v1.1.2a 07.10.16 minor adjustment of size_t usage
 	                 fixed a minor assertion error
@@ -246,6 +248,8 @@ LICENSE
 		TMA_ASSERT( list.size() == sz );
 		TMA_MEMCPY( ptr, list.begin(), sz * sizeof( value_type ) );
 	}
+
+	operator ArrayView< const T >() const { return {ptr, sz}; }
 };
 
 template < class T >

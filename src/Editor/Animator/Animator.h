@@ -13,10 +13,11 @@ struct AnimatorNode {
 	AnimatorNode* parent;
 
 	bool8 selected;
+	int16 voxel;
+	int16 frame;
 
 	mat4 base;
 	mat4 world;
-
 };
 
 typedef int16 GroupId;
@@ -79,6 +80,10 @@ struct AnimatorEditor {
 	vec2 mouseOffset;
 };
 
+struct AnimatorVoxelCollection {
+	VoxelCollection voxels;
+	Array< StringView > names;
+};
 struct AnimatorState {
 	ImmediateModeGui gui;
 	bool initialized;
@@ -92,7 +97,7 @@ struct AnimatorState {
 	UArray< AnimatorNode* > nodes;
 	FixedSizeAllocator nodeAllocator;
 
-	VoxelCollection voxels;
+	AnimatorVoxelCollection voxels;
 
 	float duration;
 

@@ -1005,7 +1005,11 @@ void openGlSetProjection( OpenGlContext* context, mat4* projections, ProjectionT
 		glDisable( GL_DEPTH_TEST );
 		openGlPrepareNoLightingRender( context );
 	} else {
-		glEnable( GL_DEPTH_TEST );
+		if( context->renderStates[valueof( RenderStateType::DepthTest )] ) {
+			glEnable( GL_DEPTH_TEST );
+		} else {
+			glDisable( GL_DEPTH_TEST );
+		}
 		openGlPrepareShader( context );
 	}
 	glUniformMatrix4fv( context->worldViewProj, 1, GL_FALSE, matrix->m );

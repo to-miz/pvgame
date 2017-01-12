@@ -44,6 +44,7 @@ void clearSelectedNodes( AnimatorState* animator )
 	FOR( entry : animator->nodes ) {
 		entry->selected = false;
 	}
+	animator->editor.clickedNode = nullptr;
 }
 
 Array< AnimatorGroup > addAnimatorGroups( AnimatorState* animator, StringView parentName,
@@ -467,12 +468,18 @@ void doProperties( AppData* app, GameInputs* inputs, rectfarg rect )
 	if( imguiBeginDropGroup( "Properties", &editor->expandedFlags, AnimatorEditor::Properties ) ) {
 		FOR( node : animator->nodes ) {
 			if( node->selected ) {
+				imguiEditbox( "Length", &node->length );
 				imguiEditbox( "Translation X", &node->translation.x );
 				imguiEditbox( "Translation Y", &node->translation.y );
 				imguiEditbox( "Translation Z", &node->translation.z );
 				doRotation( "Rotation X", &node->rotation.x );
 				doRotation( "Rotation Y", &node->rotation.y );
 				doRotation( "Rotation Z", &node->rotation.z );
+				auto comboHandle = imguiMakeHandle( &node->voxel );
+				int32 index = node->voxel;
+				if( imguiCombo( comboHandle, &index, animator->voxels.names ) ){
+					node->voxel = safe_truncate< int16 >( index );
+				}
 				break;
 			}
 		}
@@ -539,7 +546,7 @@ void doProperties( AppData* app, GameInputs* inputs, rectfarg rect )
 	}
 	if( imguiBeginDropGroup( "Voxels", &editor->expandedFlags, AnimatorEditor::Voxels ) ) {
 		auto voxels = &animator->voxels;
-		FOR( entry : voxels->animations ) {
+		FOR( entry : voxels->voxels.animations ) {
 			imguiButton( entry.name );
 		}
 		imguiEndDropGroup();
@@ -632,7 +639,28 @@ void doEditor( AppData* app, GameInputs* inputs, rectfarg rect )
 		node->world = matrixTranslation( node->length, 0, 0 ) * node->base;
 	}
 
+	// render voxels
+	setRenderState( renderer, RenderStateType::DepthTest, true );
+	setTexture( renderer, 0, animator->voxels.voxels.texture );
+	auto stack = renderer->matrixStack;
+	pushMatrix( stack );
+	FOR( node : animator->nodes ) {
+		if( node->voxel >= 0 ) {
+			auto voxels = &animator->voxels.voxels;
+			auto range  = voxels->animations[node->voxel].range;
+			if( range ) {
+				auto entry = &voxels->frames[range.min];
+				currentMatrix( stack ) =
+				    matrixTranslation( Vec3( -entry->offset.x, entry->offset.y, 0 ) ) * node->world;
+				addRenderCommandMesh( renderer, entry->mesh );
+			}
+		}
+	}
+	popMatrix( stack );
+
+	setRenderState( renderer, RenderStateType::DepthTest, false );
 	// render skeleton
+	setTexture( renderer, 0, null );
 	LINE_MESH_STREAM_BLOCK( stream, renderer ) {
 		stream->color = Color::White;
 		FOR( node : animator->nodes ) {
@@ -649,12 +677,27 @@ void doEditor( AppData* app, GameInputs* inputs, rectfarg rect )
 		}
 	}
 
-	setProjection( renderer, ProjectionType::Orthogonal );
 
 	// render controls
 	auto viewProj = renderer->view * projection;
-	// auto viewProj = mat * perspective;
+
+	setProjection( renderer, ProjectionType::Orthogonal );
 	bool selectedAny = false;
+
+	auto selectNode = [&]( AnimatorNode* node, vec2arg pos ) {
+		if( isKeyDown( inputs, KC_Control ) ) {
+			node->selected = !node->selected;
+		} else {
+			if( !node->selected ) {
+				clearSelectedNodes( animator );
+				node->selected = true;
+			}
+			editor->moving      = true;
+			editor->mouseOffset = pos - inputs->mouse.position;
+			editor->clickedNode = node;
+		}
+	};
+
 	LINE_MESH_STREAM_BLOCK( stream, renderer ) {
 		stream->color = Color::White;
 		FOR( node : animator->nodes ) {
@@ -665,21 +708,48 @@ void doEditor( AppData* app, GameInputs* inputs, rectfarg rect )
 			    && isKeyPressed( inputs, KC_LButton ) ) {
 
 				selectedAny = true;
-				if( isKeyDown( inputs, KC_Control ) ) {
-					node->selected = !node->selected;
-				} else {
-					if( !node->selected ) {
-						clearSelectedNodes( animator );
-						node->selected = true;
-					}
-					editor->moving      = true;
-					editor->mouseOffset = head - inputs->mouse.position;
-					editor->clickedNode = node;
-				}
+				selectNode( node, head );
 			}
 
 			stream->color = ( node->selected ) ? ( Color::Red ) : ( Color::White );
 			pushQuadOutline( stream, headRect );
+		}
+		if( !selectedAny && isKeyPressed( inputs, KC_LButton ) ) {
+			// no node was selected, try selecting voxels
+			if( auto inv = inverse( viewProj ) ) {
+				auto mouse     = inputs->mouse.position;
+				auto w         = app->width;
+				auto h         = app->height;
+				vec3 rayStart  = toWorldSpace( inv.matrix, Vec3( mouse, 0 ), w, h );
+				vec3 rayEnd    = toWorldSpace( inv.matrix, Vec3( mouse, 1 ), w, h );
+				vec3 rayDir    = normalize( rayEnd - rayStart );
+				vec3 rayOrigin = rayStart;
+
+				FOR( node : animator->nodes ) {
+					if( node->voxel >= 0 ) {
+						auto animation  = &animator->voxels.voxels.animations[node->voxel];
+						auto range      = animation->range;
+						auto frameIndex = range.min/* + ( node->frame % width( range ) )*/;
+						auto info       = &animator->voxels.voxels.frameInfos[frameIndex];
+						auto frame      = &animator->voxels.voxels.frames[frameIndex];
+						auto& bounds    = info->bounds;
+						auto mat = matrixTranslation( Vec3( -frame->offset.x, frame->offset.y, 0 ) )
+						           * node->world;
+
+						debugPrintln( "{}", bounds );
+						debugPrintln( "{}, {}", rayStart, rayDir );
+						if( testRayVsObb( rayOrigin, rayDir, info->bounds, mat ) ) {
+							auto mat  = node->world * viewProj;
+							auto head = toScreenSpace( mat, {}, app->width, app->height );
+							selectNode( node, head );
+							selectedAny = true;
+							debugPrintln( "yes" );
+						} else {
+							debugPrintln( "no" );
+						}
+					}
+				}
+			}
 		}
 	}
 	if( isPointInside( rect, inputs->mouse.position ) && isKeyPressed( inputs, KC_LButton )
@@ -690,12 +760,6 @@ void doEditor( AppData* app, GameInputs* inputs, rectfarg rect )
 	}
 	if( isKeyUp( inputs, KC_LButton ) ) {
 		editor->moving = false;
-	}
-	if( editor->clickedNode ) {
-		vec3 base = transformVector3( editor->clickedNode->base, {} );
-		vec3 head = transformVector3( editor->clickedNode->world, {} );
-		debugPrintln( "base {}", base );
-		debugPrintln( "head {}", head );
 	}
 
 	if( editor->clickedNode ) {
@@ -931,7 +995,10 @@ void doEditor( AppData* app, GameInputs* inputs, rectfarg rect )
 
 AnimatorNode* allocateNode( AnimatorState* animator )
 {
-	return allocateStruct( &animator->nodeAllocator, AnimatorNode );
+	auto result = allocateStruct( &animator->nodeAllocator, AnimatorNode );
+	*result = {};
+	result->voxel = -1;
+	return result;
 }
 AnimatorNode* allocateNode( AnimatorState* animator, const AnimatorNode& node )
 {
@@ -993,8 +1060,17 @@ void doAnimator( AppData* app, GameInputs* inputs, bool focus, float dt )
 		// debug
 		animator->nodes.push_back( allocateNode( animator, {{}, {0, 0, HalfPi32}, 40, -1} ) );
 		animator->nodes.push_back( allocateNode( animator, {{}, {0, 0, HalfPi32}, 40, 0} ) );
+		animator->nodes[0]->voxel = -1;
+		animator->nodes[1]->voxel = -1;
 
-		loadVoxelCollection( allocator, "Data/voxels/hero.json", &animator->voxels );
+		if( loadVoxelCollection( allocator, "Data/voxels/hero.json", &animator->voxels.voxels ) ) {
+			animator->voxels.names =
+			    makeArray( allocator, StringView, animator->voxels.voxels.animations.size() );
+			zip_for( animator->voxels.names, animator->voxels.voxels.animations ) {
+				*first = second->name;
+			}
+		}
+
 #endif
 
 		animator->initialized = true;

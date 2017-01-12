@@ -14,7 +14,7 @@ enum VoxelFaceValues : uint32 {
 
 	VF_Count,
 };
-static const char* VoxelFaceStrings[] = {
+static const char* const VoxelFaceStrings[] = {
     "front", "left", "back", "right", "top", "bottom",
 };
 

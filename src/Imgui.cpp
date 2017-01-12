@@ -4,6 +4,9 @@ TODO:
     - when dragging a container, the titlebar lags behind
 */
 
+static const constexpr int8 ImGuiMaxValidZ = 120;
+static const constexpr int8 ImGuiMaxZ = 127;
+
 enum class ImGuiControlType : uint8 {
 	None,
 	Button,
@@ -190,6 +193,11 @@ struct ImGuiEditboxState {
 		hideCaret  = false;
 	}
 };
+struct ImGuiComboboxState {
+	rectf listRect;
+	bool expanded;
+	float scrollPos;
+};
 
 ImGuiContainerState defaultImGuiContainerSate( rectfarg rect );
 #define ImGuiMaxContainers 8
@@ -197,10 +205,12 @@ ImGuiContainerState defaultImGuiContainerSate( rectfarg rect );
 struct ImGuiControlState {
 	enum {
 		type_none,
-		type_editbox
+		type_editbox,
+		type_combobox,
 	} type;
 	union {
 		ImGuiEditboxState editbox;
+		ImGuiComboboxState combobox;
 	};
 };
 
@@ -340,6 +350,7 @@ void imguiClear()
 		ImGui->clearCapture = true;
 		ImGui->captureKey   = 0;
 	}
+
 	// set hover container
 	auto mousePosition = ImGui->inputs->mouse.position;
 	if( ImGui->capture ) {
@@ -365,6 +376,13 @@ void imguiClear()
 					z                     = container->z;
 				}
 			}
+		}
+		auto combo = query_variant( ImGui->state, combobox );
+		if( combo && ImGui->focus.type == ImGuiControlType::Combobox && combo->expanded
+		    && isPointInside( combo->listRect, mousePosition ) ) {
+
+			// the combo listRect might extend outside of its container, so we enforce it here
+			ImGui->hoverContainer = ImGui->focus.container;
 		}
 	}
 }
@@ -582,6 +600,14 @@ void imguiClose( int32 containerIndex )
 	}
 }
 
+void imguiRenderSortableBlock( int8 z )
+{
+	ImGui->renderCommandJumpLast =
+	    addRenderCommandJump( ImGui->renderer, ImGui->renderCommandJumpLast, imguiToUserData( z ) );
+	if( !ImGui->renderCommandJumpFirst ) {
+		ImGui->renderCommandJumpFirst = ImGui->renderCommandJumpLast;
+	}
+}
 bool imguiDialog( StringView name, int32 containerIndex )
 {
 	auto container = imguiGetContainer( containerIndex );
@@ -658,11 +684,7 @@ bool imguiDialog( StringView name, int32 containerIndex )
 		container->setDragging( false );
 	}
 
-	ImGui->renderCommandJumpLast = addRenderCommandJump( renderer, ImGui->renderCommandJumpLast,
-	                                                     imguiToUserData( container->z ) );
-	if( !ImGui->renderCommandJumpFirst ) {
-		ImGui->renderCommandJumpFirst = ImGui->renderCommandJumpLast;
-	}
+	imguiRenderSortableBlock( container->z );
 	auto prevColor   = renderer->color;
 	auto color       = getColorF( renderer->color );
 	auto bgColor     = multiplyComponents( vec4{.5f, 0, 0, 1}, color );
@@ -1404,7 +1426,8 @@ bool imguiBeginDropGroup( StringView name, bool* expanded )
 {
 	assert( expanded );
 	auto handle = imguiMakeHandle( expanded, ImGuiControlType::DropGroup );
-	return imguiBeginDropGroup( handle, name, *expanded );
+	*expanded = imguiBeginDropGroup( handle, name, *expanded );
+	return *expanded;
 }
 bool imguiBeginDropGroup( StringView name, uint32* flags, uint32 flag )
 {
@@ -1421,56 +1444,6 @@ void imguiEndDropGroup()
 	container->rect.left -= style->innerPadding;
 	container->addPosition.x = container->rect.left;
 	container->horizontalCount = 0;
-}
-
-struct ImGuiComboState {
-	int32* selectedIndex;
-	rectf textRect;
-	bool showComboEntries;
-};
-ImGuiComboState imguiCombo( StringView name, int32* selectedIndex )
-{
-	assert( selectedIndex );
-	using namespace ImGuiTexCoords;
-	auto renderer = ImGui->renderer;
-	auto font     = ImGui->font;
-	auto style    = &ImGui->style;
-
-	auto handle    = imguiMakeHandle( selectedIndex, ImGuiControlType::Combobox );
-	auto container = imguiCurrentContainer();
-	auto width     = ::width( container->rect ) - style->innerPadding * 2;
-	auto height    = ::max( stringHeight( font ), ::height( style->rects[ComboButton] ) )
-	              + style->innerPadding * 4;
-	auto rect  = imguiAddItem( width, height );
-	auto inner = imguiInnerRect( rect );
-	inner.left -= style->innerPadding;
-
-	auto buttonWidth = ::width( style->rects[ComboButton] );
-	auto buttonRect  = RectSetLeft( inner, inner.right - buttonWidth - style->innerPadding * 2 );
-	buttonRect = alignCenter( buttonRect, buttonWidth, ::height( style->rects[ComboButton] ) );
-
-	ImGuiComboState result  = {};
-	result.selectedIndex    = selectedIndex;
-	result.textRect         = imguiInnerRect( RectSetRight( inner, buttonRect.left ) );
-	result.showComboEntries = imguiKeypressButton( handle, buttonRect );
-
-	RENDER_COMMANDS_STATE_BLOCK( renderer ) {
-		auto color      = renderer->color;
-		renderer->color = multiply( color, 0x800000FF );
-		setTexture( renderer, 0, null );
-		addRenderCommandSingleQuad( renderer, inner );
-		renderer->color = multiply( color, Color::White );
-		setTexture( renderer, 0, style->atlas );
-		addRenderCommandSingleQuad( renderer, buttonRect, 0,
-		                            makeQuadTexCoords( style->texCoords[ComboButton] ) );
-	}
-
-	return result;
-}
-bool imguiComboEntry( const ImGuiComboState& combo, StringView name )
-{
-	assert( combo.selectedIndex );
-	return false;
 }
 
 static bool imguiPaddle( ImGuiHandle handle, float* value, float min, float max, float* innerValue,
@@ -1554,6 +1527,279 @@ ImGuiCustomSliderState imguiCustomSlider( ImGuiHandle handle, float* value, floa
 	}
 	return result;
 }
+bool imguiScrollbar( ImGuiHandle handle, float* pos, float min, float max, float pageSize,
+                     float stepSize, rectfarg rect, bool vertical )
+{
+	assert( pos );
+	auto renderer = ImGui->renderer;
+	auto inputs   = ImGui->inputs;
+	auto style    = &ImGui->style;
+	handle.type   = ImGuiControlType::Scrollbar;
+
+	float w;
+	rectf r;
+	rectf leftButton;
+	rectf rightButton;
+	rectf paddle;
+	float innerMin;
+	float innerMax;
+	if( !vertical ) {
+		w = style->scrollWidth;
+		r = rect;
+		leftButton  = {rect.left, rect.top, rect.left + w, rect.bottom};
+		rightButton = {rect.right - w, rect.top, rect.right, rect.bottom};
+		innerMin = leftButton.right;
+		innerMax = rightButton.left;
+	} else {
+		w = style->scrollHeight;
+		// swap horizontal and vertical components
+		r = swizzle( rect, RectComponent_Top, RectComponent_Left, RectComponent_Bottom,
+		             RectComponent_Right );
+		leftButton  = {rect.left, rect.top, rect.right, rect.top + w};
+		rightButton = {rect.left, rect.bottom - w, rect.right, rect.bottom};
+		innerMin = leftButton.bottom;
+		innerMax = rightButton.top;
+	}
+
+	auto changed = false;
+	if( imguiKeypressButton( handle, leftButton ) ) {
+		*pos -= stepSize;
+		changed = true;
+	}
+	if( imguiKeypressButton( handle, rightButton ) ) {
+		*pos += stepSize;
+		changed = true;
+	}
+
+	max -= pageSize;
+	*pos                 = clamp( *pos, min, max );
+	float innerWidth     = ::width( r ) - w * 2;
+	float rangeWidth     = max - min;
+	float paddleWidth    = ( pageSize / ( rangeWidth + pageSize ) ) * innerWidth;
+	float remainingWidth = innerWidth - paddleWidth;
+	float t              = ( *pos - min ) / rangeWidth;
+	float paddleOffset   = t * remainingWidth;
+	innerMax -= paddleWidth;
+	paddle = {innerMin + paddleOffset, r.top, innerMin + paddleOffset + paddleWidth, r.bottom};
+
+	auto mousePos = swizzle( inputs->mouse.position, VectorComponent_X + (int)vertical,
+	                         VectorComponent_Y - (int)vertical );
+	if( isKeyPressed( inputs, KC_LButton ) && imguiIsHover( handle )
+	    && isPointInside( paddle, mousePos ) ) {
+
+		imguiFocus( handle );
+		imguiCapture( handle );
+		ImGui->mouseOffset = mousePos - paddle.leftTop;
+	}
+
+	if( imguiPaddle( handle, pos, min, max, &paddle.left, innerMin, innerMax,
+	                 ( vertical ) ? ( VectorComponent_Y ) : ( VectorComponent_X ),
+	                 ImGui->mouseOffset.x ) ) {
+		changed      = true;
+		paddle.right = paddle.left + paddleWidth;
+	}
+	if( vertical ) {
+		paddle = swizzle( paddle, RectComponent_Top, RectComponent_Left, RectComponent_Bottom,
+		                  RectComponent_Right );
+	}
+
+	setTexture( renderer, 0, null );
+	MESH_STREAM_BLOCK( stream, renderer ) {
+		stream->color = multiply( renderer->color, Color::White );
+		pushQuad( stream, leftButton );
+		pushQuad( stream, rightButton );
+		stream->color = multiply( renderer->color, Color::Black );
+		pushQuad( stream, paddle );
+	}
+
+	return changed;
+}
+bool imguiScrollbar( float* pos, float min, float max, float pageSize, float stepSize,
+                     rectfarg rect, bool vertical )
+{
+	return imguiScrollbar( imguiMakeHandle( pos, ImGuiControlType::Scrollbar ), pos, min, max,
+	                       pageSize, stepSize, rect, vertical );
+}
+bool imguiListboxSingleSelect( ImGuiHandle handle, float* scrollPos, void* items, int32 entrySize,
+                               int32 itemsCount, int32* selectedIndex, rectfarg bounds )
+{
+	auto renderer = ImGui->renderer;
+	auto font     = ImGui->font;
+	auto inputs   = ImGui->inputs;
+	auto style    = &ImGui->style;
+
+	handle.type = ImGuiControlType::Listbox;
+
+	auto rect         = bounds;
+	auto height       = ::height( rect );
+	auto itemHeight   = stringHeight( font );
+	bool scrollActive = false;
+	rectf scrollRect  = {rect.right - style->scrollWidth, rect.top, rect.right, rect.bottom};
+
+	auto first = (char*)items;
+	auto last  = first + entrySize * itemsCount;
+
+	if( itemsCount * itemHeight > height ) {
+		rect.right -= style->scrollWidth + style->innerPadding;
+		scrollActive = true;
+	} else {
+		*scrollPos = 0;
+	}
+	bool changed = false;
+	if( isKeyPressed( inputs, KC_LButton ) && imguiIsHover( handle )
+	    && isPointInside( rect, inputs->mouse.position ) ) {
+		imguiFocus( handle );
+		imguiCapture( handle );
+		// handle selection
+		auto index = ( int32 )( ( inputs->mouse.position.y - rect.top + *scrollPos ) / itemHeight );
+		if( index >= 0 && index < itemsCount ) {
+			changed = true;
+			*selectedIndex = index;
+		}
+	}
+	if( scrollActive && imguiScrollbar( handle, scrollPos, 0, itemsCount * itemHeight - height,
+	                                    itemHeight, itemHeight * 0.5f, scrollRect, true ) ) {
+	}
+
+	rectf itemsBg = translate( rect, 0, -( *scrollPos ) );
+	auto clip     = ClippingRect( renderer, rect );
+	setTexture( renderer, 0, null );
+	MESH_STREAM_BLOCK( stream, renderer ) {
+		stream->color = multiply( renderer->color, 0xFF443C2D );
+		pushQuad( stream, rect );
+
+		auto entryRect   = itemsBg;
+		entryRect.bottom = entryRect.top + itemHeight;
+		Color colors[]   = {{multiply( renderer->color, 0xFF342B1B )},
+		                  {multiply( renderer->color, 0xFF5F594C )}};
+		auto index = 0;
+		auto selected = *selectedIndex;
+		for( auto it = first; it < last; it += entrySize, ++index ) {
+			assert_init( auto entry = (const StringView*)it,
+			             isAligned( entry, alignof( const StringView ) ) );
+			stream->color = colors[( int32 )( index == selected )];
+			pushQuad( stream, entryRect );
+			entryRect = translate( entryRect, 0, itemHeight );
+		}
+	}
+
+	auto entryRect   = itemsBg;
+	entryRect.bottom = entryRect.top + itemHeight;
+	reset( font );
+	RENDER_COMMANDS_STATE_BLOCK( renderer ) {
+		renderer->color = multiply( renderer->color, Color::White );
+		for( auto it = first; it < last; it += entrySize ) {
+			auto entry = (const StringView*)it;
+			assert_alignment( entry, alignof( const StringView ) );
+			renderText( renderer, font, *entry, entryRect );
+			entryRect = translate( entryRect, 0, itemHeight );
+		}
+	}
+
+	return changed;
+}
+bool imguiCombo( ImGuiHandle handle, int32* selectedIndex, const Array< const StringView > names,
+                 rectfarg rect )
+{
+	assert( selectedIndex );
+	using namespace ImGuiTexCoords;
+	auto renderer = ImGui->renderer;
+	auto font     = ImGui->font;
+	auto style     = &ImGui->style;
+	auto inputs    = ImGui->inputs;
+	auto container = imguiCurrentContainer();
+
+	handle.type = ImGuiControlType::Combobox;
+	auto inner  = imguiInnerRect( rect );
+	inner.left -= style->innerPadding;
+
+	auto buttonWidth = ::width( style->rects[ComboButton] );
+	auto buttonRect  = RectSetLeft( inner, inner.right - buttonWidth - style->innerPadding * 2 );
+	buttonRect = alignCenter( buttonRect, buttonWidth, ::height( style->rects[ComboButton] ) );
+
+	auto textRect             = imguiInnerRect( RectSetRight( inner, buttonRect.left ) );
+	ImGuiComboboxState* state = nullptr;
+
+	// we will treat children being focused as the combobox being focused
+	auto focus = ImGui->focus;
+	focus.type = ImGuiControlType::Combobox;
+	auto hasFocus = ( handle == focus );
+
+	bool justExpanded = false;
+	if( imguiKeypressButton( handle, buttonRect ) ) {
+		if( !hasFocus ) {
+			set_variant( ImGui->state, combobox ) = {};
+		}
+		state = &get_variant( ImGui->state, combobox );
+		imguiFocus( handle );
+		state->expanded = !state->expanded;
+		justExpanded = state->expanded;
+	}
+	if( hasFocus ) {
+		state = &get_variant( ImGui->state, combobox );
+	}
+
+	bool changed = false;
+
+	if( state && state->expanded ) {
+		imguiRenderSortableBlock( ImGuiMaxValidZ );
+		auto top        = rect.top + height( rect );
+		state->listRect = {rect.left, top, rect.right, top + 100};
+		if( imguiListboxSingleSelect( handle, &state->scrollPos, (void*)names.data(),
+		                              sizeof( const StringView ), names.size(), selectedIndex,
+		                              state->listRect ) ) {
+			state->expanded = false;
+			changed = true;
+		}
+		imguiRenderSortableBlock( container->z );
+		if( isPointInside( state->listRect, inputs->mouse.position ) ) {
+			// purposefully set hover container to -1 so that following controls do not receive
+			// inputs
+			ImGui->hoverContainer = -1;
+		} else if( isKeyPressed( inputs, KC_LButton ) && !justExpanded ) {
+			state->expanded = false;
+		}
+	}
+
+	RENDER_COMMANDS_STATE_BLOCK( renderer ) {
+		auto color      = renderer->color;
+		renderer->color = multiply( color, 0x800000FF );
+		setTexture( renderer, 0, null );
+		addRenderCommandSingleQuad( renderer, inner );
+		renderer->color = multiply( color, Color::White );
+		setTexture( renderer, 0, style->atlas );
+		addRenderCommandSingleQuad( renderer, buttonRect, 0,
+		                            makeQuadTexCoords( style->texCoords[ComboButton] ) );
+		auto selected = *selectedIndex;
+		if( selected >= 0 && selected < names.size() ) {
+			renderTextClipped( renderer, font, names[selected], inner );
+		}
+	}
+
+	return changed;
+}
+bool imguiCombo( ImGuiHandle handle, int32* selectedIndex, const Array< const StringView > names )
+{
+	using namespace ImGuiTexCoords;
+	auto font      = ImGui->font;
+	auto container = imguiCurrentContainer();
+	auto height    = max( stringHeight( font ), ::height( ImGui->style.rects[ComboButton] ) )
+	              + ImGui->style.innerPadding * 2;
+	auto rect = imguiAddItem( width( container->rect ), height );
+	return imguiCombo( handle, selectedIndex, names, rect );
+}
+bool imguiCombo( int32* selectedIndex, const Array< const StringView > names )
+{
+	using namespace ImGuiTexCoords;
+	auto font      = ImGui->font;
+	auto container = imguiCurrentContainer();
+	auto handle    = imguiMakeHandle( selectedIndex, ImGuiControlType::Combobox );
+	auto height    = max( stringHeight( font ), ::height( ImGui->style.rects[ComboButton] ) )
+	              + ImGui->style.innerPadding * 2;
+	auto rect = imguiAddItem( width( container->rect ), height );
+	return imguiCombo( handle, selectedIndex, names, rect );
+}
+
 ImGuiCustomSliderState imguiCustomSlider( float* value, float min, float max, float width,
                                           float paddleWidth, float paddleHeight,
                                           bool advance = true )
@@ -1654,94 +1900,6 @@ bool imguiSlider( StringView name, float* value, float min, float max )
 rectf imguiRegion( float width, float height )
 {
 	return imguiAddItem( width, height );
-}
-
-bool imguiScrollbar( float* pos, float min, float max, float pageSize, float stepSize,
-                     rectfarg rect, bool vertical )
-{
-	assert( pos );
-	auto renderer = ImGui->renderer;
-	auto inputs   = ImGui->inputs;
-	auto style    = &ImGui->style;
-	float w;
-	rectf r;
-	rectf leftButton;
-	rectf rightButton;
-	rectf paddle;
-	float innerMin;
-	float innerMax;
-	if( !vertical ) {
-		w = style->scrollWidth;
-		r = rect;
-		leftButton  = {rect.left, rect.top, rect.left + w, rect.bottom};
-		rightButton = {rect.right - w, rect.top, rect.right, rect.bottom};
-		innerMin = leftButton.right;
-		innerMax = rightButton.left;
-	} else {
-		w = style->scrollHeight;
-		// swap horizontal and vertical components
-		r = swizzle( rect, RectComponent_Top, RectComponent_Left, RectComponent_Bottom,
-		             RectComponent_Right );
-		leftButton  = {rect.left, rect.top, rect.right, rect.top + w};
-		rightButton = {rect.left, rect.bottom - w, rect.right, rect.bottom};
-		innerMin = leftButton.bottom;
-		innerMax = rightButton.top;
-	}
-
-	auto handle = imguiMakeHandle( pos, ImGuiControlType::Scrollbar );
-
-	auto changed = false;
-	if( imguiKeypressButton( handle, leftButton ) ) {
-		*pos -= stepSize;
-		changed = true;
-	}
-	if( imguiKeypressButton( handle, rightButton ) ) {
-		*pos += stepSize;
-		changed = true;
-	}
-
-	max -= pageSize;
-	*pos                 = clamp( *pos, min, max );
-	float innerWidth     = ::width( r ) - w * 2;
-	float rangeWidth     = max - min;
-	float paddleWidth    = ( pageSize / ( rangeWidth + pageSize ) ) * innerWidth;
-	float remainingWidth = innerWidth - paddleWidth;
-	float t              = ( *pos - min ) / rangeWidth;
-	float paddleOffset   = t * remainingWidth;
-	innerMax -= paddleWidth;
-	paddle = {innerMin + paddleOffset, r.top, innerMin + paddleOffset + paddleWidth, r.bottom};
-
-	auto mousePos = swizzle( inputs->mouse.position, VectorComponent_X + (int)vertical,
-	                         VectorComponent_Y - (int)vertical );
-	if( isKeyPressed( inputs, KC_LButton ) && imguiIsHover( handle )
-	    && isPointInside( paddle, mousePos ) ) {
-
-		imguiFocus( handle );
-		imguiCapture( handle );
-		ImGui->mouseOffset = mousePos - paddle.leftTop;
-	}
-
-	if( imguiPaddle( handle, pos, min, max, &paddle.left, innerMin, innerMax,
-	                 ( vertical ) ? ( VectorComponent_Y ) : ( VectorComponent_X ),
-	                 ImGui->mouseOffset.x ) ) {
-		changed      = true;
-		paddle.right = paddle.left + paddleWidth;
-	}
-	if( vertical ) {
-		paddle = swizzle( paddle, RectComponent_Top, RectComponent_Left, RectComponent_Bottom,
-		                  RectComponent_Right );
-	}
-
-	setTexture( renderer, 0, null );
-	MESH_STREAM_BLOCK( stream, renderer ) {
-		stream->color = multiply( renderer->color, Color::White );
-		pushQuad( stream, leftButton );
-		pushQuad( stream, rightButton );
-		stream->color = multiply( renderer->color, Color::Black );
-		pushQuad( stream, paddle );
-	}
-
-	return changed;
 }
 
 static rectf imguiGetPointRect( float valueX, float valueY, rectfarg valueDomain, rectfarg rect,
@@ -2176,7 +2334,7 @@ void imguiFinalize()
 	if( ImGui->renderCommandJumpFirst ) {
 		auto renderer                = ImGui->renderer;
 		ImGui->renderCommandJumpLast = addRenderCommandJump(
-		    renderer, ImGui->renderCommandJumpLast, imguiToUserData( ImGui->containersCount ) );
+		    renderer, ImGui->renderCommandJumpLast, imguiToUserData( ImGuiMaxZ ) );
 		sortRenderCommandJumps( renderer, ImGui->renderCommandJumpFirst,
 		                        ImGui->renderCommandJumpLast,
 		                        []( const RenderCommandJump& a, const RenderCommandJump& b ) {

@@ -72,4 +72,14 @@
 	} else                     \
 		for( init; !once_ && ( cond ); once_ = true )
 
+// iterate over two collections at once
+#define zip_for( collection0, collection1 )                                                      \
+	if( bool once_ = false ) {                                                                   \
+	} else                                                                                       \
+		for( auto first = ::begin( collection0 ), firstEnd = ::end( collection0 ); !once_;       \
+		     once_ = true )                                                                      \
+			for( auto second = ::begin( collection1 ), secondEnd = ::end( collection1 ); !once_; \
+			     once_ = true )                                                                  \
+				for( ; first != firstEnd && second != secondEnd; ++first, ++second )
+
 #endif  // _MACROS_H_INCLUDED_

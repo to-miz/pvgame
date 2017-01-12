@@ -212,7 +212,7 @@ enum VirtualKeyEnumValues : uint8 {
 	KC_Count = 0xFF,
 };
 
-static const char* VirtualKeyStrings[] = {
+static const char* const VirtualKeyStrings[] = {
     "",
     "LButton",              // Left mouse button
     "RButton",              // Right mouse button

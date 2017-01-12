@@ -1,5 +1,5 @@
 /*
-tm_json.h v.0.1.1c - public domain
+tm_json.h v.0.1.1d - public domain
 written by Tolga Mizrak 2016
 
 no warranty; use at your own risk
@@ -9,7 +9,7 @@ USAGE
 	To implement the interfaces in this header,
 	    #define TM_JSON_IMPLEMENTATION
 	in ONE C or C++ source file before #including this header.
-	
+
 	See SWITCHES for more options.
 
 PURPOSE
@@ -106,6 +106,7 @@ ISSUES
 	- missing documentation and example usage code
 
 HISTORY
+	v0.1.1d 10.01.17 minor change from static const char* to static const char* const in some places
 	v0.1.1c 07.11.16 minor edits, no runtime changes
 	v0.1.1b 10.10.16 fixed some warnings when tmj_size_t is signed
 	v0.1.1a 07.10.16 removed usage of unsigned arithmetic when tmj_size_t is signed
@@ -393,7 +394,7 @@ typedef struct {
 
 	tmj_size_t line; // current line
 	tmj_size_t column; // current column
-	
+
 	// these next 3 fields are safe to access
 	JsonStringView current; // the contents of the current token
 	JsonTokenType lastToken; // last token that was parsed
@@ -461,7 +462,7 @@ TMJ_DEF tmj_bool jsonSkipCurrent( JsonReader* reader, JsonContext currentContext
 tmj_size_t jsonCopyUnescapedString( JsonStringView str, char* buffer, tmj_size_t size );
 
 // copy a concatenated string.
-// You only need to call this if you use JSON_READER_CONCATENATED_STRINGS or 
+// You only need to call this if you use JSON_READER_CONCATENATED_STRINGS or
 // JSON_READER_CONCATENATED_STRINGS_IN_ARRAYS and the valueType of the current token is
 // JVAL_CONCAT_STRING
 tmj_size_t jsonCopyConcatenatedString( JsonStringView str, char* buffer, tmj_size_t size );
@@ -1071,7 +1072,7 @@ TMJ_DEF double jsonToDouble( JsonStringView str, double def )
 			if( compareStringIgnoreCase( str_.data, str_.size, "INFINITY", 8 ) ) {
 				return ( neg ) ? ( -TMJ_INFINITY ) : ( TMJ_INFINITY );
 			}
-	#endif 
+	#endif
 	#if defined( TMJ_NAN )
 			if( compareStringIgnoreCase( str_.data, str_.size, "NAN", 3 ) ) {
 				return ( neg ) ? ( -TMJ_NAN ) : ( TMJ_NAN );
@@ -1160,7 +1161,7 @@ TMJ_DEF tmj_bool jsonToBool( JsonStringView str, tmj_bool def )
 TMJ_DEF const char* jsonGetErrorString( JsonErrorType error )
 {
 	TMJ_ASSERT( error >= 0 && error <= JERR_INTERNAL_ERROR );
-	static const char* ErrorStrings[] = {
+	static const char* const ErrorStrings[] = {
 		"Ok",
 		"Unexpected Token",
 		"Unexpected EOF",
@@ -1184,7 +1185,7 @@ static void jsonAdvance( JsonReader* reader )
 }
 static tmj_size_t skipWhitespace( JsonReader* reader )
 {
-	static const char* whitespace = " \t\r\f\n\v";
+	static const char* const whitespace = " \t\r\f\n\v";
 	const char* p;
 	while( ( p = (const char*)TMJ_MEMCHR( whitespace, reader->data[0], 6 ) ) != TMJ_NULL ) {
 		if( reader->data[0] == '\n' ) {
@@ -2848,7 +2849,7 @@ static JsonValue jsonAllocateValueEx( JsonStackAllocator* allocator, JsonReader*
 		case JVAL_CONCAT_STRING: {
 			result.type = JVAL_STRING;
 			result.data.content = jsonAllocateConcatenatedString( allocator, reader->current );
-			break;	
+			break;
 		}
 		case JVAL_RAW_STRING: {
 			result.type = JVAL_STRING;

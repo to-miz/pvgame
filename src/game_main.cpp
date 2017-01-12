@@ -256,6 +256,7 @@ struct VoxelCollection {
 		VoxelGridTextureMap textureMap;
 		recti textureRegion[VF_Count];
 		float frictionCoefficient;
+		aabb bounds;
 		// TODO: include more meta information like gun position
 	};
 
@@ -369,7 +370,7 @@ enum class SpatialState {
 	FallingOff,
 	Airborne,
 };
-static const char* SpatilStateStrings[] = {
+static const char* const SpatilStateStrings[] = {
     "Grounded", "FallingOff", "Airborne",
 };
 
@@ -1341,6 +1342,34 @@ bool loadVoxelGridsFromFile( PlatformServices* platform, StringView filename,
 	}
 	return true;
 }
+aabb getBoundsFromVoxelGrid( const VoxelGrid* grid )
+{
+	int32 left   = 10000;
+	int32 bottom = 10000;
+	int32 near   = 10000;
+	int32 right  = -10000;
+	int32 top    = -10000;
+	int32 far    = -10000;
+
+	for( auto z = 0, depth = grid->depth; z < depth; ++z ) {
+		for( auto y = 0, height = grid->height; y < height; ++y ) {
+			for( auto x = 0, width = grid->width; x < width; ++x ) {
+				auto index = x + y * width + z * width * height;
+				auto cell  = grid->data[index];
+				if( cell != EmptyCell ) {
+					left   = min( left, x );
+					bottom = min( bottom, height - y );
+					near   = min( near, z );
+					right  = max( right, x + 1 );
+					top    = max( top, height - y + 1 );
+					far    = max( far, z + 1 );
+				}
+			}
+		}
+	}
+	return {left * CELL_WIDTH,  bottom * CELL_HEIGHT, near * CELL_DEPTH,
+	        right * CELL_WIDTH, top * CELL_HEIGHT,    far * CELL_DEPTH};
+}
 bool loadVoxelCollection( StackAllocator* allocator, StringView filename, VoxelCollection* out )
 {
 	if( !loadVoxelCollectionTextureMapping( allocator, filename, out ) ) {
@@ -1362,6 +1391,7 @@ bool loadVoxelCollection( StackAllocator* allocator, StringView filename, VoxelC
 				generateMeshFromVoxelGrid( &stream, grid, &info->textureMap, VoxelCellSize );
 				frame->mesh = GlobalPlatformServices->uploadMesh( toMesh( &stream ) );
 				assert( frame->mesh );
+				info->bounds = getBoundsFromVoxelGrid( grid );
 			}
 		}
 	}

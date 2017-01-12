@@ -103,3 +103,39 @@ bool testRayVsAabb( vec3arg rayOrigin, vec3arg rayDir, aabbarg box, TestRayVsAab
 	out->leave.normal = tMax.normal;
 	return tMin.t <= tMax.t;
 }
+
+bool testRayVsObb( vec3arg rayOrigin, vec3arg rayDir, aabbarg box, mat4arg transform,
+                   float* t = nullptr )
+{
+	vec3 xAxis  = {transform.m[0], transform.m[1], transform.m[2]};
+	vec3 yAxis  = {transform.m[4], transform.m[5], transform.m[6]};
+	vec3 zAxis  = {transform.m[8], transform.m[9], transform.m[10]};
+	vec3 oobPos = {transform.m[12], transform.m[13], transform.m[14]};
+	vec3 delta  = oobPos - rayOrigin;
+
+	auto xDeltaProjected      = dot( xAxis, delta );
+	auto yDeltaProjected      = dot( yAxis, delta );
+	auto zDeltaProjected      = dot( zAxis, delta );
+	auto xOneOverDirProjected = 1.0f / dot( xAxis, rayDir );
+	auto yOneOverDirProjected = 1.0f / dot( yAxis, rayDir );
+	auto zOneOverDirProjected = 1.0f / dot( zAxis, rayDir );
+
+	auto tMinX = ( xDeltaProjected + box.min.x ) * xOneOverDirProjected;
+	auto tMinY = ( yDeltaProjected + box.min.y ) * yOneOverDirProjected;
+	auto tMinZ = ( zDeltaProjected + box.min.z ) * zOneOverDirProjected;
+
+	auto tMaxX = ( xDeltaProjected + box.max.x ) * xOneOverDirProjected;
+	auto tMaxY = ( yDeltaProjected + box.max.y ) * yOneOverDirProjected;
+	auto tMaxZ = ( zDeltaProjected + box.max.z ) * zOneOverDirProjected;
+
+	auto mmX  = minmax( tMinX, tMaxX );
+	auto mmY  = minmax( tMinY, tMaxY );
+	auto mmZ  = minmax( tMinZ, tMaxZ );
+	auto tMin = max( mmX.min, mmY.min, mmZ.min );
+	auto tMax = min( mmX.max, mmY.max, mmZ.max );
+
+	if( t ) {
+		*t = tMin;
+	}
+	return tMin <= tMax;
+}

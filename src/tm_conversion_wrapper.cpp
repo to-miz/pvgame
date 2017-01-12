@@ -55,6 +55,8 @@ tmp_size_t snprint( char* buffer, tmp_size_t len, const PrintFormat& initialForm
                     const vec4& value );
 tmp_size_t snprint( char* buffer, tmp_size_t len, const PrintFormat& initialFormatting,
                     const rectf& value );
+tmp_size_t snprint( char* buffer, tmp_size_t len, const PrintFormat& initialFormatting,
+                    const aabb& value );
 
 #define TMP_NO_INCLUDE_TM_CONVERSION
 #define TMP_STRING_VIEW StringView
@@ -84,6 +86,12 @@ tmp_size_t snprint( char* buffer, tmp_size_t len, const PrintFormat& initialForm
 {
 	return ::snprint( buffer, len, "{{{}, {}, {}, {}}", initialFormatting, value.left, value.top,
 	                  value.right, value.bottom );
+}
+tmp_size_t snprint( char* buffer, tmp_size_t len, const PrintFormat& initialFormatting,
+                    const aabb& value )
+{
+	return ::snprint( buffer, len, "{{{}, {}, {}, {}, {}, {}}", initialFormatting, value.min.x,
+	                  value.min.y, value.min.z, value.max.x, value.max.y, value.max.z );
 }
 
 struct string_builder {

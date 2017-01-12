@@ -1,4 +1,4 @@
-static const char* noLightingVertexShaderSource = R"(
+static const char* const noLightingVertexShaderSource = R"(
 #version 330 core
 
 uniform mat4 worldViewProj;
@@ -20,7 +20,7 @@ void main()
 	fragTexCoords0 = texCoords0;
 }
 )";
-static const char* noLightingFragmentShaderSource = R"(
+static const char* const noLightingFragmentShaderSource = R"(
 #version 330 core
 
 precision highp float; // Video card drivers require this line to function properly
@@ -39,7 +39,7 @@ void main()
 }
 )";
 
-static const char* ingameVertexShaderSource = R"(
+static const char* const ingameVertexShaderSource = R"(
 #version 330 core
 
 uniform mat4 worldViewProj;
@@ -69,7 +69,7 @@ void main()
 	fragNormal = model * normal0;
 }
 )";
-static const char* ingameFragmentShaderSource = R"(
+static const char* const ingameFragmentShaderSource = R"(
 #version 330 core
 
 precision highp float; // Video card drivers require this line to function properly

@@ -1,5 +1,5 @@
 /*
-tm_print.h v0.0.4c - public domain
+tm_print.h v0.0.4d - public domain
 author: Tolga Mizrak 2016
 
 no warranty; use at your own risk
@@ -33,6 +33,7 @@ ISSUES
 	sized)
 
 HISTORY
+	v0.0.4d 10.01.17 minor change from static const char* to static const char* const in print_bool
 	v0.0.4c 23.10.16 added some assertions for bounds checking
 	v0.0.4b 07.10.16 fixed some casting issues when tmp_size_t is signed
 	v0.0.4a 29.09.16 fixed a bug where inputting an escaped {{ was resulting in an infinite loop
@@ -40,7 +41,7 @@ HISTORY
 	                 fixed compiler errors when compiling with clang
 	v0.0.3  27.09.16 added printing custom types by overloading snprint
 	                 added initialFormatting parameter to snprint so that custom printing can
-	                 inherit formatting options 
+	                 inherit formatting options
 	v0.0.2  26.09.16 changed makeFlags to tmp_type_flags so that it is guaranteed to be a
 	                 compile time constant
 	                 added string view overloads so that print can accept a string view as the
@@ -87,7 +88,7 @@ LICENSE
 		#include <cstdlib>
 		#define TMP_STRTOUL strtoul
 	#endif
-	
+
 	#if defined( TMP_NO_TM_CONVERSION ) && defined( TMP_NO_STDIO ) && !defined( TMP_SNPRINTF )
 		#error "TMP_SNPRINTF has to be defined if TMP_NO_STDIO and TMP_NO_TM_CONVERSION are defined"
 	#endif
@@ -692,7 +693,7 @@ enum Values : unsigned int {
 	WidthSpecified     = TMP_BITFIELD( 6 ),
 	PrecisionSpecified = TMP_BITFIELD( 7 ),
 };
-}	
+}
 
 #ifdef TMP_NO_TM_CONVERSION
 static tmp_size_t scan_u32_n( const char* str, tmp_size_t len, int base, unsigned int* out )
@@ -1232,8 +1233,8 @@ static tmp_size_t print_bool( char* dest, tmp_size_t maxlen, PrintFormat* format
 		}
 		return 1;
 	} else {
-		static const char* strings[] = {"false", "true"};
-		static tmp_size_t lengths[] = {sizeof( "false" ) - 1, sizeof( "true" ) - 1};
+		static const char* const strings[] = {"false", "true"};
+		static const tmp_size_t lengths[] = {sizeof( "false" ) - 1, sizeof( "true" ) - 1};
 		size_t index = value != 0;
 
 		auto size = TMP_MIN( lengths[index], maxlen );
