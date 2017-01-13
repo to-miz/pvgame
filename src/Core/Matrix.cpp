@@ -254,9 +254,9 @@ mat4 matrixLookAt( vec3arg position, vec3arg lookAt, vec3 up /* = {0, 1, 0}*/ )
 	xaxis = normal(cross(up, zaxis))
 	yaxis = cross(zaxis, xaxis)
 
-	 xaxis.x           yaxis.x           zaxis.x          0
-	 xaxis.y           yaxis.y           zaxis.y          0
-	 xaxis.z           yaxis.z           zaxis.z          0
+	 xaxis.x               yaxis.x                zaxis.x                0
+	 xaxis.y               yaxis.y                zaxis.y                0
+	 xaxis.z               yaxis.z                zaxis.z                0
 	-dot(xaxis, position)  -dot(yaxis, position)  -dot(zaxis, position)  1
 	*/
 	mat4 result;
@@ -451,4 +451,17 @@ mat4 matrixFromNormal( vec3arg normal )
 	tangent0      = normalize( tangent0 );
 	vec3 tangent1 = normalize( cross( normal, tangent0 ) );
 	return matrixFromColumns( tangent0, tangent1, normal );
+}
+
+vec4 row( mat4arg mat, int32 i )
+{
+	assert( i >= 0 && i < 4 );
+	i *= 4;
+	return {mat.m[i + 0], mat.m[i + 1], mat.m[i + 2], mat.m[i + 3]};
+}
+vec4 column( mat4arg mat, int32 i )
+{
+	assert( i >= 0 && i < 4 );
+	i *= 4;
+	return {mat.m[i + 0], mat.m[i + 4], mat.m[i + 8], mat.m[i + 12]};
 }

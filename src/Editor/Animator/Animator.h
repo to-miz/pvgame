@@ -12,12 +12,17 @@ struct AnimatorNode {
 	int16 id;
 	AnimatorNode* parent;
 
+	int32 childrenCount;
+
 	bool8 selected;
 	int16 voxel;
 	int16 frame;
 
 	mat4 base;
 	mat4 world;
+
+	char name[10];
+	int32 nameLength;
 };
 
 typedef int16 GroupId;
@@ -95,6 +100,7 @@ struct AnimatorState {
 	UArray< AnimatorGroup > groups;
 	UArray< AnimatorGroupDisplay > visibleGroups;
 	UArray< AnimatorNode* > nodes;
+	UArray< StringView > nodeNames;
 	FixedSizeAllocator nodeAllocator;
 
 	AnimatorVoxelCollection voxels;
@@ -118,6 +124,9 @@ struct AnimatorState {
 	GroupId ids;
 	int16 nodeIds;
 	AnimatorEditor editor;
+
+	StringPool stringPool;
+	StringView fieldNames[3];
 };
 
 #endif  // _ANIMATOR_H_INCLUDED_

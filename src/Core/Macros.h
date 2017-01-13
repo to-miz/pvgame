@@ -82,4 +82,8 @@
 			     once_ = true )                                                                  \
 				for( ; first != firstEnd && second != secondEnd; ++first, ++second )
 
+// while loop with max iterations
+#define bounded_while( cond, max_iter ) \
+	for( auto iterations_ = 0; ( cond ) && iterations_ < ( max_iter ); ++iterations_ )
+
 #endif  // _MACROS_H_INCLUDED_

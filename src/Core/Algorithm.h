@@ -62,17 +62,17 @@ void insertion_sort( RandomAccessIterator first, RandomAccessIterator last, Pred
 	assert( first <= last );
 	if( first != last ) {
 		for( auto next = first + 1; next < last; ++next ) {
-			// find insertion pos
-			// no binary search, because insertion sort is only used on small arrays
-			auto dest = first;
-			auto value = std::move( *next );
-			while( pred( *dest, value ) ) {
-				++dest;
-			}
-			// make room for insertion
-			move( dest + 1, dest, next - dest - 1 );
-			// insert
-			*dest = std::move( value );
+		    // find insertion pos
+		    // no binary search, because insertion sort is only used on small arrays
+		    auto dest = first;
+		    auto value = std::move( *next );
+		    while( !pred( value, *dest ) && dest < next ) {
+		        ++dest;
+		    }
+		    // make room for insertion
+		    move( dest + 1, dest, next - dest );
+		    // insert
+		    *dest = std::move( value );
 		}
 	}
 }

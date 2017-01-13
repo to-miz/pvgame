@@ -10,8 +10,6 @@ static const vec3 AnimatorInitialRotation = {0, -0.2f, 0};
 constexpr const float AnimatorMinScale = 0.1f;
 constexpr const float AnimatorMaxScale = 10.0f;
 
-static const StringView NodeNames[] = {"Translation", "Rotation", "Scale"};
-
 rectf getSelection( AnimatorState* animator )
 {
 	return correct( animator->selectionA, animator->selectionB );
@@ -410,6 +408,38 @@ void populateVisibleGroups( AnimatorState* animator )
 	}
 }
 
+void changeModelSpace( AnimatorNode* node, mat4arg model )
+{
+	assert( node );
+	if( auto inv = inverse( model ) ) {
+		auto base = transformVector3( node->base, {} );
+		auto head = transformVector3( node->world, {} );
+
+		auto localBase = transformVector3( inv.matrix, base );
+		auto localHead = transformVector3( inv.matrix, head );
+
+		auto delta          = localHead - localBase;
+		node->translation   = localBase;
+		auto toYawPitchRoll = [&]( vec3arg d, vec3arg oldRotation ) -> vec3 {
+			vec3 result = oldRotation;
+			auto xAxis = row( model, 0 ).xyz;
+			auto yAxis = row( model, 1 ).xyz;
+			auto zAxis = row( model, 2 ).xyz;
+			if( !floatEqZero( d.x ) || !floatEqZero( d.y ) ) {
+				result.z = angle( d - dot( d, zAxis ) * zAxis, {1, 0, 0}, -zAxis );
+			}
+			if( !floatEqZero( d.x ) || !floatEqZero( d.z ) ) {
+				result.y = angle( d - dot( d, yAxis ) * yAxis, {-1, 0, 0}, -yAxis );
+			}
+			return result;
+		};
+		node->rotation = toYawPitchRoll( delta, node->rotation );
+		assert( floatEqSoft( node->length, length( delta ) ) );
+	} else {
+		assert( 0 );
+	}
+}
+
 void doKeyframesControl( AppData* app, GameInputs* inputs )
 {
 	auto animator = &app->animatorState;
@@ -468,6 +498,11 @@ void doProperties( AppData* app, GameInputs* inputs, rectfarg rect )
 	if( imguiBeginDropGroup( "Properties", &editor->expandedFlags, AnimatorEditor::Properties ) ) {
 		FOR( node : animator->nodes ) {
 			if( node->selected ) {
+				if( imguiEditbox( "Name", node->name, &node->nameLength, countof( node->name ) ) ) {
+					auto index = distance( animator->nodes.begin(),
+					                       find_first_where( animator->nodes, it == node ) );
+					animator->nodeNames[index + 1] = {node->name, node->nameLength};
+				}
 				imguiEditbox( "Length", &node->length );
 				imguiEditbox( "Translation X", &node->translation.x );
 				imguiEditbox( "Translation Y", &node->translation.y );
@@ -475,10 +510,54 @@ void doProperties( AppData* app, GameInputs* inputs, rectfarg rect )
 				doRotation( "Rotation X", &node->rotation.x );
 				doRotation( "Rotation Y", &node->rotation.y );
 				doRotation( "Rotation Z", &node->rotation.z );
-				auto comboHandle = imguiMakeHandle( &node->voxel );
-				int32 index = node->voxel;
-				if( imguiCombo( comboHandle, &index, animator->voxels.names ) ){
-					node->voxel = safe_truncate< int16 >( index );
+				{
+					imguiSameLine( 2 );
+					imguiText( "Voxel" );
+					auto comboHandle = imguiMakeHandle( &node->voxel );
+					int32 index      = node->voxel;
+					if( imguiCombo( comboHandle, &index, animator->voxels.names ) ) {
+						node->voxel = safe_truncate< int16 >( index );
+					}
+				}
+				{
+					imguiSameLine( 2 );
+					imguiText( "Parent" );
+					auto comboHandle = imguiMakeHandle( &node->parentId );
+					int32 index      = 0;
+					if( node->parent ) {
+						index = distance( animator->nodes.begin(),
+						                  find_first_where( animator->nodes, it == node->parent ) )
+						        + 1;
+					}
+					if( imguiCombo( comboHandle, &index, makeArrayView( animator->nodeNames ) ) ) {
+						if( index ) {
+							auto newParent = animator->nodes[index - 1];
+							auto isMyChild = []( AnimatorNode* parent,
+							                     AnimatorNode* potentialChild ) {
+								bounded_while( potentialChild && potentialChild != parent, 100 ) {
+									potentialChild = potentialChild->parent;
+								}
+								return potentialChild == parent;
+							};
+							if( newParent != node && !isMyChild( node, newParent ) ) {
+								if( node->parent ) {
+									--node->parent->childrenCount;
+								}
+								node->parent   = newParent;
+								node->parentId = node->parent->id;
+
+								changeModelSpace( node, newParent->world );
+								++newParent->childrenCount;
+							}
+						} else {
+							if( node->parent ) {
+								--node->parent->childrenCount;
+							}
+							node->parentId = -1;
+							node->parent   = nullptr;
+							changeModelSpace( node, matrixIdentity() );
+						}
+					}
 				}
 				break;
 			}
@@ -628,6 +707,10 @@ void doEditor( AppData* app, GameInputs* inputs, rectfarg rect )
 		pushLine( stream, {0, -10, 0}, {0, 10, 0} );
 	}
 
+	sort( animator->nodes.begin(), animator->nodes.end(),
+	      []( const AnimatorNode* a, const AnimatorNode* b ) {
+		      return a->childrenCount > b->childrenCount;
+		  } );
 	// update transforms
 	FOR( node : animator->nodes ) {
 		auto local = matrixRotation( node->rotation ) * matrixTranslation( node->translation );
@@ -732,20 +815,14 @@ void doEditor( AppData* app, GameInputs* inputs, rectfarg rect )
 						auto frameIndex = range.min/* + ( node->frame % width( range ) )*/;
 						auto info       = &animator->voxels.voxels.frameInfos[frameIndex];
 						auto frame      = &animator->voxels.voxels.frames[frameIndex];
-						auto& bounds    = info->bounds;
 						auto mat = matrixTranslation( Vec3( -frame->offset.x, frame->offset.y, 0 ) )
 						           * node->world;
 
-						debugPrintln( "{}", bounds );
-						debugPrintln( "{}, {}", rayStart, rayDir );
 						if( testRayVsObb( rayOrigin, rayDir, info->bounds, mat ) ) {
 							auto mat  = node->world * viewProj;
 							auto head = toScreenSpace( mat, {}, app->width, app->height );
 							selectNode( node, head );
 							selectedAny = true;
-							debugPrintln( "yes" );
-						} else {
-							debugPrintln( "no" );
 						}
 					}
 				}
@@ -1009,6 +1086,7 @@ AnimatorNode* allocateNode( AnimatorState* animator, const AnimatorNode& node )
 		auto id = result->parentId;
 		if( auto parent = find_first_where( animator->nodes, it->id == id ) ) {
 			result->parent = *parent;
+			++result->parent->childrenCount;
 		} else {
 			result->parentId = -1;
 			result->parent   = nullptr;
@@ -1035,17 +1113,24 @@ void doAnimator( AppData* app, GameInputs* inputs, bool focus, float dt )
 		imguiLoadDefaultStyle( gui, &app->platform );
 
 		auto allocator          = &app->stackAllocator;
+		animator->stringPool    = makeStringPool( allocator, 100 );
 		animator->keyframesPool = makeUArray( allocator, AnimatorKeyframe, 10 );
 		animator->keyframes     = makeUArray( allocator, AnimatorKeyframe*, 10 );
 		animator->selected      = makeUArray( allocator, AnimatorKeyframe*, 10 );
 		animator->groups        = makeUArray( allocator, AnimatorGroup, 10 );
 		animator->visibleGroups = makeUArray( allocator, AnimatorGroupDisplay, 10 );
 		animator->nodes         = makeUArray( allocator, AnimatorNode*, 10 );
+		animator->nodeNames     = makeUArray( allocator, StringView, 10 );
+		animator->nodeNames.push_back( pushString( &animator->stringPool, "None" ) );
 		animator->nodeAllocator = makeFixedSizeAllocator( allocator, 10, sizeof( AnimatorNode ),
 		                                                  alignof( AnimatorNode ) );
 
-		addAnimatorGroups( animator, "Test", makeArrayView( NodeNames ) );
-		addAnimatorGroups( animator, "Test2", makeArrayView( NodeNames ) );
+		animator->fieldNames[0] = pushString( &animator->stringPool, "Translation" );
+		animator->fieldNames[1] = pushString( &animator->stringPool, "Rotation" );
+		animator->fieldNames[2] = pushString( &animator->stringPool, "Length" );
+
+		addAnimatorGroups( animator, "Test", makeArrayView( animator->fieldNames ) );
+		addAnimatorGroups( animator, "Test2", makeArrayView( animator->fieldNames ) );
 		populateVisibleGroups( animator );
 		animator->keyframesPool.assign( {{0, 0, 1}, {20, 0, 1}, {35, 0, 3}, {200, 0, 1}} );
 		auto pool = animator->keyframesPool;
@@ -1055,11 +1140,14 @@ void doAnimator( AppData* app, GameInputs* inputs, bool focus, float dt )
 
 		animator->editor.rotation = AnimatorInitialRotation;
 		animator->editor.scale    = 1;
+		animator->editor.expandedFlags |= AnimatorEditor::Properties;
 
 #if 1
 		// debug
 		animator->nodes.push_back( allocateNode( animator, {{}, {0, 0, HalfPi32}, 40, -1} ) );
+		animator->nodeNames.push_back( {} );
 		animator->nodes.push_back( allocateNode( animator, {{}, {0, 0, HalfPi32}, 40, 0} ) );
+		animator->nodeNames.push_back( {} );
 		animator->nodes[0]->voxel = -1;
 		animator->nodes[1]->voxel = -1;
 

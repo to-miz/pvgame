@@ -798,9 +798,8 @@ void imguiText( StringView text, float width, float height )
 }
 void imguiText( StringView text )
 {
-	auto font     = ImGui->font;
-	auto container = imguiCurrentContainer();
-	auto width = imguiClientWidth( container );
+	auto font      = ImGui->font;
+	auto width     = stringWidth( font, text ) + ImGui->style.innerPadding * 2;
 	imguiText( text, width, stringHeight( font, text, width ) );
 }
 
@@ -1620,8 +1619,10 @@ bool imguiScrollbar( float* pos, float min, float max, float pageSize, float ste
 	return imguiScrollbar( imguiMakeHandle( pos, ImGuiControlType::Scrollbar ), pos, min, max,
 	                       pageSize, stepSize, rect, vertical );
 }
-bool imguiListboxSingleSelect( ImGuiHandle handle, float* scrollPos, void* items, int32 entrySize,
-                               int32 itemsCount, int32* selectedIndex, rectfarg bounds )
+typedef StringView ImGuiGetTextFunctionType( const void* );
+bool imguiListboxSingleSelect( ImGuiHandle handle, float* scrollPos, const void* items,
+                               int32 entrySize, int32 itemsCount, int32* selectedIndex,
+                               rectfarg bounds, ImGuiGetTextFunctionType* getText )
 {
 	auto renderer = ImGui->renderer;
 	auto font     = ImGui->font;
@@ -1636,7 +1637,7 @@ bool imguiListboxSingleSelect( ImGuiHandle handle, float* scrollPos, void* items
 	bool scrollActive = false;
 	rectf scrollRect  = {rect.right - style->scrollWidth, rect.top, rect.right, rect.bottom};
 
-	auto first = (char*)items;
+	auto first = (const char*)items;
 	auto last  = first + entrySize * itemsCount;
 
 	if( itemsCount * itemHeight > height ) {
@@ -1653,7 +1654,7 @@ bool imguiListboxSingleSelect( ImGuiHandle handle, float* scrollPos, void* items
 		// handle selection
 		auto index = ( int32 )( ( inputs->mouse.position.y - rect.top + *scrollPos ) / itemHeight );
 		if( index >= 0 && index < itemsCount ) {
-			changed = true;
+			changed        = true;
 			*selectedIndex = index;
 		}
 	}
@@ -1672,11 +1673,9 @@ bool imguiListboxSingleSelect( ImGuiHandle handle, float* scrollPos, void* items
 		entryRect.bottom = entryRect.top + itemHeight;
 		Color colors[]   = {{multiply( renderer->color, 0xFF342B1B )},
 		                  {multiply( renderer->color, 0xFF5F594C )}};
-		auto index = 0;
+		auto index    = 0;
 		auto selected = *selectedIndex;
 		for( auto it = first; it < last; it += entrySize, ++index ) {
-			assert_init( auto entry = (const StringView*)it,
-			             isAligned( entry, alignof( const StringView ) ) );
 			stream->color = colors[( int32 )( index == selected )];
 			pushQuad( stream, entryRect );
 			entryRect = translate( entryRect, 0, itemHeight );
@@ -1689,17 +1688,16 @@ bool imguiListboxSingleSelect( ImGuiHandle handle, float* scrollPos, void* items
 	RENDER_COMMANDS_STATE_BLOCK( renderer ) {
 		renderer->color = multiply( renderer->color, Color::White );
 		for( auto it = first; it < last; it += entrySize ) {
-			auto entry = (const StringView*)it;
-			assert_alignment( entry, alignof( const StringView ) );
-			renderText( renderer, font, *entry, entryRect );
+			auto text = getText( it );
+			renderText( renderer, font, text, entryRect );
 			entryRect = translate( entryRect, 0, itemHeight );
 		}
 	}
 
 	return changed;
 }
-bool imguiCombo( ImGuiHandle handle, int32* selectedIndex, const Array< const StringView > names,
-                 rectfarg rect )
+bool imguiCombo( ImGuiHandle handle, const void* items, int32 entrySize, int32 itemsCount,
+                 int32* selectedIndex, rectfarg rect, ImGuiGetTextFunctionType* getText )
 {
 	assert( selectedIndex );
 	using namespace ImGuiTexCoords;
@@ -1745,9 +1743,8 @@ bool imguiCombo( ImGuiHandle handle, int32* selectedIndex, const Array< const St
 		imguiRenderSortableBlock( ImGuiMaxValidZ );
 		auto top        = rect.top + height( rect );
 		state->listRect = {rect.left, top, rect.right, top + 100};
-		if( imguiListboxSingleSelect( handle, &state->scrollPos, (void*)names.data(),
-		                              sizeof( const StringView ), names.size(), selectedIndex,
-		                              state->listRect ) ) {
+		if( imguiListboxSingleSelect( handle, &state->scrollPos, items, entrySize, itemsCount,
+		                              selectedIndex, state->listRect, getText ) ) {
 			state->expanded = false;
 			changed = true;
 		}
@@ -1771,12 +1768,23 @@ bool imguiCombo( ImGuiHandle handle, int32* selectedIndex, const Array< const St
 		addRenderCommandSingleQuad( renderer, buttonRect, 0,
 		                            makeQuadTexCoords( style->texCoords[ComboButton] ) );
 		auto selected = *selectedIndex;
-		if( selected >= 0 && selected < names.size() ) {
-			renderTextClipped( renderer, font, names[selected], inner );
+		if( selected >= 0 && selected < itemsCount ) {
+			auto text = getText( (const char*)items + entrySize * selected );
+			renderTextClipped( renderer, font, text, inner );
 		}
 	}
 
 	return changed;
+}
+bool imguiCombo( ImGuiHandle handle, int32* selectedIndex, const Array< const StringView > names,
+                 rectfarg rect )
+{
+	auto getText = []( const void* entry ) {
+		assert_alignment( entry, alignof( const StringView ) );
+		return *( (const StringView*)entry );
+	};
+	return imguiCombo( handle, names.data(), sizeof( const StringView ), names.size(),
+	                   selectedIndex, rect, getText );
 }
 bool imguiCombo( ImGuiHandle handle, int32* selectedIndex, const Array< const StringView > names )
 {
