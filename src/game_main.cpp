@@ -330,6 +330,7 @@ struct CountdownTimer {
 	inline explicit operator bool() const { return value > 0; }
 };
 bool isCountdownTimerExpired( CountdownTimer timer ) { return timer.value < Float::BigEpsilon; }
+bool isCountdownActive( CountdownTimer timer ) { return timer.value > 0; }
 CountdownTimer processTimer( CountdownTimer timer, float dt )
 {
 	CountdownTimer result = timer;
@@ -418,6 +419,9 @@ struct CollidableComponent {
 	float airFrictionCoeffictient;
 	float wallslideFrictionCoefficient;
 
+	CountdownTimer aliveCountdown;  // how many frames this can be alive for, used for entities that
+	                                // dissipate after a certain time
+
 	CountdownTimer animationLockTimer;
 	float animationSpeed;
 	float currentFrame;
@@ -441,11 +445,13 @@ struct CollidableComponent {
 		WalljumpLeft    = BITFIELD( 0 ),  // whether we are doing a walljump to the left or right
 		Dynamic         = BITFIELD( 1 ),  // whether collidable is a dynamic collider
 		UseForcedNormal = BITFIELD( 2 ),
+		DeathFlag       = BITFIELD( 3 ),  // whether entity is dead
 	};
 
 	bool walljumpLeft() const { return ( flags & WalljumpLeft ) != 0; }
 	bool dynamic() const { return ( flags & Dynamic ) != 0; }
 	bool useForcedNormal() const { return ( flags & UseForcedNormal ) != 0; }
+	bool dead() const { return ( flags & DeathFlag ) != 0; }
 	void setForcedNormal( vec2arg normal )
 	{
 		forcedNormal = normal;
@@ -950,7 +956,7 @@ struct GameState {
 
 bool emitProjectile( GameState* game, vec2arg origin, vec2arg velocity )
 {
-	// TODO: emit different types of projectile based on upgrades
+	// TODO: emit different types of projectiles based on upgrades
 	auto projectileId = addEntity( &game->entityHandles );
 	auto projectile   = addCollidableComponent( &game->collidableSystem, projectileId );
 	if( projectile ) {
@@ -963,6 +969,7 @@ bool emitProjectile( GameState* game, vec2arg origin, vec2arg velocity )
 		projectile->movement                = CollidableMovement::Straight;
 		projectile->response                = CollidableResponse::Bounce;
 		projectile->renderType              = RenderType::Projectile;
+		projectile->aliveCountdown          = {60};
 		return true;
 	}
 	return false;
@@ -1688,6 +1695,11 @@ void processCollidables( Array< CollidableComponent > entries, TileGrid grid,
 
 		entry.walljumpWindow   = processTimer( entry.walljumpWindow, dt );
 		entry.walljumpDuration = processTimer( entry.walljumpDuration, dt );
+		auto wasAlive          = isCountdownActive( entry.aliveCountdown );
+		entry.aliveCountdown   = processTimer( entry.aliveCountdown, dt );
+		if( wasAlive && isCountdownTimerExpired( entry.aliveCountdown ) ) {
+			entry.flags |= CollidableComponent::DeathFlag;
+		}
 
 		// animations
 		entry.currentFrame += entry.animationSpeed * dt;
@@ -1928,12 +1940,19 @@ void processCollidables( Array< CollidableComponent > entries, TileGrid grid,
 		// recalculate tileGridRegion with new velocity
 		tileGridRegion = getSweptTileGridRegion( &entry, velocity );
 
-		constexpr const auto maxIterations = 4;
-		float remaining                    = 1;
+		// remaining is the amount of "frame time" we want to move this frame, 1 == full one frame
+		// worth of movement. If entry is not alive for the whole frame, we want to move for the
+		// amount it will be alive for
+		float remaining = 1;
+		if( wasAlive ) {
+			remaining = min( 1, entry.aliveCountdown.value );
+		}
+
 		entry.lastCollision.clear();
+		constexpr const auto maxIterations = 4;
 		for( auto iterations = 0; iterations < maxIterations && remaining > 0.0f; ++iterations ) {
 			auto collision = findCollision( &entry, velocity, grid, tileGridRegion, dynamics,
-			                                   remaining, dynamic );
+			                                remaining, dynamic );
 
 			auto normal = collision.info.normal;
 			auto t      = collision.info.t;
@@ -1951,8 +1970,8 @@ void processCollidables( Array< CollidableComponent > entries, TileGrid grid,
 				if( isGroundBased ) {
 					// check whether we just fell off and are trying to get back on top of previous
 					// ground
-					if( entry.spatialState == SpatialState::FallingOff
-					    && !floatEqZero( velocity.x ) && velocity.y > 0 ) {
+					if( entry.spatialState == SpatialState::FallingOff && !floatEqZero( velocity.x )
+					    && velocity.y > 0 ) {
 
 						// TODO: implement
 					}
@@ -2523,7 +2542,7 @@ static void doGame( AppData* app, GameInputs* inputs, bool focus, float dt, bool
 	FOR( entry : game->collidableSystem.staticEntries() ) {
 		// TODO: make this dependant on a behavior type
 		if( entry.renderType == RenderType::Projectile ) {
-			if( entry.lastCollision ) {
+			if( entry.lastCollision || entry.dead() ) {
 				removeEntity( game, entry.entity );
 			}
 		}

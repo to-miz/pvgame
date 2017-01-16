@@ -223,7 +223,7 @@ void unordered_remove( Container& container, const ValueType& value )
 	auto last = end( container );
 	for( auto it = begin( container ); it != last; ) {
 		// make sure value is not in container
-		assert( ::std::addressof( value ) != ::std::addressof( *i ) );
+		assert( ::std::addressof( value ) != ::std::addressof( *it ) );
 		if( *it == value ) {
 			it = unordered_erase( container, it );
 			last = end( container );

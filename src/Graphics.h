@@ -236,7 +236,7 @@ void pushBox( MeshStream* stream, vec3 box[8] )
 
 	assert( isValid( stream ) );
 	if( !hasCapacity( stream, 24, 36 ) ) {
-		// OutOfMemory();
+		OutOfMemory();
 		return;
 	}
 
@@ -441,7 +441,7 @@ void pushQuad( MeshStream* stream, vec3 quad[4],
 
 	assert( isValid( stream ) );
 	if( !hasCapacity( stream, 4, 6 ) ) {
-		// OutOfMemory();
+		OutOfMemory();
 		return;
 	}
 
@@ -472,7 +472,7 @@ void pushQuad( MeshStream* stream, Vertex vertices[4] )
 
 	assert( isValid( stream ) );
 	if( !hasCapacity( stream, 4, 6 ) ) {
-		// OutOfMemory();
+		OutOfMemory();
 		return;
 	}
 
@@ -544,7 +544,7 @@ uint16 pushLineStripVertex( LineMeshStream* stream, float x, float y, float z = 
 {
 	assert( isValid( stream ) );
 	if( !hasCapacity( stream, 1, 1 ) ) {
-		// OutOfMemory();
+		OutOfMemory();
 		return 0;
 	}
 	auto currentVerticesCount = safe_truncate< uint16 >( stream->data.verticesCount );
@@ -576,7 +576,7 @@ void pushEndLineStrip( LineMeshStream* stream )
 	assert( isValid( stream ) );
 	if( stream->data.indicesCapacity - stream->data.indicesCount < 1 ) {
 		// TOOD: logging
-		// OutOfMemory();
+		OutOfMemory();
 		return;
 	}
 	stream->data.indices[stream->data.indicesCount++] = MeshPrimitiveRestart;
@@ -586,7 +586,7 @@ void pushLineStripIndex( LineMeshStream* stream, uint16 index )
 	assert( isValid( stream ) );
 	if( stream->data.indicesCapacity - stream->data.indicesCount < 1 ) {
 		// TOOD: logging
-		// OutOfMemory();
+		OutOfMemory();
 		return;
 	}
 	stream->data.indices[stream->data.indicesCount++] = index;
@@ -597,7 +597,7 @@ void pushLine( LineMeshStream* stream, vec3arg start, vec3arg end )
 	PROFILE_FUNCTION();
 
 	if( !hasCapacity( stream, 2, 3 ) ) {
-		// OutOfMemory();
+		OutOfMemory();
 		return;
 	}
 	pushLineStripVertexUnchecked( stream, start.x, start.y, start.z );
@@ -609,7 +609,7 @@ void pushAabbOutline( LineMeshStream* stream, aabbarg box )
 	PROFILE_FUNCTION();
 
 	if( !hasCapacity( stream, 8, 20 ) ) {
-		// OutOfMemory();
+		OutOfMemory();
 		return;
 	}
 	pushLineStripVertexUnchecked( stream, box.min.x, box.min.y, box.min.z );
@@ -641,7 +641,7 @@ void pushQuadOutline( LineMeshStream* stream, rectfarg rect, float z = 0 )
 	PROFILE_FUNCTION();
 
 	if( !hasCapacity( stream, 4, 6 ) ) {
-		// OutOfMemory();
+		OutOfMemory();
 		return;
 	}
 	auto start = pushLineStripVertexUnchecked( stream, rect.left, rect.top, z );
@@ -656,7 +656,7 @@ void pushLines( LineMeshStream* stream, Array< vec3 > vertices )
 	PROFILE_FUNCTION();
 
 	if( !hasCapacity( stream, vertices.size(), vertices.size() + 1 ) ) {
-		// OutOfMemory();
+		OutOfMemory();
 		return;
 	}
 	FOR( entry : vertices ) {
@@ -669,7 +669,7 @@ void pushLines( LineMeshStream* stream, Array< vec2 > vertices, float z = 0 )
 	PROFILE_FUNCTION();
 
 	if( !hasCapacity( stream, vertices.size(), vertices.size() + 1 ) ) {
-		// OutOfMemory();
+		OutOfMemory();
 		return;
 	}
 	FOR( entry : vertices ) {

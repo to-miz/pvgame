@@ -22,7 +22,7 @@ union tvec2 {
 	};
 	T elements[2];
 
-	inline constexpr T operator[]( intmax index ) const
+	inline constexpr T operator[]( int32 index ) const
 	{
 		assert( index >= 0 && index < 2 );
 		return elements[index];

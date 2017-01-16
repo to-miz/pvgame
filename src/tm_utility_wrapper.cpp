@@ -42,3 +42,14 @@ int32 distance( T* a, T* b )
 {
 	return safe_truncate< int32 >( b - a );
 }
+
+template < class T, class U, class V = typename std::common_type< T, U >::type >
+const V& min( const T& a, const U& b )
+{
+	return ::min( (V)a, (V)b );
+}
+template < class T, class U, class V = typename std::common_type< T, U >::type >
+const V& max( const T& a, const U& b )
+{
+	return ::max( (V)a, (V)b );
+}

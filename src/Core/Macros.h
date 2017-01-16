@@ -24,7 +24,13 @@
 #ifdef GAME_DEBUG
 	#define assert_m( x, msg ) assert( ( x ) && ( msg ) )
 	#define debug_error( x ) assert( 0 && ( x ) )
-	#define OutOfMemory() assert( 0 && "Out Of Memory" )
+
+	#if GAME_OUT_OF_MEMORY_ASSERTION
+		#define OutOfMemory() assert( 0 && "Out Of Memory" )
+	#else
+		#define OutOfMemory() ( (void)0 )
+	#endif // GAME_OUT_OF_MEMORY_ASSERTION
+
 	#define InvalidCodePath() assert( 0 && "InvalidCodePath" );
 	// const_assert allows assertions in constexpr functions in debug builds (consexpr is only
 	// activated on release builds)

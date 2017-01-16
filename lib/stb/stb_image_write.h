@@ -1,4 +1,4 @@
-/* stb_image_write - v1.02 - public domain - http://nothings.org/stb/stb_image_write.h
+/* stb_image_write - v1.03 - public domain - http://nothings.org/stb/stb_image_write.h
    writes out PNG/BMP/TGA images to C stdio - Sean Barrett 2010-2015
                                      no warranty implied; use at your own risk
 
@@ -103,7 +103,8 @@ CREDITS:
       Jonas Karlsson
       Filip Wasil
       Thatcher Ulrich
-      
+      github:poppolopoppo
+
 LICENSE
 
 This software is dual-licensed to the public domain and under the following
@@ -130,9 +131,7 @@ extern int stbi_write_tga_with_rle;
 STBIWDEF int stbi_write_png(char const *filename, int w, int h, int comp, const void  *data, int stride_in_bytes);
 STBIWDEF int stbi_write_bmp(char const *filename, int w, int h, int comp, const void  *data);
 STBIWDEF int stbi_write_tga(char const *filename, int w, int h, int comp, const void  *data);
-#if 0
 STBIWDEF int stbi_write_hdr(char const *filename, int w, int h, int comp, const float *data);
-#endif
 #endif
 
 typedef void stbi_write_func(void *context, void *data, int size);
@@ -140,9 +139,7 @@ typedef void stbi_write_func(void *context, void *data, int size);
 STBIWDEF int stbi_write_png_to_func(stbi_write_func *func, void *context, int w, int h, int comp, const void  *data, int stride_in_bytes);
 STBIWDEF int stbi_write_bmp_to_func(stbi_write_func *func, void *context, int w, int h, int comp, const void  *data);
 STBIWDEF int stbi_write_tga_to_func(stbi_write_func *func, void *context, int w, int h, int comp, const void  *data);
-#if 0
 STBIWDEF int stbi_write_hdr_to_func(stbi_write_func *func, void *context, int w, int h, int comp, const float *data);
-#endif
 
 #ifdef __cplusplus
 }
@@ -479,7 +476,6 @@ int stbi_write_tga(char const *filename, int x, int y, int comp, const void *dat
 // *************************************************************************************************
 // Radiance RGBE HDR writer
 // by Baldur Karlsson
-#ifndef STBI_WRITE_NO_STDIO
 
 #define stbiw__max(a, b)  ((a) > (b) ? (a) : (b))
 
@@ -500,7 +496,6 @@ void stbiw__linear_to_rgbe(unsigned char *rgbe, float *linear)
       rgbe[3] = (unsigned char)(exponent + 128);
    }
 }
-#endif
 
 void stbiw__write_run_data(stbi__write_context *s, int length, unsigned char databyte)
 {
@@ -518,7 +513,6 @@ void stbiw__write_dump_data(stbi__write_context *s, int length, unsigned char *d
    s->func(s->context, data, length);
 }
 
-#if 0
 void stbiw__write_hdr_scanline(stbi__write_context *s, int width, int ncomp, unsigned char *scratch, float *scanline)
 {
    unsigned char scanlineheader[4] = { 2, 2, 0, 0 };
@@ -636,7 +630,9 @@ int stbi_write_hdr_to_func(stbi_write_func *func, void *context, int x, int y, i
    stbi__start_write_callbacks(&s, func, context);
    return stbi_write_hdr_core(&s, x, y, comp, (float *) data);
 }
+#endif
 
+#ifndef STBI_WRITE_NO_STDIO
 int stbi_write_hdr(char const *filename, int x, int y, int comp, const float *data)
 {
    stbi__write_context s;
@@ -647,7 +643,6 @@ int stbi_write_hdr(char const *filename, int x, int y, int comp, const float *da
    } else
       return 0;
 }
-#endif
 #endif // STBI_WRITE_NO_STDIO
 
 
@@ -1043,7 +1038,7 @@ STBIWDEF int stbi_write_png_to_func(stbi_write_func *func, void *context, int x,
              add HDR output
              fix monochrome BMP
       0.95 (2014-08-17)
-		       add monochrome TGA output
+             add monochrome TGA output
       0.94 (2014-05-31)
              rename private functions to avoid conflicts with stb_image.h
       0.93 (2014-05-27)

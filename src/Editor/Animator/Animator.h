@@ -80,9 +80,16 @@ struct AnimatorEditor {
 	AnimatorMouseMode mouseMode;
 	AnimatorTranslateOptions translateOptions;
 	AnimatorMousePlane mousePlane;
-	bool moving;
+	bool8 moving;
+	bool8 clickedVoxel;
 	AnimatorNode* clickedNode;
 	vec2 mouseOffset;
+	vec3 clickedPlanePos;
+	vec3 clickedRotation;
+
+	int32 contextMenu;
+
+	vec2 rightClickedPos;
 };
 
 struct AnimatorVoxelCollection {
@@ -94,7 +101,6 @@ struct AnimatorState {
 	bool initialized;
 
 	ImGuiScrollableRegion scrollableRegion;
-	UArray< AnimatorKeyframe > keyframesPool;
 	UArray< AnimatorKeyframe* > keyframes;
 	UArray< AnimatorKeyframe* > selected;
 	UArray< AnimatorGroup > groups;
@@ -102,6 +108,7 @@ struct AnimatorState {
 	UArray< AnimatorNode* > nodes;
 	UArray< StringView > nodeNames;
 	FixedSizeAllocator nodeAllocator;
+	FixedSizeAllocator keyframesAllocator;
 
 	AnimatorVoxelCollection voxels;
 

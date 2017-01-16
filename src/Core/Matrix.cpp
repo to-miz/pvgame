@@ -422,6 +422,26 @@ MatrixInverseResult inverse( mat4arg mat )
 
 	return result;
 }
+mat4 inverseOrIdentity( mat4arg mat )
+{
+	mat4 result;
+	if( auto inv = inverse( mat ) ) {
+		result = inv.matrix;
+	} else {
+		result = matrixIdentity();
+	}
+	return result;
+}
+mat4 inverseOrZero( mat4arg mat )
+{
+	mat4 result;
+	if( auto inv = inverse( mat ) ) {
+		result = inv.matrix;
+	} else {
+		result = {};
+	}
+	return result;
+}
 
 mat4 matrixFromColumns( vec3arg column0, vec3arg column1, vec3arg column2 )
 {

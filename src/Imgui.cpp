@@ -292,7 +292,8 @@ ImGuiContainerState defaultImGuiContainerSate( rectfarg rect )
 	return {RectWH( rect.left, rect.top, ImGui->style.containerWidth, 0.0f )};
 }
 typedef int32 ImGuiContainerId;
-ImGuiContainerId imguiGenerateContainer( ImmediateModeGui* gui, rectfarg rect = {} )
+ImGuiContainerId imguiGenerateContainer( ImmediateModeGui* gui, rectfarg rect = {},
+                                         bool hidden = false )
 {
 	assert( gui->containersCount < ImGuiMaxContainers );
 	auto result     = gui->containersCount;
@@ -301,6 +302,7 @@ ImGuiContainerId imguiGenerateContainer( ImmediateModeGui* gui, rectfarg rect = 
 	container->rect = rect;
 	container->z    = safe_truncate< int8 >( gui->containersCount );
 	++gui->containersCount;
+	container->setHidden( hidden );
 	return result;
 }
 ImGuiContainerState* imguiGetContainer( ImmediateModeGui* gui, int32 index )
@@ -499,6 +501,16 @@ static void renderTextClipped( RenderCommands* renderer, Font* font, StringView 
 	font->wrappingMode = WrappingMode::None;
 	renderText( renderer, font, text, rect );
 }
+static void renderTextVCenteredClipped( RenderCommands* renderer, Font* font, StringView text,
+                               const rectf& rect )
+{
+	ClippingRect clip( renderer, rect );
+
+	reset( font );
+	font->wrappingMode = WrappingMode::None;
+	font->verticalAlign = FontVerticalAlign::Center;
+	renderText( renderer, font, text, rect );
+}
 static void renderTextClippedOffset( RenderCommands* renderer, Font* font, StringView text,
                                      const rectf& clippingRect, float offset )
 {
@@ -608,6 +620,8 @@ void imguiRenderSortableBlock( int8 z )
 		ImGui->renderCommandJumpFirst = ImGui->renderCommandJumpLast;
 	}
 }
+void imguiEndContainer() { ImGui->container = 0; }
+
 bool imguiDialog( StringView name, int32 containerIndex )
 {
 	auto container = imguiGetContainer( containerIndex );
@@ -924,6 +938,101 @@ bool imguiPushButton( StringView name, bool* pushed, float width )
 	return imguiPushButton( handle, name, pushed, width, ImGui->style.buttonHeight );
 }
 
+static bool imguiKeypressButton( ImGuiHandle handle, rectfarg rect )
+{
+	auto inputs   = ImGui->inputs;
+	if( isKeyPressed( inputs, KC_LButton ) && imguiIsHover( handle )
+	    && isPointInside( rect, inputs->mouse.position ) ) {
+		imguiFocus( handle );
+		return true;
+	}
+	return false;
+}
+
+bool imguiContextMenu( int32 containerIndex )
+{
+	auto container = imguiGetContainer( containerIndex );
+	if( container->isHidden() ) {
+		return false;
+	}
+
+	auto style    = &ImGui->style;
+	auto renderer = ImGui->renderer;
+	auto inputs   = ImGui->inputs;
+
+	if( width( container->rect ) <= 0 || height( container->rect ) <= 0 ) {
+		// container is uninitialized
+		auto flags       = container->flags;
+		*container       = defaultImGuiContainerSate( container->rect );
+		container->flags = flags;
+	}
+
+	rectf rect = container->rect;
+
+	if( isKeyPressed( inputs, KC_LButton ) && !isPointInside( rect, inputs->mouse.position ) ) {
+		container->setHidden( true );
+		return false;
+	}
+	auto handle    = imguiSetCurrentContainer( container );
+	imguiBringToFront( handle.container );
+
+	imguiRenderSortableBlock( container->z );
+	auto bgColor = multiply( renderer->color, 0x80222D39 );
+
+	setTexture( renderer, 0, null );
+	auto meshCommand  = addRenderCommandMesh( renderer, 4, 6 );
+	container->bgMesh = &meshCommand->mesh;
+	{
+		auto bgStream  = makeMeshStream( container->bgMesh );
+		bgStream.color = bgColor;
+		pushQuad( &bgStream, rect );
+	}
+	container->addPosition = {rect.left, rect.top + style->innerPadding};
+	return true;
+}
+bool imguiContextMenuEntry( StringView text )
+{
+	auto handle = imguiMakeStringHandle( text );
+	auto container = imguiCurrentContainer();
+
+	auto font     = ImGui->font;
+	auto inputs   = ImGui->inputs;
+	auto renderer = ImGui->renderer;
+
+	auto padding = ImGui->style.innerPadding;
+
+	auto width  = ::width( container->rect ) - 2 * padding;
+	auto height = stringHeight( font ) + 2 * padding;
+	auto rect   = imguiAddItem( width, height );
+
+	auto hovered = isPointInside( rect, inputs->mouse.position );
+
+	setTexture( renderer, 0, null );
+	if( hovered ) {
+		RENDER_COMMANDS_STATE_BLOCK( renderer ) {
+			renderer->color = multiply( renderer->color, 0x80517478 );
+			addRenderCommandSingleQuad( renderer, rect );
+		}
+	}
+
+	auto inner = imguiInnerRect( rect );
+	renderTextVCenteredClipped( renderer, font, handle.string, inner );
+
+	if( imguiKeypressButton( handle.handle, rect ) ) {
+		container->setHidden( true );
+		return true;
+	}
+	return false;
+}
+void imguiShowContextMenu( int32 containerIndex, vec2arg position )
+{
+	auto container = imguiGetContainer( containerIndex );
+	container->rect = RectWH( position, dimensions( container->rect ) );
+	container->setHidden( false );
+	container->setMinimized( false );
+	imguiBringToFront( safe_truncate< int8 >( containerIndex ) );
+}
+
 bool imguiEditbox( ImGuiHandle handle, StringView name, char* data, int32* length, int32 size,
                    float width, float height )
 {
@@ -1212,17 +1321,6 @@ void imguiUpdate( float dt )
 			break;
 		}
 	}
-}
-
-static bool imguiKeypressButton( ImGuiHandle handle, rectfarg rect )
-{
-	auto inputs   = ImGui->inputs;
-	if( isKeyPressed( inputs, KC_LButton ) && imguiIsHover( handle )
-	    && isPointInside( rect, inputs->mouse.position ) ) {
-		imguiFocus( handle );
-		return true;
-	}
-	return false;
 }
 
 bool imguiCheckbox( StringView name, bool* checked )

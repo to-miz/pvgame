@@ -1,3 +1,12 @@
+struct Line3 {
+	vec3 start;
+	vec3 dir;
+};
+struct Ray3 {
+	vec3 start;
+	vec3 dir;
+};
+
 struct ShortestLineBetweenLinesResult {
 	float tA, tB;
 };
