@@ -3,9 +3,13 @@
 #ifndef _ANIMATOR_H_INCLUDED_
 #define _ANIMATOR_H_INCLUDED_
 
+typedef int16 GroupId;
+typedef trange< GroupId > GroupChildren;
+
 struct AnimatorNode {
 	vec3 translation;
 	vec3 rotation;
+	vec3 scale;
 	float length;
 
 	int16 parentId;
@@ -17,6 +21,7 @@ struct AnimatorNode {
 	bool8 selected;
 	int16 voxel;
 	int16 frame;
+	GroupId group;
 
 	mat4 base;
 	mat4 world;
@@ -24,9 +29,6 @@ struct AnimatorNode {
 	char name[10];
 	int32 nameLength;
 };
-
-typedef int16 GroupId;
-typedef trange< GroupId > GroupChildren;
 
 struct AnimatorKeyframe {
 	float t;
@@ -106,13 +108,13 @@ struct AnimatorState {
 	UArray< AnimatorGroup > groups;
 	UArray< AnimatorGroupDisplay > visibleGroups;
 	UArray< AnimatorNode* > nodes;
-	UArray< StringView > nodeNames;
 	FixedSizeAllocator nodeAllocator;
 	FixedSizeAllocator keyframesAllocator;
 
 	AnimatorVoxelCollection voxels;
 
 	float duration;
+	bool8 timelineRootExpanded;
 
 	bool8 mouseSelecting;
 	bool8 selectionRectValid;

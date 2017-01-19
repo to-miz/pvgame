@@ -57,7 +57,7 @@ Array< AnimatorGroup > addAnimatorGroups( AnimatorState* animator, StringView pa
 			auto entry      = &result[i];
 			entry->name     = ( i == 0 ) ? parentName : childNames[i - 1];
 			entry->id       = animator->ids;
-			entry->expanded = true;
+			entry->expanded = false;
 			++animator->ids;
 		}
 		if( count > 1 ) {
@@ -67,44 +67,84 @@ Array< AnimatorGroup > addAnimatorGroups( AnimatorState* animator, StringView pa
 	return result;
 }
 
+void populateVisibleGroups( AnimatorState* animator )
+{
+	animator->visibleGroups.clear();
+	animator->visibleGroups.push_back( {-1, -1} );
+	if( animator->timelineRootExpanded ) {
+		for( auto it = animator->groups.begin(), end = animator->groups.end(); it < end; ++it ) {
+			animator->visibleGroups.push_back( {it->id, it->children} );
+			if( !it->expanded && it->children ) {
+				it += width( it->children );
+			}
+		}
+	}
+}
+
 void doKeyframesNames( AppData* app, GameInputs* inputs, float width, float height )
 {
+	using namespace ImGuiTexCoords;
+
 	auto animator = &app->animatorState;
 	auto renderer = &app->renderer;
 	auto font     = ImGui->font;
+	auto style    = &ImGui->style;
 
 	auto rect         = imguiAddItem( width, height );
 	ClippingRect clip = {renderer, rect};
 
-	const auto padding     = ImGui->style.innerPadding;
-	const auto inner       = translate( rect, 0, -animator->scrollableRegion.scrollPos.y );
-	const auto cellHeight  = PaddleHeight + padding * 2;
-	const auto expandWidth = 10.0f;
-	auto cell              = RectSetHeight( inner, cellHeight );
+	const auto padding      = style->innerPadding;
+	const auto inner        = translate( rect, 0, -animator->scrollableRegion.scrollPos.y );
+	const auto cellHeight   = PaddleHeight + padding * 2;
+	const auto expandWidth  = ::width( style->rects[ExpandBox] );
+	const auto expandHeight = ::height( style->rects[ExpandBox] );
+	auto cell               = RectSetHeight( inner, cellHeight );
 	cell.left += padding;
 
 	renderer->color = 0xFF1D3E81;
 	setTexture( renderer, 0, null );
 	addRenderCommandSingleQuad( renderer, inner );
 
-	renderer->color = Color::White;
+	bool repopulateVisibleGroups = false;
+	renderer->color              = Color::White;
 	FOR( visible : animator->visibleGroups ) {
-		auto textRect   = RectSetLeft( cell, cell.left + expandWidth + padding * 2 );
+		auto group    = find_first_where( animator->groups, it.id == visible.group );
+		auto textRect = RectSetLeft( cell, cell.left + expandWidth + padding * 2 );
 		if( visible.group < 0 || visible.children ) {
 			auto expandRect = cell;
 			expandRect.top += padding;
-			expandRect.bottom = expandRect.top + expandWidth;
+			expandRect.bottom = expandRect.top + expandHeight;
 			expandRect.right  = expandRect.left + expandWidth;
 			setTexture( renderer, 0, null );
 			renderer->color = Color::White;
-			addRenderCommandSingleQuad( renderer, expandRect );
+			int32 typeIndex = ExpandBox;
+			if( ( !group && animator->timelineRootExpanded ) || ( group && group->expanded ) ) {
+				typeIndex = RetractBox;
+			}
+			auto texCoords = makeQuadTexCoords( style->texCoords[typeIndex] );
+			setTexture( renderer, 0, style->atlas );
+			addRenderCommandSingleQuad( renderer, expandRect, 0, texCoords );
+
+			if( isPointInside( expandRect, inputs->mouse.position )
+			    && isKeyPressed( inputs, KC_LButton ) ) {
+
+				if( group ) {
+					group->expanded = !group->expanded;
+				} else {
+					animator->timelineRootExpanded = !animator->timelineRootExpanded;
+				}
+				repopulateVisibleGroups = true;
+			}
 		}
-		if( auto group = find_first_where( animator->groups, it.id == visible.group ) ) {
+		if( group ) {
 			renderTextClipped( renderer, font, group->name, textRect );
 		} else {
 			renderTextClipped( renderer, font, "root", textRect );
 		}
 		cell = translate( cell, 0, cellHeight );
+	}
+	if( repopulateVisibleGroups ) {
+		populateVisibleGroups( animator );
 	}
 }
 
@@ -398,15 +438,6 @@ bool doKeyframesDisplay( AppData* app, GameInputs* inputs, const GroupId group )
 	return clickedAny;
 }
 
-void populateVisibleGroups( AnimatorState* animator )
-{
-	animator->visibleGroups.clear();
-	animator->visibleGroups.push_back( {-1, -1} );
-	FOR( entry : animator->groups ) {
-		animator->visibleGroups.push_back( {entry.id, entry.children} );
-	}
-}
-
 void changeModelSpace( AnimatorNode* node, mat4arg model )
 {
 	assert( node );
@@ -498,9 +529,9 @@ void doProperties( AppData* app, GameInputs* inputs, rectfarg rect )
 		FOR( node : animator->nodes ) {
 			if( node->selected ) {
 				if( imguiEditbox( "Name", node->name, &node->nameLength, countof( node->name ) ) ) {
-					auto index = distance( animator->nodes.begin(),
-					                       find_first_where( animator->nodes, it == node ) );
-					animator->nodeNames[index + 1] = {node->name, node->nameLength};
+					if( auto group = find_first_where( animator->groups, it.id == node->group ) ) {
+						group->name = {node->name, node->nameLength};
+					}
 				}
 				imguiEditbox( "Length", &node->length );
 				imguiEditbox( "Translation X", &node->translation.x );
@@ -509,6 +540,9 @@ void doProperties( AppData* app, GameInputs* inputs, rectfarg rect )
 				doRotation( "Rotation X", &node->rotation.x );
 				doRotation( "Rotation Y", &node->rotation.y );
 				doRotation( "Rotation Z", &node->rotation.z );
+				imguiEditbox( "Scale X", &node->scale.x );
+				imguiEditbox( "Scale Y", &node->scale.y );
+				imguiEditbox( "Scale Z", &node->scale.z );
 				{
 					imguiSameLine( 2 );
 					imguiText( "Voxel" );
@@ -522,35 +556,41 @@ void doProperties( AppData* app, GameInputs* inputs, rectfarg rect )
 					imguiSameLine( 2 );
 					imguiText( "Parent" );
 					auto comboHandle = imguiMakeHandle( &node->parentId );
-					int32 index      = 0;
+					int32 index      = -1;
 					if( node->parent ) {
 						index = distance( animator->nodes.begin(),
-						                  find_first_where( animator->nodes, it == node->parent ) )
-						        + 1;
+						                  find_first_where( animator->nodes, it == node->parent ) );
 					}
-					if( imguiCombo( comboHandle, &index, makeArrayView( animator->nodeNames ) ) ) {
-						if( index ) {
-							auto newParent = animator->nodes[index - 1];
+					if( imguiCombo( comboHandle, (const void*)animator->nodes.data(),
+					                (int32)sizeof( AnimatorNode* ), animator->nodes.size(), &index,
+					                []( const void* entry ) {
+						                assert_alignment( entry, alignof( AnimatorNode** ) );
+						                auto node = *(AnimatorNode**)entry;
+						                return StringView{node->name, node->nameLength};
+						            },
+					                true ) ) {
+						if( index >= 0 ) {
+							auto newParent = animator->nodes[index];
 							auto isMyChild = []( AnimatorNode* parent,
 							                     AnimatorNode* potentialChild ) {
-								bounded_while( potentialChild && potentialChild != parent, 100 ) {
+								bounded_while( potentialChild&& potentialChild != parent, 100 ) {
 									potentialChild = potentialChild->parent;
 								}
 								return potentialChild == parent;
 							};
 							if( newParent != node && !isMyChild( node, newParent ) ) {
 								if( node->parent ) {
-									--node->parent->childrenCount;
+									node->parent->childrenCount -= node->childrenCount;
 								}
 								node->parent   = newParent;
 								node->parentId = node->parent->id;
 
 								changeModelSpace( node, newParent->world );
-								++newParent->childrenCount;
+								newParent->childrenCount += node->childrenCount;
 							}
 						} else {
 							if( node->parent ) {
-								--node->parent->childrenCount;
+								node->parent->childrenCount -= node->childrenCount;
 							}
 							node->parentId = -1;
 							node->parent   = nullptr;
@@ -680,9 +720,48 @@ AnimatorNode* allocateNode( AnimatorState* animator, const AnimatorNode& node )
 				result->parent   = nullptr;
 			}
 		}
+		if( result->nameLength <= 0 ) {
+			auto idString      = toNumberString( result->id );
+			result->nameLength = snprint( result->name, countof( result->name ), "Unnamed {}",
+			                              StringView{idString} );
+		}
 	}
 	return result;
 }
+AnimatorNode* addNode( AnimatorState* animator, const AnimatorNode& node )
+{
+	auto result = allocateNode( animator );
+	if( result ) {
+		*result       = node;
+		result->id    = animator->nodeIds++;
+		result->voxel = -1;
+		if( result->parentId >= 0 ) {
+			auto id = result->parentId;
+			if( auto parent = find_first_where( animator->nodes, it->id == id ) ) {
+				result->parent = *parent;
+				++result->parent->childrenCount;
+			} else {
+				result->parentId = -1;
+				result->parent   = nullptr;
+			}
+		}
+		if( result->nameLength <= 0 ) {
+			auto idString      = toNumberString( result->id );
+			result->nameLength = snprint( result->name, countof( result->name ), "Unnamed {}",
+			                              StringView{idString} );
+		}
+		animator->nodes.push_back( result );
+		auto groups = addAnimatorGroups( animator, {result->name, result->nameLength},
+		                                 makeArrayView( animator->fieldNames ) );
+		if( groups.size() ) {
+			result->group = groups[0].id;
+		} else {
+			result->group = -1;
+		}
+	}
+	return result;
+}
+
 void deleteDeep( AnimatorState* animator, AnimatorNode* node );
 void deleteChildren( AnimatorState* animator, AnimatorNode* parent )
 {
@@ -945,7 +1024,8 @@ void doEditor( AppData* app, GameInputs* inputs, rectfarg rect )
 		  } );
 	// update transforms
 	FOR( node : animator->nodes ) {
-		auto local = matrixRotation( node->rotation ) * matrixTranslation( node->translation );
+		auto local = matrixScale( node->scale ) * matrixRotation( node->rotation )
+		             * matrixTranslation( node->translation );
 		if( node->parent ) {
 			node->base = local * node->parent->world;
 		} else {
@@ -1227,9 +1307,7 @@ void doEditor( AppData* app, GameInputs* inputs, rectfarg rect )
 			/*auto ray = pointToWorldSpaceRay( invViewProj.matrix, inputs->mouse.position,
 			                                 app->width, app->height );
 			auto position = rayIntersectionWithPlane( ray, {}, {0, 0, 1} );*/
-			if( auto added = allocateNode( animator, node ) ) {
-				animator->nodes.push_back( added );
-			}
+			addNode( animator, node );
 		}
 		imguiEndContainer();
 	}
@@ -1261,8 +1339,6 @@ void doAnimator( AppData* app, GameInputs* inputs, bool focus, float dt )
 		animator->groups        = makeUArray( allocator, AnimatorGroup, 10 );
 		animator->visibleGroups = makeUArray( allocator, AnimatorGroupDisplay, 10 );
 		animator->nodes         = makeUArray( allocator, AnimatorNode*, 10 );
-		animator->nodeNames     = makeUArray( allocator, StringView, 10 );
-		animator->nodeNames.push_back( pushString( &animator->stringPool, "None" ) );
 		animator->nodeAllocator = makeFixedSizeAllocator( allocator, 10, sizeof( AnimatorNode ),
 		                                                  alignof( AnimatorNode ) );
 		animator->keyframesAllocator = makeFixedSizeAllocator(
@@ -1275,12 +1351,10 @@ void doAnimator( AppData* app, GameInputs* inputs, bool focus, float dt )
 		animator->editor.rotation = AnimatorInitialRotation;
 		animator->editor.scale    = 1;
 		animator->editor.expandedFlags |= AnimatorEditor::Properties;
+		animator->timelineRootExpanded = true;
 
 #if 1
 		// debug
-		addAnimatorGroups( animator, "Test", makeArrayView( animator->fieldNames ) );
-		addAnimatorGroups( animator, "Test2", makeArrayView( animator->fieldNames ) );
-		populateVisibleGroups( animator );
 		addKeyframe( animator, {0, 0, 1} );
 		addKeyframe( animator, {20, 0, 1} );
 		addKeyframe( animator, {35, 0, 3} );
@@ -1288,12 +1362,9 @@ void doAnimator( AppData* app, GameInputs* inputs, bool focus, float dt )
 
 		animator->duration = ( *max_element( animator->keyframes, compareKeyframes ) )->t;
 
-		animator->nodes.push_back( allocateNode( animator, {{}, {0, 0, HalfPi32}, 40, -1} ) );
-		animator->nodeNames.push_back( {} );
-		animator->nodes.push_back( allocateNode( animator, {{}, {0, 0, HalfPi32}, 40, 0} ) );
-		animator->nodeNames.push_back( {} );
-		animator->nodes[0]->voxel = -1;
-		animator->nodes[1]->voxel = -1;
+		addNode( animator, {{}, {0, 0, HalfPi32}, {1, 1, 1}, 40, -1} );
+		addNode( animator, {{}, {0, 0, HalfPi32}, {1, 1, 1}, 40, 0} );
+		populateVisibleGroups( animator );
 
 		if( loadVoxelCollection( allocator, "Data/voxels/hero.json", &animator->voxels.voxels ) ) {
 			animator->voxels.names =

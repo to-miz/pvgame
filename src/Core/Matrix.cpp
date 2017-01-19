@@ -25,6 +25,7 @@ mat4 matrixScale( float x, float y, float z )
 				   0, 0, 0, 1};
 	return result;
 }
+mat4 matrixScale( vec3arg v ) { return matrixScale( v.x, v.y, v.z ); }
 mat4 matrixRotation( float x, float y, float z )
 {
 	mat4 result;

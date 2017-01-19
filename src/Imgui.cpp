@@ -67,6 +67,9 @@ enum Values : int32 {
 
 	SliderKnob,
 
+	ExpandBox,
+	RetractBox,
+
 	Count
 };
 }
@@ -275,6 +278,9 @@ void imguiLoadDefaultStyle( ImmediateModeGui* gui, PlatformServices* platform )
 
 	style->texCoords[SliderKnob] = RectWH( 0, 28 * ith, 13 * itw, 13 * ith );
 
+	style->texCoords[ExpandBox]  = RectWH( 40 * itw, 0, 11 * itw, 11 * ith );
+	style->texCoords[RetractBox] = RectWH( 28 * itw, 0, 11 * itw, 11 * ith );
+
 	style->rects[RadioboxUnchecked] = {0, 0, 13, 13};
 	style->rects[RadioboxChecked]   = {0, 0, 13, 13};
 	style->rects[CheckboxUnchecked] = {0, 0, 13, 13};
@@ -285,6 +291,9 @@ void imguiLoadDefaultStyle( ImmediateModeGui* gui, PlatformServices* platform )
 	style->rects[DropGroupExpanded]  = {0, 0, 13, 13};
 
 	style->rects[ComboButton] = {0, 0, 13, 13};
+
+	style->rects[ExpandBox]  = {0, 0, 11, 11};
+	style->rects[RetractBox] = {0, 0, 11, 11};
 }
 
 ImGuiContainerState defaultImGuiContainerSate( rectfarg rect )
@@ -1720,7 +1729,8 @@ bool imguiScrollbar( float* pos, float min, float max, float pageSize, float ste
 typedef StringView ImGuiGetTextFunctionType( const void* );
 bool imguiListboxSingleSelect( ImGuiHandle handle, float* scrollPos, const void* items,
                                int32 entrySize, int32 itemsCount, int32* selectedIndex,
-                               rectfarg bounds, ImGuiGetTextFunctionType* getText )
+                               rectfarg bounds, ImGuiGetTextFunctionType* getText,
+                               bool hasNoneEntry )
 {
 	auto renderer = ImGui->renderer;
 	auto font     = ImGui->font;
@@ -1751,7 +1761,10 @@ bool imguiListboxSingleSelect( ImGuiHandle handle, float* scrollPos, const void*
 		imguiCapture( handle );
 		// handle selection
 		auto index = ( int32 )( ( inputs->mouse.position.y - rect.top + *scrollPos ) / itemHeight );
-		if( index >= 0 && index < itemsCount ) {
+		if( hasNoneEntry ) {
+			--index;
+		}
+		if( ( index >= 0 || ( hasNoneEntry && index >= -1 ) ) && index < itemsCount ) {
 			changed        = true;
 			*selectedIndex = index;
 		}
@@ -1773,6 +1786,11 @@ bool imguiListboxSingleSelect( ImGuiHandle handle, float* scrollPos, const void*
 		                  {multiply( renderer->color, 0xFF5F594C )}};
 		auto index    = 0;
 		auto selected = *selectedIndex;
+		if( hasNoneEntry ) {
+			stream->color = colors[( int32 )( selected == -1 )];
+			pushQuad( stream, entryRect );
+			entryRect = translate( entryRect, 0, itemHeight );
+		}
 		for( auto it = first; it < last; it += entrySize, ++index ) {
 			stream->color = colors[( int32 )( index == selected )];
 			pushQuad( stream, entryRect );
@@ -1785,6 +1803,10 @@ bool imguiListboxSingleSelect( ImGuiHandle handle, float* scrollPos, const void*
 	reset( font );
 	RENDER_COMMANDS_STATE_BLOCK( renderer ) {
 		renderer->color = multiply( renderer->color, Color::White );
+		if( hasNoneEntry ) {
+			renderText( renderer, font, "None", entryRect );
+			entryRect = translate( entryRect, 0, itemHeight );
+		}
 		for( auto it = first; it < last; it += entrySize ) {
 			auto text = getText( it );
 			renderText( renderer, font, text, entryRect );
@@ -1795,7 +1817,8 @@ bool imguiListboxSingleSelect( ImGuiHandle handle, float* scrollPos, const void*
 	return changed;
 }
 bool imguiCombo( ImGuiHandle handle, const void* items, int32 entrySize, int32 itemsCount,
-                 int32* selectedIndex, rectfarg rect, ImGuiGetTextFunctionType* getText )
+                 int32* selectedIndex, rectfarg rect, ImGuiGetTextFunctionType* getText,
+                 bool hasNoneEntry )
 {
 	assert( selectedIndex );
 	using namespace ImGuiTexCoords;
@@ -1842,7 +1865,7 @@ bool imguiCombo( ImGuiHandle handle, const void* items, int32 entrySize, int32 i
 		auto top        = rect.top + height( rect );
 		state->listRect = {rect.left, top, rect.right, top + 100};
 		if( imguiListboxSingleSelect( handle, &state->scrollPos, items, entrySize, itemsCount,
-		                              selectedIndex, state->listRect, getText ) ) {
+		                              selectedIndex, state->listRect, getText, hasNoneEntry ) ) {
 			state->expanded = false;
 			changed = true;
 		}
@@ -1866,7 +1889,9 @@ bool imguiCombo( ImGuiHandle handle, const void* items, int32 entrySize, int32 i
 		addRenderCommandSingleQuad( renderer, buttonRect, 0,
 		                            makeQuadTexCoords( style->texCoords[ComboButton] ) );
 		auto selected = *selectedIndex;
-		if( selected >= 0 && selected < itemsCount ) {
+		if( hasNoneEntry && selected == -1 ) {
+			renderTextClipped( renderer, font, "None", inner );
+		} else if( selected >= 0 && selected < itemsCount ) {
 			auto text = getText( (const char*)items + entrySize * selected );
 			renderTextClipped( renderer, font, text, inner );
 		}
@@ -1875,16 +1900,17 @@ bool imguiCombo( ImGuiHandle handle, const void* items, int32 entrySize, int32 i
 	return changed;
 }
 bool imguiCombo( ImGuiHandle handle, int32* selectedIndex, const Array< const StringView > names,
-                 rectfarg rect )
+                 rectfarg rect, bool hasNoneEntry = false )
 {
 	auto getText = []( const void* entry ) {
 		assert_alignment( entry, alignof( const StringView ) );
 		return *( (const StringView*)entry );
 	};
 	return imguiCombo( handle, names.data(), sizeof( const StringView ), names.size(),
-	                   selectedIndex, rect, getText );
+	                   selectedIndex, rect, getText, true );
 }
-bool imguiCombo( ImGuiHandle handle, int32* selectedIndex, const Array< const StringView > names )
+bool imguiCombo( ImGuiHandle handle, const void* items, int32 entrySize, int32 itemsCount,
+                 int32* selectedIndex, ImGuiGetTextFunctionType* getText, bool hasNoneEntry )
 {
 	using namespace ImGuiTexCoords;
 	auto font      = ImGui->font;
@@ -1892,9 +1918,22 @@ bool imguiCombo( ImGuiHandle handle, int32* selectedIndex, const Array< const St
 	auto height    = max( stringHeight( font ), ::height( ImGui->style.rects[ComboButton] ) )
 	              + ImGui->style.innerPadding * 2;
 	auto rect = imguiAddItem( width( container->rect ), height );
-	return imguiCombo( handle, selectedIndex, names, rect );
+	return imguiCombo( handle, items, entrySize, itemsCount, selectedIndex, rect, getText,
+	                   hasNoneEntry );
 }
-bool imguiCombo( int32* selectedIndex, const Array< const StringView > names )
+bool imguiCombo( ImGuiHandle handle, int32* selectedIndex, const Array< const StringView > names,
+                 bool hasNoneEntry = false )
+{
+	using namespace ImGuiTexCoords;
+	auto font      = ImGui->font;
+	auto container = imguiCurrentContainer();
+	auto height    = max( stringHeight( font ), ::height( ImGui->style.rects[ComboButton] ) )
+	              + ImGui->style.innerPadding * 2;
+	auto rect = imguiAddItem( width( container->rect ), height );
+	return imguiCombo( handle, selectedIndex, names, rect, hasNoneEntry );
+}
+bool imguiCombo( int32* selectedIndex, const Array< const StringView > names,
+                 bool hasNoneEntry = false )
 {
 	using namespace ImGuiTexCoords;
 	auto font      = ImGui->font;
@@ -1903,7 +1942,7 @@ bool imguiCombo( int32* selectedIndex, const Array< const StringView > names )
 	auto height    = max( stringHeight( font ), ::height( ImGui->style.rects[ComboButton] ) )
 	              + ImGui->style.innerPadding * 2;
 	auto rect = imguiAddItem( width( container->rect ), height );
-	return imguiCombo( handle, selectedIndex, names, rect );
+	return imguiCombo( handle, selectedIndex, names, rect, hasNoneEntry );
 }
 
 ImGuiCustomSliderState imguiCustomSlider( float* value, float min, float max, float width,

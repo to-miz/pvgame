@@ -1,5 +1,5 @@
 /*
-tm_conversion.h v0.9.6a - public domain
+tm_conversion.h v0.9.7 - public domain
 author: Tolga Mizrak 2016
 
 no warranty; use at your own risk
@@ -89,6 +89,7 @@ ISSUES
 	print_double is safe to use for serializing with precision set to 14.
 
 HISTORY
+	v0.9.7  18.01.17 added some more utility overloads
 	v0.9.6a 10.01.17 minor change from static const char* to static const char* const in print_bool
 	v0.9.6  07.11.16 increased print_double max precision from 9 to 14
 	v0.9.5  23.10.16 fixed a buffer underflow bug in print_hex_* and prind_decimal_*
@@ -565,6 +566,10 @@ TMC_DEF tmc_size_t print_hex_u64( char* dest, tmc_size_t maxlen, tmc_bool lower,
 	tmc_size_t scan( const char* nullterminated, int base, tmc_uint32* out );
 	tmc_size_t scan( const char* nullterminated, int base, tmc_int64* out );
 	tmc_size_t scan( const char* nullterminated, int base, tmc_uint64* out );
+	tmc_size_t scan( const char* nullterminated, tmc_int32* out );
+	tmc_size_t scan( const char* nullterminated, tmc_uint32* out );
+	tmc_size_t scan( const char* nullterminated, tmc_int64* out );
+	tmc_size_t scan( const char* nullterminated, tmc_uint64* out );
 	tmc_size_t scan( const char* nullterminated, float* out );
 	tmc_size_t scan( const char* nullterminated, double* out );
 	tmc_size_t scan( const char* nullterminated, bool* out );
@@ -576,6 +581,12 @@ TMC_DEF tmc_size_t print_hex_u64( char* dest, tmc_size_t maxlen, tmc_bool lower,
 	tmc_size_t scan( const char* str, tmc_size_t len, float* out );
 	tmc_size_t scan( const char* str, tmc_size_t len, double* out );
 	tmc_size_t scan( const char* str, tmc_size_t len, bool* out );
+
+	// these need _n suffix, otherwise they have the same signature as the nullterminated version
+	tmc_size_t scan_n( const char* str, tmc_size_t len, tmc_int32* out );
+	tmc_size_t scan_n( const char* str, tmc_size_t len, tmc_uint32* out );
+	tmc_size_t scan_n( const char* str, tmc_size_t len, tmc_int64* out );
+	tmc_size_t scan_n( const char* str, tmc_size_t len, tmc_uint64* out );
 
 	tmc_size_t print( char* dest, tmc_size_t maxlen, PrintFormat* format, tmc_int32 value );
 	tmc_size_t print( char* dest, tmc_size_t maxlen, PrintFormat* format, tmc_uint32 value );
@@ -594,6 +605,18 @@ TMC_DEF tmc_size_t print_hex_u64( char* dest, tmc_size_t maxlen, tmc_bool lower,
 	tmc_size_t scan_bool( const char* str, tmc_size_t len, bool* out );
 	// overloads for some sort of string_view class
 	#ifdef TMC_STRING_VIEW
+		tmc_size_t scan( TMC_STRING_VIEW str, int base, tmc_int32* out );
+		tmc_size_t scan( TMC_STRING_VIEW str, int base, tmc_uint32* out );
+		tmc_size_t scan( TMC_STRING_VIEW str, int base, tmc_int64* out );
+		tmc_size_t scan( TMC_STRING_VIEW str, int base, tmc_uint64* out );
+		tmc_size_t scan( TMC_STRING_VIEW str, tmc_int32* out );
+		tmc_size_t scan( TMC_STRING_VIEW str, tmc_uint32* out );
+		tmc_size_t scan( TMC_STRING_VIEW str, tmc_int64* out );
+		tmc_size_t scan( TMC_STRING_VIEW str, tmc_uint64* out );
+		tmc_size_t scan( TMC_STRING_VIEW str, float* out );
+		tmc_size_t scan( TMC_STRING_VIEW str, double* out );
+		tmc_size_t scan( TMC_STRING_VIEW str, bool* out );
+
 		tmc_size_t scan_i32( TMC_STRING_VIEW str, int base, tmc_int32* out );
 		tmc_size_t scan_u32( TMC_STRING_VIEW str, int base, tmc_uint32* out );
 		tmc_size_t scan_i64( TMC_STRING_VIEW str, int base, tmc_int64* out );
@@ -701,6 +724,22 @@ inline PrintFormat defaultPrintFormat()
 	{
 		return scan_u64( nullterminated, base, out );
 	}
+	inline tmc_size_t scan( const char* nullterminated, tmc_int32* out )
+	{
+		return scan_i32( nullterminated, 10, out );
+	}
+	inline tmc_size_t scan( const char* nullterminated, tmc_uint32* out )
+	{
+		return scan_u32( nullterminated, 10, out );
+	}
+	inline tmc_size_t scan( const char* nullterminated, tmc_int64* out )
+	{
+		return scan_i64( nullterminated, 10, out );
+	}
+	inline tmc_size_t scan( const char* nullterminated, tmc_uint64* out )
+	{
+		return scan_u64( nullterminated, 10, out );
+	}
 	inline tmc_size_t scan( const char* nullterminated, float* out )
 	{
 		return scan_float( nullterminated, out );
@@ -729,6 +768,22 @@ inline PrintFormat defaultPrintFormat()
 	inline tmc_size_t scan( const char* str, tmc_size_t len, int base, tmc_uint64* out )
 	{
 		return scan_u64_n( str, len, base, out );
+	}
+	inline tmc_size_t scan_n( const char* str, tmc_size_t len, tmc_int32* out )
+	{
+		return scan_i32_n( str, len, 10, out );
+	}
+	inline tmc_size_t scan_n( const char* str, tmc_size_t len, tmc_uint32* out )
+	{
+		return scan_u32_n( str, len, 10, out );
+	}
+	inline tmc_size_t scan_n( const char* str, tmc_size_t len, tmc_int64* out )
+	{
+		return scan_i64_n( str, len, 10, out );
+	}
+	inline tmc_size_t scan_n( const char* str, tmc_size_t len, tmc_uint64* out )
+	{
+		return scan_u64_n( str, len, 10, out );
 	}
 	inline tmc_size_t scan( const char* str, tmc_size_t len, float* out )
 	{
@@ -801,6 +856,51 @@ inline PrintFormat defaultPrintFormat()
 		return scan_bool_n( str, len, out );
 	}
 #ifdef TMC_STRING_VIEW
+	inline tmc_size_t scan( TMC_STRING_VIEW str, int base, tmc_int32* out )
+    {
+	    return scan_i32_n( TMC_STRING_VIEW_DATA( str ), TMC_STRING_VIEW_SIZE( str ), base, out );
+    }
+    inline tmc_size_t scan( TMC_STRING_VIEW str, int base, tmc_uint32* out )
+    {
+	    return scan_u32_n( TMC_STRING_VIEW_DATA( str ), TMC_STRING_VIEW_SIZE( str ), base, out );
+    }
+    inline tmc_size_t scan( TMC_STRING_VIEW str, int base, tmc_int64* out )
+    {
+	    return scan_i64_n( TMC_STRING_VIEW_DATA( str ), TMC_STRING_VIEW_SIZE( str ), base, out );
+    }
+    inline tmc_size_t scan( TMC_STRING_VIEW str, int base, tmc_uint64* out )
+    {
+	    return scan_u64_n( TMC_STRING_VIEW_DATA( str ), TMC_STRING_VIEW_SIZE( str ), base, out );
+    }
+    inline tmc_size_t scan( TMC_STRING_VIEW str, tmc_int32* out )
+    {
+	    return scan_i32_n( TMC_STRING_VIEW_DATA( str ), TMC_STRING_VIEW_SIZE( str ), 10, out );
+    }
+    inline tmc_size_t scan( TMC_STRING_VIEW str, tmc_uint32* out )
+    {
+	    return scan_u32_n( TMC_STRING_VIEW_DATA( str ), TMC_STRING_VIEW_SIZE( str ), 10, out );
+    }
+    inline tmc_size_t scan( TMC_STRING_VIEW str, tmc_int64* out )
+    {
+	    return scan_i64_n( TMC_STRING_VIEW_DATA( str ), TMC_STRING_VIEW_SIZE( str ), 10, out );
+    }
+    inline tmc_size_t scan( TMC_STRING_VIEW str, tmc_uint64* out )
+    {
+	    return scan_u64_n( TMC_STRING_VIEW_DATA( str ), TMC_STRING_VIEW_SIZE( str ), 10, out );
+    }
+    inline tmc_size_t scan( TMC_STRING_VIEW str, float* out )
+    {
+	    return scan_float_n( TMC_STRING_VIEW_DATA( str ), TMC_STRING_VIEW_SIZE( str ), out );
+    }
+    inline tmc_size_t scan( TMC_STRING_VIEW str, double* out )
+    {
+	    return scan_double_n( TMC_STRING_VIEW_DATA( str ), TMC_STRING_VIEW_SIZE( str ), out );
+    }
+    inline tmc_size_t scan( TMC_STRING_VIEW str, bool* out )
+    {
+	    return scan_bool_n( TMC_STRING_VIEW_DATA( str ), TMC_STRING_VIEW_SIZE( str ), out );
+    }
+
     inline tmc_size_t scan_i32( TMC_STRING_VIEW str, int base, tmc_int32* out )
     {
 	    return scan_i32_n( TMC_STRING_VIEW_DATA( str ), TMC_STRING_VIEW_SIZE( str ), base, out );

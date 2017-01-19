@@ -204,7 +204,8 @@ int32 copyToString( StringView str, char* dest, int32 destSize )
 
 struct StringViewPos {
 	int32 pos;
-	inline operator int32 const() { return pos; }
+	inline operator int32() const { return pos; }
+	explicit operator bool() const { return pos != StringView::npos; }
 };
 StringViewPos operator+( StringViewPos pos, int32 offset )
 {
@@ -276,6 +277,74 @@ StringViewPos findLast( StringView str, StringView findStr, int32 start = String
 	}
 
 	return {StringView::npos};
+}
+
+StringViewPos findFirstNotOf( StringView str, StringView findStr, int32 start = 0 )
+{
+	if( !findStr.size() ) {
+		return {};
+	}
+
+	if( start < str.size() ) {
+		auto first = begin( str ) + start;
+		auto last = end( str );
+		while( first != last ) {
+			if( memchr( findStr.data(), (unsigned char)*first, findStr.size() ) == nullptr ) {
+				return {distance( begin( str ), first )};
+			}
+			++first;
+		}
+	}
+	return {StringView::npos};
+}
+StringViewPos findFirstOf( StringView str, StringView findStr, int32 start = 0 )
+{
+	if( !findStr.size() ) {
+		return {};
+	}
+
+	if( start < str.size() ) {
+		auto first = begin( str ) + start;
+		auto last = end( str );
+		while( first != last ) {
+			if( memchr( findStr.data(), (unsigned char)*first, findStr.size() ) != nullptr ) {
+				return {distance( begin( str ), first )};
+			}
+			++first;
+		}
+	}
+	return {StringView::npos};
+}
+
+StringView trimLeftNonNumeric( StringView str )
+{
+	const StringView numericSign = "0123456789-+";
+
+	int32 pos;
+	auto len = str.size();
+	for( ;; ) {
+		pos = findFirstOf( str, numericSign );
+		if( pos ) {
+			if( str[pos] == '-' || str[pos] == '+' ) {
+				if( pos + 1 >= len ) {
+					++pos;
+					break;
+				}
+				auto c = str[pos + 1];
+				if( c < '0' || c > '9' ) {
+					str = substr( str, pos + 1 );
+					continue;
+				} else {
+					break;
+				}
+			} else {
+				break;
+			}
+		} else {
+			break;
+		}
+	}
+	return substr( str, pos );
 }
 
 /*StringView trim( StringView str, StringView whitespace )

@@ -187,3 +187,15 @@ NumberString toNumberString( int32 value )
 	result.count = to_string( value, result.data, countof( result.data ) );
 	return result;
 }
+
+template< class T >
+int32 scan_values( StringView str, Array< T > values )
+{
+	auto first = begin( str );
+	FOR( entry : values ) {
+		str = trimLeftNonNumeric( str );
+		entry = {};
+		str.advance( scan( str, &entry ) );
+	}
+	return distance( first, str.begin() );
+}
