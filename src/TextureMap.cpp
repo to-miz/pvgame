@@ -20,7 +20,7 @@ extern global TextureMap* GlobalTextureMap;
 TextureMapEntry* getTextureInfo( TextureId id )
 {
 	assert( GlobalTextureMap );
-	auto result = find_first_where( GlobalTextureMap->entries, it.id == id );
+	auto result = find_first_where( GlobalTextureMap->entries, entry.id == id );
 	assert( result );
 	return result;
 }
@@ -28,7 +28,7 @@ TextureMapEntry* getTextureInfo( TextureId id )
 TextureMapEntry* getTextureInfo( StringView filename )
 {
 	assert( GlobalTextureMap );
-	return find_first_where( GlobalTextureMap->entries, it.filename == filename );
+	return find_first_where( GlobalTextureMap->entries, entry.filename == filename );
 }
 void deleteTextureInfo( TextureId id )
 {

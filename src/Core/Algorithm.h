@@ -391,18 +391,19 @@ inline T* find_if_or_null( T* first, T* last, UnaryPredicate pred )
 }
 template < class Container, class UnaryPredicate >
 inline auto find_if_or_null( Container& container, UnaryPredicate pred )
-	-> decltype( begin( container ) )
+    -> decltype( begin( container ) )
 {
 	using std::begin;
 	using std::end;
 	return find_if_or_null( begin( container ), end( container ), pred );
 }
 
-#define find_first_where( container, condition ) \
-	find_if_or_null( ( container ),              \
-					 [&]( const typeof( container )::value_type& it ) { return ( condition ); } )
+#define find_first_where( container, condition )                                          \
+	find_if_or_null( ( container ), [&]( const typeof( container )::value_type& entry ) { \
+		return ( condition );                                                             \
+	} )
 
-template< class T >
+template < class T >
 inline NullableInt32 find_index( T* first, T* last, const T& val )
 {
 	auto index = 0;
@@ -444,6 +445,31 @@ bool append_unique( Container& container, Value&& value )
 	}
 
 	return false;
+}
+
+template < class RandomAccessIterator, class ValueType, class Pred >
+RandomAccessIterator lower_bound( RandomAccessIterator first, RandomAccessIterator last,
+                                  const ValueType& value, Pred&& pred )
+{
+	auto count = last - first;
+	assert( count >= 0 );
+	while( count > 0 ) {
+		auto halfCount = count / 2;
+		auto mid       = first + halfCount;
+		if( pred( *mid, value ) ) {
+			first = mid + 1;
+			count -= halfCount + 1;
+		} else {
+			count = halfCount;
+		}
+	}
+	return first;
+}
+template < class RandomAccessIterator, class ValueType >
+RandomAccessIterator lower_bound( RandomAccessIterator first, RandomAccessIterator last,
+                                  const ValueType& value )
+{
+	return lower_bound( first, last, value, less() );
 }
 
 template < class RandomAccessIterator, class ValueType, class Pred >

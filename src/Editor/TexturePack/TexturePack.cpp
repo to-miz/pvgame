@@ -15,7 +15,7 @@ TODO:
 
 TexturePackRegion* getTexturePackRegion( TexturePackState* editor, int32 id )
 {
-	return find_first_where( editor->uniqueTextureRegions, it.id == id );
+	return find_first_where( editor->uniqueTextureRegions, entry.id == id );
 }
 
 QuadTexCoords texturePackGetTexCoords( rectfarg rect, TexturePackOrientation orientation )
@@ -54,9 +54,9 @@ TexturePackRegion* texturePackAddUniqueTextureRegion( AppData* app, rectiarg rec
 {
 	auto editor = &app->texturePackState;
 
-	auto textureRegion =
-	    find_first_where( editor->uniqueTextureRegions,
-	                      it.texture == source && memcmp( &it.rect, &rect, sizeof( recti ) ) == 0 );
+	auto textureRegion = find_first_where(
+	    editor->uniqueTextureRegions,
+	    entry.texture == source && memcmp( &entry.rect, &rect, sizeof( recti ) ) == 0 );
 
 	if( !textureRegion ) {
 		auto regionId = ++editor->regionIds;
@@ -259,10 +259,10 @@ bool doTextureDisplay( AppData* app, TexturePackSource* source )
 		}
 	}
 	if( imguiBeginDropGroup( "Offset", &editor->offsetExpanded ) ) {
-		auto firstExpanded = find_first_where( editor->textureMaps, it.expanded );
+		auto firstExpanded = find_first_where( editor->textureMaps, entry.expanded );
 		if( firstExpanded ) {
 			auto frames = makeArrayView( firstExpanded->frames, firstExpanded->framesCount );
-			if( auto frame = find_first_where( frames, it.expanded ) ) {
+			if( auto frame = find_first_where( frames, entry.expanded ) ) {
 				auto face = &frame->faces[VF_Front];
 				auto region = getTexturePackRegion( editor, face->regionId );
 				TextureMapEntry* info = nullptr;

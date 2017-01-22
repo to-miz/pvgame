@@ -306,7 +306,7 @@ struct Room {
 rangeu16 getAnimationRange( VoxelCollection* collection, StringView name )
 {
 	rangeu16 result;
-	if( auto animation = find_first_where( collection->animations, it.name == name ) ) {
+	if( auto animation = find_first_where( collection->animations, entry.name == name ) ) {
 		result = animation->range;
 	} else {
 		result = {};
@@ -506,7 +506,7 @@ CollidableComponent* getDynamicFromCollidableRef( Array< CollidableComponent > d
 		}
 	}
 	auto handle = ref.handle;
-	return find_first_where( dynamics, it.entity == handle );
+	return find_first_where( dynamics, entry.entity == handle );
 }
 float getFrictionCoefficitonFromCollidableRef( Array< CollidableComponent > dynamics, TileGrid grid,
                                                Array< TileInfo > infos, CollidableRef ref )
@@ -599,7 +599,7 @@ CollidableComponent* addCollidableComponent( CollidableSystem* system, EntityHan
 }
 CollidableComponent* findCollidableComponent( CollidableSystem* system, EntityHandle entity )
 {
-	return find_first_where( system->entries, it.entity == entity );
+	return find_first_where( system->entries, entry.entity == entity );
 }
 
 struct ControlComponent {

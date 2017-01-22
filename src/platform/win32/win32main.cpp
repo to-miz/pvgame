@@ -225,7 +225,7 @@ static void win32HandleInputs( HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam
 			static uint16 surrogateLeadStorage;
 			static bool lastCharWasSurrogateLead = false;
 			auto cp                              = (uint16)wParam;
-			if( cp > 32 ) {
+			if( cp >= 32 ) {
 				if( utf16::isSurrogateLead( cp ) ) {
 					lastCharWasSurrogateLead = true;
 					surrogateLeadStorage     = cp;
@@ -650,7 +650,6 @@ int CALLBACK WinMain( HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdL
 		info.recordingInputs = recordingInputs;
 		info.replayingInputs = replayingInputs;
 
-		Color clearColor = Color::White;
 		if( !replayStepped || replayStep ) {
 			auto startTime = win32PerformanceCounter();
 			renderCommands = updateAndRender( memory, &inputs, clampedElapsedTime );
@@ -659,14 +658,11 @@ int CALLBACK WinMain( HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdL
 			gameTimeAcc += gameTime;
 
 			replayStep = false;
-			if( renderCommands ) {
-				clearColor = renderCommands->clearColor;
-			}
 		}
 
 		auto renderStartTime = win32PerformanceCounter();
-		openGlClear( clearColor );
 		if( renderCommands ) {
+			openGlClear( renderCommands->clearColor );
 			openGlPrepareRender( &openGlContext, renderCommands->wireframe );
 			win32ProcessRenderCommands( &openGlContext, renderCommands );
 		}

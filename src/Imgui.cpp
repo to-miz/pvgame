@@ -22,7 +22,9 @@ enum class ImGuiControlType : uint8 {
 	Point,
 	Rect,
 	Scrollable,
-	ScrollableRegion
+	ScrollableRegion,
+
+	Custom
 };
 union ImGuiHandle {
 	struct {
@@ -1256,8 +1258,19 @@ bool imguiEditbox( StringView name, char* data, int32* length, int32 size )
 	return imguiEditbox( name, data, length, size, ImGui->style.editboxWidth,
 	                     ImGui->style.editboxHeight );
 }
+bool imguiEditbox( StringView name, char* data, uint8* length, int32 size )
+{
+	int32 length32 = *length;
+	if( imguiEditbox( name, data, &length32, size, ImGui->style.editboxWidth,
+	                     ImGui->style.editboxHeight ) ) {
+		*length = (uint8)length32;
+		return true;
+	}
+	return false;
+}
 
-bool imguiEditbox( ImGuiHandle handle, StringView name, float* value )
+template< class T >
+bool imguiEditbox( ImGuiHandle handle, StringView name, T* value )
 {
 	assert( value );
 	handle.type = ImGuiControlType::Editbox;
@@ -1265,7 +1278,8 @@ bool imguiEditbox( ImGuiHandle handle, StringView name, float* value )
 		if( imguiEditbox( handle, name, ImGui->editboxStatic, &ImGui->editboxStaticCount,
 		                  countof( ImGui->editboxStatic ), ImGui->style.editboxWidth,
 		                  ImGui->style.editboxHeight ) ) {
-			*value = to_float( ImGui->editboxStatic, ImGui->editboxStaticCount, 0 );
+			StringView view = {ImGui->editboxStatic, ImGui->editboxStaticCount};
+			*value          = convert_to< T >( view );
 			return true;
 		}
 		return false;
@@ -1280,35 +1294,8 @@ bool imguiEditbox( ImGuiHandle handle, StringView name, float* value )
 		return result;
 	}
 }
-bool imguiEditbox( StringView name, float* value )
-{
-	auto handle = imguiMakeHandle( value, ImGuiControlType::Editbox );
-	return imguiEditbox( handle, name, value );
-}
-bool imguiEditbox( ImGuiHandle handle, StringView name, int32* value )
-{
-	assert( value );
-	handle.type = ImGuiControlType::Editbox;
-	if( imguiHasFocus( handle ) ) {
-		if( imguiEditbox( handle, name, ImGui->editboxStatic, &ImGui->editboxStaticCount,
-		                  countof( ImGui->editboxStatic ), ImGui->style.editboxWidth,
-		                  ImGui->style.editboxHeight ) ) {
-			*value = to_i32( ImGui->editboxStatic, ImGui->editboxStaticCount, 0 );
-			return true;
-		}
-		return false;
-	} else {
-		auto str    = toNumberString( *value );
-		auto result = imguiEditbox( handle, name, str.data, &str.count, str.count,
-		                            ImGui->style.editboxWidth, ImGui->style.editboxHeight );
-		if( imguiHasFocus( handle ) ) {
-			memcpy( ImGui->editboxStatic, str.data, str.count );
-			ImGui->editboxStaticCount = str.count;
-		}
-		return result;
-	}
-}
-bool imguiEditbox( StringView name, int32* value )
+template< class T >
+bool imguiEditbox( StringView name, T* value )
 {
 	auto handle = imguiMakeHandle( value, ImGuiControlType::Editbox );
 	return imguiEditbox( handle, name, value );

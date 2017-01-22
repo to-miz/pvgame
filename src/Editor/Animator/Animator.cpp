@@ -3,7 +3,6 @@ constexpr const float PaddleHeight           = 10;
 constexpr const float KeyframePrecision      = 1.0f / 5.0f;
 constexpr const float PropertiesColumnWidth  = 200;
 constexpr const float NamesWidth             = 100;
-constexpr const float RegionWidth            = 300;
 constexpr const float RegionHeight           = 200;
 
 static const vec3 AnimatorInitialRotation = {0, -0.2f, 0};
@@ -66,6 +65,12 @@ Array< AnimatorGroup > addAnimatorGroups( AnimatorState* animator, StringView pa
 	}
 	return result;
 }
+void clearAnimatorGroups( AnimatorState* animator )
+{
+	animator->ids = 0;
+	animator->visibleGroups.clear();
+	animator->groups.clear();
+}
 
 void populateVisibleGroups( AnimatorState* animator )
 {
@@ -79,6 +84,345 @@ void populateVisibleGroups( AnimatorState* animator )
 			}
 		}
 	}
+}
+
+AnimatorKeyframeData lerp( float t, const AnimatorKeyframeData& a, const AnimatorKeyframeData& b )
+{
+	AnimatorKeyframeData result = {};
+	assert( a.type == b.type );
+	switch( a.type ) {
+		case AnimatorKeyframeData::type_translation: {
+			result.type = AnimatorKeyframeData::type_translation;
+			result.translation = lerp( t, a.translation, b.translation );
+			break;
+		}
+		case AnimatorKeyframeData::type_rotation: {
+			result.type = AnimatorKeyframeData::type_rotation;
+			result.rotation = lerp( t, a.rotation, b.rotation );
+			break;
+		}
+		case AnimatorKeyframeData::type_scale: {
+			result.type = AnimatorKeyframeData::type_scale;
+			result.scale = lerp( t, a.scale, b.scale );
+			break;
+		}
+		case AnimatorKeyframeData::type_frame: {
+			result.type = AnimatorKeyframeData::type_frame;
+			result.frame = (int16)lerp( t, (float)a.frame, (float)b.frame );
+			break;
+		}
+			InvalidDefaultCase;
+	}
+	return result;
+}
+AnimatorKeyframe** lowerBoundKeyframeIt( AnimatorState* animator, float t, GroupId group )
+{
+	auto first = animator->keyframes.begin();
+	auto last = animator->keyframes.end();
+	auto it = lower_bound( first, last, t, []( const AnimatorKeyframe* keyframe, float t ) {
+		return keyframe->t < t;
+	} );
+	if( first != last ) {
+		if( it == last ) {
+			--it;
+		}
+		if( ( *it )->group == group && ( *it )->t <= t ) {
+			return it;
+		}
+		--it;
+		while( it >= first && ( *it )->group != group ) {
+			--it;
+		}
+		if( it < first ) {
+			it = last;
+		}
+		return it;
+	} else {
+		return it;
+	}
+}
+AnimatorKeyframe* lowerBoundKeyframe( AnimatorState* animator, float t, GroupId group )
+{
+	auto last = animator->keyframes.end();
+	auto it   = lowerBoundKeyframeIt( animator, t, group );
+	if( it != last ) {
+		return *it;
+	}
+	return nullptr;
+}
+AnimatorKeyframeData getInterpolatedKeyframe( AnimatorState* animator, float t, GroupId group )
+{
+	AnimatorKeyframeData result = {};
+	auto last                   = animator->keyframes.end();
+	auto first                  = lowerBoundKeyframeIt( animator, t, group );
+	if( first != last && ( *first )->group == group ) {
+		auto a = *first;
+		result = a->data;
+		if( a->t < t && first + 1 != last ) {
+			auto second = first + 1;
+			while( second != last && ( *second )->group != group ) {
+				++second;
+			}
+			if( second != last && ( *second )->group == group ) {
+				auto b = *second;
+				assert( b->t >= a->t );
+				assert( a->data.type == b->data.type );
+
+				auto duration = b->t - a->t;
+				if( duration > 0 ) {
+					auto adjustedT = ( t - a->t ) / duration;
+					result         = lerp( adjustedT, a->data, b->data );
+				} else {
+					result = b->data;
+				}
+			}
+		}
+	}
+	return result;
+}
+
+AnimatorNode getCurrentFrameNode( AnimatorState* animator, AnimatorNode* node )
+{
+	auto base   = *find_first_where( animator->baseNodes, entry->id == node->id );
+	auto result = *base;
+
+	auto group            = find_first_where( animator->groups, entry.id == node->group );
+	GroupId translationId = group->id + 1;
+	GroupId rotationId    = group->id + 2;
+	GroupId scaleId       = group->id + 3;
+	GroupId frameId       = group->id + 4;
+	assert( width( group->children ) == 4 );
+
+	auto translationKeyframe =
+	    getInterpolatedKeyframe( animator, animator->currentFrame, translationId );
+	auto rotationKeyframe = getInterpolatedKeyframe( animator, animator->currentFrame, rotationId );
+	auto scaleKeyframe    = getInterpolatedKeyframe( animator, animator->currentFrame, scaleId );
+	auto frameKeyframe    = getInterpolatedKeyframe( animator, animator->currentFrame, frameId );
+
+	result.translation =
+	    get_variant_or_default( translationKeyframe, translation, base->translation );
+	result.rotation = get_variant_or_default( rotationKeyframe, rotation, base->rotation );
+	result.scale    = get_variant_or_default( scaleKeyframe, scale, base->scale );
+	result.frame    = get_variant_or_default( frameKeyframe, frame, base->frame );
+
+	result.parent   = node->parent;
+	result.selected = node->selected;
+	result.group    = node->group;
+	return result;
+}
+AnimatorNode toAbsoluteNode( const AnimatorNode* base, const AnimatorNode* rel )
+{
+	AnimatorNode result = *base;
+	result.translation += rel->translation;
+	result.rotation += rel->rotation;
+	result.scale = multiplyComponents( result.scale, rel->scale );
+	result.frame += rel->frame;
+	return result;
+}
+AnimatorNode toRelativeNode( const AnimatorNode* base, const AnimatorNode* abs )
+{
+	AnimatorNode result = *base;
+	result.translation  = abs->translation - base->translation;
+	result.rotation     = abs->rotation - base->rotation;
+	result.scale.x      = safeDivide( abs->scale.x, base->scale.x, 1 );
+	result.scale.y      = safeDivide( abs->scale.y, base->scale.y, 1 );
+	result.scale.z      = safeDivide( abs->scale.z, base->scale.z, 1 );
+	result.frame        = abs->frame - base->frame;
+	return result;
+}
+
+AnimatorNode* allocateNode( AnimatorState* animator )
+{
+	AnimatorNode* result = allocateStruct( &animator->nodeAllocator, AnimatorNode );
+	if( result ) {
+		*result       = {};
+		result->voxel = -1;
+	}
+	return result;
+}
+void bindParent( AnimatorState* animator, AnimatorNode* node )
+{
+	node->parent = nullptr;
+	if( node->parentId >= 0 ) {
+		auto id = node->parentId;
+		if( auto parent = find_first_where( animator->nodes, entry->id == id ) ) {
+			node->parent = *parent;
+			++node->parent->childrenCount;
+		}
+	}
+	if( !node->parent ) {
+		node->parentId = -1;
+	}
+}
+AnimatorNode* allocateNode( AnimatorState* animator, const AnimatorNode& node )
+{
+	auto result = allocateNode( animator );
+	if( result ) {
+		*result    = node;
+		result->id = animator->nodeIds++;
+		bindParent( animator, result );
+		if( result->name.size() <= 0 ) {
+			auto idString      = toNumberString( result->id );
+			result->name.resize( snprint( result->name.data(), result->name.capacity(),
+			                              "Unnamed {}", StringView{idString} ) );
+		}
+	}
+	return result;
+}
+AnimatorNode* addNewNode( AnimatorState* animator, const AnimatorNode& node )
+{
+	auto result = allocateNode( animator );
+	if( result ) {
+		*result       = node;
+		result->id    = animator->nodeIds++;
+		result->voxel = -1;
+		bindParent( animator, result );
+		if( result->name.size() <= 0 ) {
+			auto idString      = toNumberString( result->id );
+			result->name.resize( snprint( result->name.data(), result->name.capacity(),
+			                              "Unnamed {}", StringView{idString} ) );
+		}
+		animator->nodes.push_back( result );
+		auto groups =
+		    addAnimatorGroups( animator, result->name, makeArrayView( animator->fieldNames ) );
+		if( groups.size() ) {
+			result->group = groups[0].id;
+		} else {
+			result->group = -1;
+		}
+	}
+	return result;
+}
+AnimatorNode* addExistingNode( AnimatorState* animator, const AnimatorNode& node )
+{
+	auto result = allocateNode( animator );
+	if( result ) {
+		*result               = node;
+		result->parent        = nullptr;
+		result->childrenCount = 0;
+		animator->nodes.push_back( result );
+		auto groups =
+		    addAnimatorGroups( animator, result->name, makeArrayView( animator->fieldNames ) );
+		if( groups.size() ) {
+			result->group = groups[0].id;
+		} else {
+			result->group = -1;
+		}
+	}
+	return result;
+}
+
+void sortNodes( AnimatorState* animator )
+{
+	sort( animator->nodes.begin(), animator->nodes.end(),
+	      []( const AnimatorNode* a, const AnimatorNode* b ) {
+		      return a->childrenCount > b->childrenCount;
+		  } );
+}
+void sortKeyframes( AnimatorState* animator )
+{
+	sort( animator->keyframes.begin(), animator->keyframes.end(),
+	      []( const AnimatorKeyframe* a, const AnimatorKeyframe* b ) { return a->t < b->t; } );
+}
+
+AnimatorKeyframe* allocateKeyframe( AnimatorState* animator, const AnimatorKeyframe& key )
+{
+	auto result = allocateStruct( &animator->keyframesAllocator, AnimatorKeyframe );
+	if( result ) {
+		*result = key;
+	}
+	return result;
+}
+void addKeyframe( AnimatorState* animator, const AnimatorKeyframe& key )
+{
+	auto existing = find_first_where( animator->keyframes,
+	                                  entry->group == key.group && floatEqSoft( entry->t, key.t ) );
+	if( existing ) {
+		**existing = key;
+	} else if( animator->keyframes.remaining() ) {
+		auto added = allocateStruct( &animator->keyframesAllocator, AnimatorKeyframe );
+		*added     = key;
+		animator->keyframes.push_back( added );
+		insertion_sort_last_elem(
+		    animator->keyframes.begin(), animator->keyframes.end(),
+		    []( const AnimatorKeyframe* a, const AnimatorKeyframe* b ) { return a->t < b->t; } );
+	}
+}
+
+void openAnimation( AnimatorState* animator, AnimatorAnimation* animation )
+{
+	assert( !animator->currentAnimation );
+	animator->currentAnimation = animation;
+
+	animator->baseNodes.assign( animator->nodes );
+	animator->nodes.clear();
+	// clear marked flag
+	FOR( node : animator->baseNodes ) {
+		node->marked = false;
+	}
+
+	clearAnimatorGroups( animator );
+
+	FOR( node : animation->nodes ) {
+		auto baseIt = find_first_where( animator->baseNodes, entry->id == node.id );
+		if( baseIt ) {
+			auto base = *baseIt;
+			assert( !base->marked );
+			if( base->marked ) {
+				continue;
+			}
+			base->marked = true;
+			addExistingNode( animator, toAbsoluteNode( base, &node ) );
+		}
+	}
+	FOR( base : animator->baseNodes ) {
+		if( !base->marked ) {
+			addExistingNode( animator, *base );
+		}
+	}
+
+	// reassign parents
+	FOR( node : animator->nodes ) {
+		bindParent( animator, node );
+	}
+	sortNodes( animator );
+	clearSelectedNodes( animator );
+
+	populateVisibleGroups( animator );
+}
+
+void closeAnimation( StackAllocator* allocator, AnimatorState* animator )
+{
+	assert( animator->currentAnimation );
+
+	// TODO: handle keyframes
+
+	auto animation = animator->currentAnimation;
+	if( animation->nodes.size() < animator->nodes.size() ) {
+		animation->nodes = makeArray( allocator, AnimatorNode, animator->nodes.size() );
+	}
+
+	if( animation->nodes.size() == animator->nodes.size() ) {
+		zip_for( animation->nodes, animator->nodes ) {
+			auto baseIt = find_first_where( animator->baseNodes, entry->id == ( *second )->id );
+			if( baseIt ) {
+				auto base = *baseIt;
+				*first    = toRelativeNode( base, ( *second ) );
+			}
+		}
+	} else {
+		LOG( ERROR, "out of memory for animation nodes" );
+	}
+
+	// free node memory
+	FOR( node : animator->nodes ) {
+		freeStruct( &animator->nodeAllocator, node );
+	}
+
+	clearAnimatorGroups( animator );
+	animator->nodes.assign( animator->baseNodes );
+	animator->currentAnimation = nullptr;
+	clearSelectedNodes( animator );
 }
 
 void doKeyframesNames( AppData* app, GameInputs* inputs, float width, float height )
@@ -108,7 +452,7 @@ void doKeyframesNames( AppData* app, GameInputs* inputs, float width, float heig
 	bool repopulateVisibleGroups = false;
 	renderer->color              = Color::White;
 	FOR( visible : animator->visibleGroups ) {
-		auto group    = find_first_where( animator->groups, it.id == visible.group );
+		auto group    = find_first_where( animator->groups, entry.id == visible.group );
 		auto textRect = RectSetLeft( cell, cell.left + expandWidth + padding * 2 );
 		if( visible.group < 0 || visible.children ) {
 			auto expandRect = cell;
@@ -170,6 +514,33 @@ void doKeyframesFrameNumbers( AppData* app, GameInputs* inputs, float width )
 	auto frameNumber    = start - start % 5;
 	auto x              = fmod( -offset, distance ) + inner.left;
 
+	auto handle = imguiMakeHandle( animator, ImGuiControlType::Custom );
+
+	if( imguiHasCapture( handle ) || ( isPointInside( inner, inputs->mouse.position )
+	                                   && isKeyPressed( inputs, KC_LButton ) ) ) {
+		imguiFocus( handle );
+		imguiCapture( handle );
+		auto pos = ( inputs->mouse.position.x - inner.left + offset ) / PaddleWidth;
+		if( pos < 0 ) {
+			pos = 0;
+		}
+		auto oldFrame = exchange( animator->currentFrame, pos );
+		if( !floatEqSoft( oldFrame, pos ) ) {
+			// current frame changed
+			FOR( node : animator->nodes ) {
+				*node = getCurrentFrameNode( animator, node );
+			}
+		}
+	}
+
+	// render current frame indicator
+	renderer->color = 0xFFFAB74D;
+	addRenderCommandSingleQuad(
+	    renderer, RectWH( inner.left + animator->currentFrame * PaddleWidth - offset, inner.top,
+	                      PaddleWidth, height( inner ) ) );
+	renderer->color = Color::White;
+
+	// render frame numbers
 	auto info = getFontInfo( font );
 	setTexture( renderer, 0, info->ranges[0].texture );
 	MESH_STREAM_BLOCK( stream, renderer ) {
@@ -192,6 +563,7 @@ void moveSelected( AnimatorState* animator, float movement )
 		animator->selectionA.x += movement;
 		animator->selectionB.x += movement;
 	}
+	animator->keyframesMoved = true;
 }
 void settleSelected( AnimatorState* animator, bool altDown )
 {
@@ -359,7 +731,7 @@ bool doKeyframesDisplay( AppData* app, GameInputs* inputs, const GroupId group )
 	bool clickedAny = false;
 	float clickedT  = 0;
 	float movement  = 0;
-	auto parent     = find_first_where( animator->groups, it.id == group );
+	auto parent     = find_first_where( animator->groups, entry.id == group );
 	auto isParent   = ( parent && !isEmpty( parent->children ) );
 	MESH_STREAM_BLOCK( stream, renderer ) {
 		Color colors[] = {Color::White, Color::Red};
@@ -473,27 +845,42 @@ void changeModelSpace( AnimatorNode* node, mat4arg model )
 void doKeyframesControl( AppData* app, GameInputs* inputs )
 {
 	auto animator = &app->animatorState;
+	animator->keyframesMoved = false;
 
 	auto layout = imguiBeginColumn( NamesWidth );
-	imguiAddItem( NamesWidth, ImGui->style.innerPadding * 2 + stringHeight( ImGui->font )  );
+	imguiAddItem( NamesWidth, ImGui->style.innerPadding * 2 + stringHeight( ImGui->font ) );
 	doKeyframesNames( app, inputs, NamesWidth, RegionHeight );
-	imguiNextColumn( &layout, RegionWidth );
 
-	doKeyframesFrameNumbers( app, inputs, RegionWidth );
+	const auto regionWidth = app->width - NamesWidth;
+	imguiNextColumn( &layout, regionWidth );
+
+	auto width                     = animator->duration + regionWidth;
+	animator->scrollableRegion.dim = {width, RegionHeight};
+
+	doKeyframesFrameNumbers( app, inputs, regionWidth );
 	auto scrollable =
-	    imguiBeginScrollableRegion( &animator->scrollableRegion, RegionWidth, RegionHeight, true );
+	    imguiBeginScrollableRegion( &animator->scrollableRegion, regionWidth, RegionHeight, true );
 	bool clickedAny = false;
 	FOR( visible : animator->visibleGroups ) {
 		if( doKeyframesDisplay( app, inputs, visible.group ) ) {
 			clickedAny = true;
 		}
 	}
-	animator->duration = ( *max_element( animator->keyframes, compareKeyframes ) )->t;
+	auto maxFrame = max_element( animator->keyframes, compareKeyframes );
+	if( maxFrame != animator->keyframes.end() ) {
+		animator->duration = ( *maxFrame )->t;
+	} else {
+		animator->duration = 0;
+	}
 	doKeyframesSelection( app, inputs, &scrollable, clickedAny );
 	imguiEndScrollableRegion( &animator->scrollableRegion, &scrollable );
+
+	if( animator->keyframesMoved ) {
+		sortKeyframes( animator );
+	}
 }
 
-void doProperties( AppData* app, GameInputs* inputs, rectfarg rect )
+void doAnimatorMenu( AppData* app, GameInputs* inputs, rectfarg rect )
 {
 	auto renderer = &app->renderer;
 	auto animator = &app->animatorState;
@@ -526,79 +913,114 @@ void doProperties( AppData* app, GameInputs* inputs, rectfarg rect )
 		imguiEndDropGroup();
 	}
 	if( imguiBeginDropGroup( "Properties", &editor->expandedFlags, AnimatorEditor::Properties ) ) {
-		FOR( node : animator->nodes ) {
-			if( node->selected ) {
-				if( imguiEditbox( "Name", node->name, &node->nameLength, countof( node->name ) ) ) {
-					if( auto group = find_first_where( animator->groups, it.id == node->group ) ) {
-						group->name = {node->name, node->nameLength};
-					}
+		if( auto selected = editor->clickedNode ) {
+			auto node = *selected;
+			AnimatorNode* base = nullptr;
+			if( animator->currentAnimation ) {
+				imguiSameLine( 2 );
+				auto handle = imguiMakeHandle( animator );
+				handle.shortIndex = 0;
+				if( imguiPushButton( handle, "Absolute", !animator->showRelativeProperties ) ) {
+					animator->showRelativeProperties = false;
 				}
-				imguiEditbox( "Length", &node->length );
-				imguiEditbox( "Translation X", &node->translation.x );
-				imguiEditbox( "Translation Y", &node->translation.y );
-				imguiEditbox( "Translation Z", &node->translation.z );
-				doRotation( "Rotation X", &node->rotation.x );
-				doRotation( "Rotation Y", &node->rotation.y );
-				doRotation( "Rotation Z", &node->rotation.z );
-				imguiEditbox( "Scale X", &node->scale.x );
-				imguiEditbox( "Scale Y", &node->scale.y );
-				imguiEditbox( "Scale Z", &node->scale.z );
-				{
-					imguiSameLine( 2 );
-					imguiText( "Voxel" );
-					auto comboHandle = imguiMakeHandle( &node->voxel );
-					int32 index      = node->voxel;
-					if( imguiCombo( comboHandle, &index, animator->voxels.names ) ) {
-						node->voxel = safe_truncate< int16 >( index );
-					}
+				handle.shortIndex = 1;
+				if( imguiPushButton( handle, "Relative",
+				                     animator->showRelativeProperties == true ) ) {
+					animator->showRelativeProperties = true;
 				}
-				{
-					imguiSameLine( 2 );
-					imguiText( "Parent" );
-					auto comboHandle = imguiMakeHandle( &node->parentId );
-					int32 index      = -1;
-					if( node->parent ) {
-						index = distance( animator->nodes.begin(),
-						                  find_first_where( animator->nodes, it == node->parent ) );
-					}
-					if( imguiCombo( comboHandle, (const void*)animator->nodes.data(),
-					                (int32)sizeof( AnimatorNode* ), animator->nodes.size(), &index,
-					                []( const void* entry ) {
-						                assert_alignment( entry, alignof( AnimatorNode** ) );
-						                auto node = *(AnimatorNode**)entry;
-						                return StringView{node->name, node->nameLength};
-						            },
-					                true ) ) {
-						if( index >= 0 ) {
-							auto newParent = animator->nodes[index];
-							auto isMyChild = []( AnimatorNode* parent,
-							                     AnimatorNode* potentialChild ) {
-								bounded_while( potentialChild&& potentialChild != parent, 100 ) {
-									potentialChild = potentialChild->parent;
-								}
-								return potentialChild == parent;
-							};
-							if( newParent != node && !isMyChild( node, newParent ) ) {
-								if( node->parent ) {
-									node->parent->childrenCount -= node->childrenCount;
-								}
-								node->parent   = newParent;
-								node->parentId = node->parent->id;
+				if( animator->showRelativeProperties ) {
+					base = *find_first_where( animator->baseNodes, entry->id == node.id );
+					node = toRelativeNode( base, selected );
+				}
+			}
+			if( imguiEditbox( "Name", node.name.data(), &node.name.sz, node.name.capacity() ) ) {
+				if( auto group = find_first_where( animator->groups, entry.id == node.group ) ) {
+					group->name = node.name;
+				}
+			}
+			imguiEditbox( "Length", &node.length );
+			imguiEditbox( "Translation X", &node.translation.x );
+			imguiEditbox( "Translation Y", &node.translation.y );
+			imguiEditbox( "Translation Z", &node.translation.z );
+			doRotation( "Rotation X", &node.rotation.x );
+			doRotation( "Rotation Y", &node.rotation.y );
+			doRotation( "Rotation Z", &node.rotation.z );
+			imguiEditbox( "Scale X", &node.scale.x );
+			imguiEditbox( "Scale Y", &node.scale.y );
+			imguiEditbox( "Scale Z", &node.scale.z );
+			{
+				imguiSameLine( 2 );
+				imguiText( "Voxel" );
+				auto comboHandle = imguiMakeHandle( &node.voxel );
+				int32 index      = node.voxel;
+				if( imguiCombo( comboHandle, &index, animator->voxels.names ) ) {
+					node.voxel = safe_truncate< int16 >( index );
+				}
 
-								changeModelSpace( node, newParent->world );
-								newParent->childrenCount += node->childrenCount;
-							}
-						} else {
-							if( node->parent ) {
-								node->parent->childrenCount -= node->childrenCount;
-							}
-							node->parentId = -1;
-							node->parent   = nullptr;
-							changeModelSpace( node, matrixIdentity() );
-						}
+				if( node.voxel >= 0 ) {
+					imguiSameLine( 2 );
+				}
+				imguiEditbox( "Frame", &node.frame );
+				if( node.voxel >= 0 ) {
+					auto frames = animator->voxels.voxels.animations[node.voxel].range;
+					float val = (float)( node.frame );
+					if( imguiSlider( imguiMakeHandle( &node.frame ), &val, 0,
+					                 (float)width( frames ) - 1 ) ) {
+						node.frame = (uint16)val;
 					}
 				}
-				break;
+			}
+			{
+				imguiSameLine( 2 );
+				imguiText( "Parent" );
+				auto comboHandle = imguiMakeHandle( &node.parentId );
+				int32 index      = -1;
+				if( node.parent ) {
+					index = distance( animator->nodes.begin(),
+					                  find_first_where( animator->nodes, entry == node.parent ) );
+				}
+				if( imguiCombo( comboHandle, (const void*)animator->nodes.data(),
+				                (int32)sizeof( AnimatorNode* ), animator->nodes.size(), &index,
+				                []( const void* entry ) -> StringView {
+					                assert_alignment( entry, alignof( AnimatorNode** ) );
+					                auto node = *(AnimatorNode**)entry;
+					                return node->name;
+					            },
+				                true ) ) {
+					if( index >= 0 ) {
+						auto newParent = animator->nodes[index];
+						auto isMyChild = []( AnimatorNode* parent, AnimatorNode* potentialChild ) {
+							bounded_while( potentialChild&& potentialChild != parent, 100 ) {
+								potentialChild = potentialChild->parent;
+							}
+							return potentialChild == parent;
+						};
+						if( newParent != selected && !isMyChild( selected, newParent ) ) {
+							if( node.parent ) {
+								node.parent->childrenCount -= node.childrenCount;
+							}
+							node.parent   = newParent;
+							node.parentId = node.parent->id;
+
+							changeModelSpace( &node, newParent->world );
+							newParent->childrenCount += node.childrenCount;
+						}
+					} else {
+						if( node.parent ) {
+							node.parent->childrenCount -= node.childrenCount;
+						}
+						node.parentId = -1;
+						node.parent   = nullptr;
+						changeModelSpace( &node, matrixIdentity() );
+					}
+				}
+			}
+
+			if( animator->currentAnimation && animator->showRelativeProperties ) {
+				assert( base );
+				*selected = toAbsoluteNode( base, &node );
+			} else {
+				*selected = node;
 			}
 		}
 	}
@@ -662,11 +1084,106 @@ void doProperties( AppData* app, GameInputs* inputs, rectfarg rect )
 		}
 		imguiEndDropGroup();
 	}
-	if( imguiBeginDropGroup( "Voxels", &editor->expandedFlags, AnimatorEditor::Voxels ) ) {
-		auto voxels = &animator->voxels;
-		FOR( entry : voxels->voxels.animations ) {
-			imguiButton( entry.name );
+	if( !animator->currentAnimation ) {
+		if( imguiBeginDropGroup( "Animations", &editor->expandedFlags,
+		                         AnimatorEditor::Animations ) ) {
+			if( imguiButton( "New Animation" ) ) {
+				if( animator->animations.remaining() ) {
+					auto added = animator->animations.emplace_back();
+					*added     = {};
+					added->name.assign( "Unnamed" );
+					added->id = -1;
+				}
+			}
+			AnimatorAnimation* selected = nullptr;
+			AnimatorAnimation* deleted = nullptr;
+			FOR( animation : animator->animations ) {
+				imguiSameLine( 3 );
+				imguiText( animation.name );
+				if( imguiButton( "Open" ) ) {
+					selected = &animation;
+				}
+				if( imguiButton( "Delete" ) ) {
+					deleted = &animation;
+				}
+			}
+			if( selected ) {
+				openAnimation( animator, selected );
+			}
+			if( deleted ) {
+				// TODO: cleanup of resources
+				// TODO: ask user whether to really delete
+				animator->animations.erase( deleted );
+			}
+			imguiEndDropGroup();
 		}
+	} else {
+		if( imguiBeginDropGroup( "Animations", &editor->expandedFlags,
+		                         AnimatorEditor::Animations ) ) {
+			auto name = &animator->currentAnimation->name;
+			imguiEditbox( "Name", name->data(), &name->sz, name->capacity() );
+			imguiButton( "Commit" );
+			if( imguiButton( "Close" ) ) {
+				// TODO: ask user whether to keep changes
+				closeAnimation( &app->stackAllocator, animator );
+			}
+		}
+	}
+	if( animator->currentAnimation && editor->clickedNode
+	    && imguiBeginDropGroup( "Keying", &editor->expandedFlags, AnimatorEditor::Keying ) ) {
+
+		auto node    = editor->clickedNode;
+		auto current = getCurrentFrameNode( animator, editor->clickedNode );
+
+		auto compareVector = []( vec3arg a, vec3arg b ) {
+			return floatEqSoft( a.x, b.x ) && floatEqSoft( a.y, b.y ) && floatEqSoft( a.z, b.z );
+		};
+		StringView translation = "Translation*";
+		StringView rotation = "Rotation*";
+		StringView scale = "Scale*";
+		StringView frame = "Frame*";
+
+		if( compareVector( current.translation, node->translation ) ) {
+			translation.pop_back();
+		}
+		if( compareVector( current.rotation, node->rotation ) ) {
+			rotation.pop_back();
+		}
+		if( compareVector( current.scale, node->scale ) ) {
+			scale.pop_back();
+		}
+		if( current.frame == node->frame ) {
+			frame.pop_back();
+		}
+		if( imguiButton( translation ) ) {
+			AnimatorKeyframe key = {};
+			key.t                = animator->currentFrame;
+			key.group            = node->group + 1;
+			set_variant( key.data, translation ) = node->translation;
+			addKeyframe( animator, key );
+		}
+		if( imguiButton( rotation ) ) {
+			AnimatorKeyframe key = {};
+			key.t                = animator->currentFrame;
+			key.group            = node->group + 2;
+			set_variant( key.data, rotation ) = node->rotation;
+			addKeyframe( animator, key );
+		}
+		if( imguiButton( scale ) ) {
+			AnimatorKeyframe key = {};
+			key.t                = animator->currentFrame;
+			key.group            = node->group + 3;
+			set_variant( key.data, scale ) = node->scale;
+			addKeyframe( animator, key );
+		}
+		if( imguiButton( frame ) ) {
+			AnimatorKeyframe key = {};
+			key.t                = animator->currentFrame;
+			key.group            = node->group + 4;
+			set_variant( key.data, frame ) = node->frame;
+			addKeyframe( animator, key );
+		}
+
 		imguiEndDropGroup();
 	}
 }
@@ -691,73 +1208,6 @@ vec3 rayIntersectionWithPlane( const Ray3& ray, vec3arg base, vec3arg planeNorma
 		result -= dot( result, planeNormal ) * planeNormal;
 		// add plane normal component of base to result
 		result += dot( base, planeNormal ) * planeNormal;
-	}
-	return result;
-}
-
-AnimatorNode* allocateNode( AnimatorState* animator )
-{
-	AnimatorNode* result = allocateStruct( &animator->nodeAllocator, AnimatorNode );
-	if( result ) {
-		*result       = {};
-		result->voxel = -1;
-	}
-	return result;
-}
-AnimatorNode* allocateNode( AnimatorState* animator, const AnimatorNode& node )
-{
-	auto result = allocateNode( animator );
-	if( result ) {
-		*result    = node;
-		result->id = animator->nodeIds++;
-		if( result->parentId >= 0 ) {
-			auto id = result->parentId;
-			if( auto parent = find_first_where( animator->nodes, it->id == id ) ) {
-				result->parent = *parent;
-				++result->parent->childrenCount;
-			} else {
-				result->parentId = -1;
-				result->parent   = nullptr;
-			}
-		}
-		if( result->nameLength <= 0 ) {
-			auto idString      = toNumberString( result->id );
-			result->nameLength = snprint( result->name, countof( result->name ), "Unnamed {}",
-			                              StringView{idString} );
-		}
-	}
-	return result;
-}
-AnimatorNode* addNode( AnimatorState* animator, const AnimatorNode& node )
-{
-	auto result = allocateNode( animator );
-	if( result ) {
-		*result       = node;
-		result->id    = animator->nodeIds++;
-		result->voxel = -1;
-		if( result->parentId >= 0 ) {
-			auto id = result->parentId;
-			if( auto parent = find_first_where( animator->nodes, it->id == id ) ) {
-				result->parent = *parent;
-				++result->parent->childrenCount;
-			} else {
-				result->parentId = -1;
-				result->parent   = nullptr;
-			}
-		}
-		if( result->nameLength <= 0 ) {
-			auto idString      = toNumberString( result->id );
-			result->nameLength = snprint( result->name, countof( result->name ), "Unnamed {}",
-			                              StringView{idString} );
-		}
-		animator->nodes.push_back( result );
-		auto groups = addAnimatorGroups( animator, {result->name, result->nameLength},
-		                                 makeArrayView( animator->fieldNames ) );
-		if( groups.size() ) {
-			result->group = groups[0].id;
-		} else {
-			result->group = -1;
-		}
 	}
 	return result;
 }
@@ -788,22 +1238,6 @@ void deleteDeep( AnimatorState* animator, AnimatorNode* node )
 	freeStruct( &animator->nodeAllocator, node );
 }
 
-AnimatorKeyframe* allocateKeyframe( AnimatorState* animator, const AnimatorKeyframe& key )
-{
-	auto result = allocateStruct( &animator->keyframesAllocator, AnimatorKeyframe );
-	if( result ) {
-		*result = key;
-	}
-	return result;
-}
-void addKeyframe( AnimatorState* animator, const AnimatorKeyframe& key )
-{
-	if( animator->keyframes.remaining() ) {
-		auto added = allocateStruct( &animator->keyframesAllocator, AnimatorKeyframe );
-		*added     = key;
-		animator->keyframes.push_back( added );
-	}
-}
 struct Plane {
 	vec3 origin;
 	vec3 normal;
@@ -949,7 +1383,8 @@ void doEditor( AppData* app, GameInputs* inputs, rectfarg rect )
 	auto editor   = &animator->editor;
 	auto handle   = imguiMakeHandle( editor, ImGuiControlType::None );
 
-	auto aspect = width( rect ) / height( rect );
+	// auto aspect = width( rect ) / height( rect );
+	auto aspect = app->width / app->height;
 	// we need to translate in homogeneous coordinates to offset the origin of the projection matrix
 	// to the center of the editor frame, hence the division by app->width
 	auto offset = matrixTranslation( rect.left / app->width, 0, 0 );
@@ -1018,10 +1453,7 @@ void doEditor( AppData* app, GameInputs* inputs, rectfarg rect )
 		pushLine( stream, {0, -10, 0}, {0, 10, 0} );
 	}
 
-	sort( animator->nodes.begin(), animator->nodes.end(),
-	      []( const AnimatorNode* a, const AnimatorNode* b ) {
-		      return a->childrenCount > b->childrenCount;
-		  } );
+	sortNodes( animator );
 	// update transforms
 	FOR( node : animator->nodes ) {
 		auto local = matrixScale( node->scale ) * matrixRotation( node->rotation )
@@ -1044,7 +1476,7 @@ void doEditor( AppData* app, GameInputs* inputs, rectfarg rect )
 			auto voxels = &animator->voxels.voxels;
 			auto range  = voxels->animations[node->voxel].range;
 			if( range ) {
-				auto entry = &voxels->frames[range.min];
+				auto entry = &voxels->frames[range.min + ( node->frame % width( range ) )];
 				currentMatrix( stack ) =
 				    matrixTranslation( Vec3( -entry->offset.x, entry->offset.y, 0 ) ) * node->world;
 				addRenderCommandMesh( renderer, entry->mesh );
@@ -1307,7 +1739,7 @@ void doEditor( AppData* app, GameInputs* inputs, rectfarg rect )
 			/*auto ray = pointToWorldSpaceRay( invViewProj.matrix, inputs->mouse.position,
 			                                 app->width, app->height );
 			auto position = rayIntersectionWithPlane( ray, {}, {0, 0, 1} );*/
-			addNode( animator, node );
+			addNewNode( animator, node );
 		}
 		imguiEndContainer();
 	}
@@ -1332,21 +1764,27 @@ void doAnimator( AppData* app, GameInputs* inputs, bool focus, float dt )
 
 		animator->editor.contextMenu = imguiGenerateContainer( gui, {}, true );
 
-		auto allocator          = &app->stackAllocator;
-		animator->stringPool    = makeStringPool( allocator, 100 );
-		animator->keyframes     = makeUArray( allocator, AnimatorKeyframe*, 10 );
-		animator->selected      = makeUArray( allocator, AnimatorKeyframe*, 10 );
-		animator->groups        = makeUArray( allocator, AnimatorGroup, 10 );
-		animator->visibleGroups = makeUArray( allocator, AnimatorGroupDisplay, 10 );
-		animator->nodes         = makeUArray( allocator, AnimatorNode*, 10 );
-		animator->nodeAllocator = makeFixedSizeAllocator( allocator, 10, sizeof( AnimatorNode ),
-		                                                  alignof( AnimatorNode ) );
+		auto allocator           = &app->stackAllocator;
+		const auto MaxNodes      = 10;
+		const auto MaxKeyframes  = 50;
+		const auto MaxAnimations = 20;
+		animator->stringPool     = makeStringPool( allocator, 100 );
+		animator->keyframes      = makeUArray( allocator, AnimatorKeyframe*, MaxNodes );
+		animator->selected       = makeUArray( allocator, AnimatorKeyframe*, MaxNodes );
+		animator->groups         = makeUArray( allocator, AnimatorGroup, MaxNodes );
+		animator->visibleGroups  = makeUArray( allocator, AnimatorGroupDisplay, MaxNodes * 5 );
+		animator->baseNodes      = makeUArray( allocator, AnimatorNode*, MaxNodes );
+		animator->nodes          = makeUArray( allocator, AnimatorNode*, MaxNodes );
+		animator->animations     = makeUArray( allocator, AnimatorAnimation, MaxAnimations );
+		animator->nodeAllocator  = makeFixedSizeAllocator(
+		    allocator, MaxNodes * 2, sizeof( AnimatorNode ), alignof( AnimatorNode ) );
 		animator->keyframesAllocator = makeFixedSizeAllocator(
-		    allocator, 10, sizeof( AnimatorKeyframe ), alignof( AnimatorKeyframe ) );
+		    allocator, MaxKeyframes, sizeof( AnimatorKeyframe ), alignof( AnimatorKeyframe ) );
 
 		animator->fieldNames[0] = pushString( &animator->stringPool, "Translation" );
 		animator->fieldNames[1] = pushString( &animator->stringPool, "Rotation" );
 		animator->fieldNames[2] = pushString( &animator->stringPool, "Scale" );
+		animator->fieldNames[3] = pushString( &animator->stringPool, "Frame" );
 
 		animator->editor.rotation = AnimatorInitialRotation;
 		animator->editor.scale    = 1;
@@ -1354,16 +1792,8 @@ void doAnimator( AppData* app, GameInputs* inputs, bool focus, float dt )
 		animator->timelineRootExpanded = true;
 
 #if 1
-		// debug
-		addKeyframe( animator, {0, 0, 1} );
-		addKeyframe( animator, {20, 0, 1} );
-		addKeyframe( animator, {35, 0, 3} );
-		addKeyframe( animator, {200, 0, 1} );
-
-		animator->duration = ( *max_element( animator->keyframes, compareKeyframes ) )->t;
-
-		addNode( animator, {{}, {0, 0, HalfPi32}, {1, 1, 1}, 40, -1} );
-		addNode( animator, {{}, {0, 0, HalfPi32}, {1, 1, 1}, 40, 0} );
+		addNewNode( animator, {{}, {0, 0, HalfPi32}, {1, 1, 1}, 40, -1} );
+		addNewNode( animator, {{}, {0, 0, HalfPi32}, {1, 1, 1}, 40, 0} );
 		populateVisibleGroups( animator );
 
 		if( loadVoxelCollection( allocator, "Data/voxels/hero.json", &animator->voxels.voxels ) ) {
@@ -1388,14 +1818,12 @@ void doAnimator( AppData* app, GameInputs* inputs, bool focus, float dt )
 	rectf guiBounds = {0, 0, app->width, app->height};
 	imguiBind( gui, renderer, font, inputs, app->stackAllocator.ptr, guiBounds );
 
-	auto width                     = animator->duration + RegionWidth;
-	animator->scrollableRegion.dim = {width, RegionHeight};
-
-	auto mainRowHeight  = app->height - RegionHeight - 30;
+	auto keyframesControlHeight = ( animator->currentAnimation ) ? ( RegionHeight ) : ( 0 );
+	auto mainRowHeight  = app->height - keyframesControlHeight - 30;
 	auto editorWidth    = app->width - PropertiesColumnWidth;
 	auto layout         = imguiBeginColumn( PropertiesColumnWidth );
 
-	doProperties( app, inputs, RectSetHeight( imguiCurrentContainer()->rect, mainRowHeight ) );
+	doAnimatorMenu( app, inputs, RectSetHeight( imguiCurrentContainer()->rect, mainRowHeight ) );
 
 	imguiNextColumn( &layout, editorWidth );
 	auto editorRect = imguiAddItem( editorWidth, mainRowHeight );
@@ -1403,7 +1831,14 @@ void doAnimator( AppData* app, GameInputs* inputs, bool focus, float dt )
 
 	imguiEndColumn( &layout );
 
-	doKeyframesControl( app, inputs );
+	if( animator->currentAnimation ) {
+		doKeyframesControl( app, inputs );
+	}
+
+#if 1
+	// debug
+	debugPrintln( "Keyframes Count: {}", animator->keyframes.size() );
+#endif
 
 	imguiUpdate( dt );
 	imguiFinalize();

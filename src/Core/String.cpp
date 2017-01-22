@@ -1,5 +1,35 @@
 typedef UArray< char > string;
 
+template< uint8 N >
+struct short_string {
+	char ptr[N];
+	uint8 sz;
+
+	char* begin() { return ptr; }
+	char* end() { return ptr + sz; }
+	const char* begin() const { return ptr; }
+	const char* end() const { return ptr + sz; }
+	const char* cbegin() const { return ptr; }
+	const char* cend() const { return ptr + sz; }
+
+	int32 capacity() const { return N; }
+	int32 size() const { return sz; }
+	int32 length() const { return sz; }
+	char* data() { return ptr; }
+	bool empty() { return sz == 0; }
+	int32 remaining() { return N - sz; }
+
+	void resize( int32 newSize )
+	{
+		assert( newSize <= (int32)N );
+		sz = (uint8)newSize;
+	}
+
+	inline void assign( StringView other ) { sz = (uint8)copyToString( other, ptr, N ); }
+
+	inline operator StringView() const { return {ptr, sz}; }
+};
+
 void copyToString( const char* in, string* out )
 {
 	auto len = (int32)strlen( in );

@@ -19,6 +19,7 @@ struct AnimatorNode {
 	int32 childrenCount;
 
 	bool8 selected;
+	bool8 marked;
 	int16 voxel;
 	int16 frame;
 	GroupId group;
@@ -26,14 +27,24 @@ struct AnimatorNode {
 	mat4 base;
 	mat4 world;
 
-	char name[10];
-	int32 nameLength;
+	short_string< 10 > name;
+};
+
+struct AnimatorKeyframeData {
+	enum { type_none, type_translation, type_rotation, type_scale, type_frame } type;
+	union {
+		vec3 translation;
+		vec3 rotation;
+		vec3 scale;
+		int16 frame;
+	};
 };
 
 struct AnimatorKeyframe {
 	float t;
 	bool8 selected;
 	GroupId group;
+	AnimatorKeyframeData data;
 };
 
 struct AnimatorGroup {
@@ -75,7 +86,8 @@ struct AnimatorEditor {
 		Properties     = BITFIELD( 1 ),
 		Options        = BITFIELD( 2 ),
 		Plane          = BITFIELD( 3 ),
-		Voxels         = BITFIELD( 4 ),
+		Animations     = BITFIELD( 4 ),
+		Keying         = BITFIELD( 5 ),
 	};
 	uint32 expandedFlags;
 
@@ -98,6 +110,14 @@ struct AnimatorVoxelCollection {
 	VoxelCollection voxels;
 	Array< StringView > names;
 };
+
+struct AnimatorAnimation {
+	Array< AnimatorNode > nodes;
+	Array< AnimatorKeyframe > keyframes;
+	short_string< 10 > name;
+	int32 id;
+};
+
 struct AnimatorState {
 	ImmediateModeGui gui;
 	bool initialized;
@@ -107,19 +127,25 @@ struct AnimatorState {
 	UArray< AnimatorKeyframe* > selected;
 	UArray< AnimatorGroup > groups;
 	UArray< AnimatorGroupDisplay > visibleGroups;
+	UArray< AnimatorNode* > baseNodes;
 	UArray< AnimatorNode* > nodes;
+	UArray< AnimatorAnimation > animations;
 	FixedSizeAllocator nodeAllocator;
 	FixedSizeAllocator keyframesAllocator;
 
 	AnimatorVoxelCollection voxels;
+	AnimatorAnimation* currentAnimation;
 
 	float duration;
+	float currentFrame;
 	bool8 timelineRootExpanded;
+	bool8 showRelativeProperties;
 
 	bool8 mouseSelecting;
 	bool8 selectionRectValid;
 	bool8 moveSelection;
 	bool8 moving;
+	bool8 keyframesMoved;
 	vec2 selectionA;
 	vec2 selectionB;
 	vec2 mouseStart;
@@ -135,7 +161,7 @@ struct AnimatorState {
 	AnimatorEditor editor;
 
 	StringPool stringPool;
-	StringView fieldNames[3];
+	StringView fieldNames[4];
 };
 
 #endif  // _ANIMATOR_H_INCLUDED_

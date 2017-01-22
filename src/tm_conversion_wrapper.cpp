@@ -199,3 +199,65 @@ int32 scan_values( StringView str, Array< T > values )
 	}
 	return distance( first, str.begin() );
 }
+
+template <> char convert_to< char >( const char* str, char def )
+{
+	int32 result = def;
+	scan_i32( str, 10, &result );
+	return (char)result;
+}
+template <> int8 convert_to< int8 >( const char* str, int8 def )
+{
+	int32 result = def;
+	scan_i32( str, 10, &result );
+	return (int8)result;
+}
+template <> int16 convert_to< int16 >( const char* str, int16 def )
+{
+	int32 result = def;
+	scan_i32( str, 10, &result );
+	return (int16)result;
+}
+template <> uint8 convert_to< uint8 >( const char* str, uint8 def )
+{
+	uint32 result = def;
+	scan_u32( str, 10, &result );
+	return (uint8)result;
+}
+template <> uint16 convert_to< uint16 >( const char* str, uint16 def )
+{
+	uint32 result = def;
+	scan_u32( str, 10, &result );
+	return (uint16)result;
+}
+
+template <> char convert_to< char >( StringView str, char def )
+{
+	int32 result = def;
+	scan_i32_n( str.data(), str.size(), 10, &result );
+	return (char)result;
+}
+template <> int8 convert_to< int8 >( StringView str, int8 def )
+{
+	int32 result = def;
+	scan_i32_n( str.data(), str.size(), 10, &result );
+	return (int8)result;
+}
+template <> int16 convert_to< int16 >( StringView str, int16 def )
+{
+	int32 result = def;
+	scan_i32_n( str.data(), str.size(), 10, &result );
+	return (int16)result;
+}
+template <> uint8 convert_to< uint8 >( StringView str, uint8 def )
+{
+	uint32 result = def;
+	scan_u32_n( str.data(), str.size(), 10, &result );
+	return (uint8)result;
+}
+template <> uint16 convert_to< uint16 >( StringView str, uint16 def )
+{
+	uint32 result = def;
+	scan_u32_n( str.data(), str.size(), 10, &result );
+	return (uint16)result;
+}
