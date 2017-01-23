@@ -51,24 +51,24 @@ struct sincos_result {
 sincos_result sincos( float angle )
 {
 	sincos_result result;
-	::sincos( angle, &result.s, &result.c );
+	math::sincos( angle, &result.s, &result.c );
 	return result;
 }
-}
+} // simd
 
-float cos( float x )
+float math::cos( float x )
 {
 	v4sf sse_value = _mm_set_ps1( x );
 	sse_value = cos_ps( sse_value );
 	return _mm_cvtss_f32( sse_value );
 }
-float sin( float x )
+float math::sin( float x )
 {
 	v4sf sse_value = _mm_set_ps1( x );
 	sse_value = sin_ps( sse_value );
 	return _mm_cvtss_f32( sse_value );
 }
-void sincos( float x, float* s, float* c )
+void math::sincos( float x, float* s, float* c )
 {
 	assert( s );
 	assert( c );
@@ -79,37 +79,37 @@ void sincos( float x, float* s, float* c )
 	*s = _mm_cvtss_f32( sse_s );
 	*c = _mm_cvtss_f32( sse_c );
 }
-float log( float x )
+float math::log( float x )
 {
 	v4sf sse_value = _mm_set_ps1( x );
 	sse_value = log_ps( sse_value );
 	return _mm_cvtss_f32( sse_value );
 }
-float exp( float x )
+float math::exp( float x )
 {
 	v4sf sse_value = _mm_set_ps1( x );
 	sse_value = exp_ps( sse_value );
 	return _mm_cvtss_f32( sse_value );
 }
-float tan( float x )
+float math::tan( float x )
 {
 	v4sf sse_value = _mm_set_ps1( x );
 	sse_value = tan_ps( sse_value );
 	return _mm_cvtss_f32( sse_value );
 }
-float cot( float x )
+float math::cot( float x )
 {
 	v4sf sse_value = _mm_set_ps1( x );
 	sse_value = cot_ps( sse_value );
 	return _mm_cvtss_f32( sse_value );
 }
-float atan( float x )
+float math::atan( float x )
 {
 	v4sf sse_value = _mm_set_ps1( x );
 	sse_value = atan_ps( sse_value );
 	return _mm_cvtss_f32( sse_value );
 }
-float atan2( float y, float x )
+float math::atan2( float y, float x )
 {
 	v4sf sse_y = _mm_set_ps1( y );
 	v4sf sse_x = _mm_set_ps1( x );
@@ -117,8 +117,8 @@ float atan2( float y, float x )
 	return _mm_cvtss_f32( sse_result );
 }
 
-float sqrt( float x ) { return sqrt_ps( x ); }
-float rsqrt( float x )
+float math::sqrt( float x ) { return sqrt_ps( x ); }
+float math::rsqrt( float x )
 {
 #ifdef MATH_FAST_RSQRT
 	return fast_rsqrt( x );
@@ -127,48 +127,50 @@ float rsqrt( float x )
 	return _mm_cvtss_f32( val );
 #endif
 }
-float fast_rsqrt( float x ) { return rsqrt_ps( x ); }
+float math::fast_rsqrt( float x ) { return rsqrt_ps( x ); }
 
-#if defined( _MSC_VER ) && !defined( __clang__ )
-	#ifdef ARCHITECTURE_X64
+#ifdef MATH_NO_CRT
+	#if defined( _MSC_VER ) && !defined( __clang__ )
+		#ifdef ARCHITECTURE_X64
+			extern "C" {
+				float floorf( float );
+				float ceilf( float );
+				float fmodf( float, float );
+			}
+			#pragma intrinsic( floorf, ceilf, fmodf )
+	        float floor( float x ) { return floorf( x ); }
+	        float ceil( float x ) { return ceilf( x ); }
+	        float fmod( float x, float y ) { return fmodf( x, y ); }
+		#elif ARCHITECTURE_X86
+			extern "C" {
+				double floor( double );
+				double ceil( double );
+				double fmod( double, double );
+			}
+			#pragma intrinsic( floor, ceil )
+	        float floor( float x ) { return (float)floor( (double)x ); }
+	        float ceil( float x ) { return (float)ceil( (double)x ); }
+	        float fmod( float x, float y ) { return (float)fmod( (double)x, (double)y ); }
+		#endif
+	#else
 		extern "C" {
 			float floorf( float );
 			float ceilf( float );
 			float fmodf( float, float );
 		}
-		#pragma intrinsic( floorf, ceilf, fmodf )
-        float floor( float x ) { return floorf( x ); }
-        float ceil( float x ) { return ceilf( x ); }
-        float fmod( float x, float y ) { return fmodf( x, y ); }
-	#elif ARCHITECTURE_X86
-		extern "C" {
-			double floor( double );
-			double ceil( double );
-			double fmod( double, double );
-		}
-		#pragma intrinsic( floor, ceil )
-        float floor( float x ) { return (float)floor( (double)x ); }
-        float ceil( float x ) { return (float)ceil( (double)x ); }
-        float fmod( float x, float y ) { return (float)fmod( (double)x, (double)y ); }
+	    float floor( float x ) { return floorf( x ); }
+	    float ceil( float x ) { return ceilf( x ); }
+	    float fmod( float x, float y ) { return fmodf( x, y ); }
 	#endif
-#else
-	extern "C" {
-		float floorf( float );
-		float ceilf( float );
-		float fmodf( float, float );
-	}
-    float floor( float x ) { return floorf( x ); }
-    float ceil( float x ) { return ceilf( x ); }
-    float fmod( float x, float y ) { return fmodf( x, y ); }
-#endif
 
-float abs( float x )
-{
-	auto bits     = bit_cast< uint32 >( x );
-	auto abs_bits = bits & ~( FLT_SIGN_MASK );
-	return bit_cast< float >( abs_bits );
-}
-float round( float x ) { return floor( x + 0.5f ); }
+	float abs( float x )
+	{
+		auto bits     = bit_cast< uint32 >( x );
+		auto abs_bits = bits & ~( FLT_SIGN_MASK );
+		return bit_cast< float >( abs_bits );
+	}
+	float round( float x ) { return floor( x + 0.5f ); }
+#endif // MATH_NO_CRT
 
 float degreesToRadians( float d ) { return d * ( TwoPi32 / 360 ); }
 float radiansToDegrees( float r ) { return r * ( 360 / TwoPi32 ); }

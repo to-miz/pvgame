@@ -10,7 +10,7 @@ inline float stationaryNegativeQuad( float t )
 // returns t in [0,1], returns values in [-1,1]
 inline float sineWave( float t, float frequency, float amplitude )
 {
-	return sin( 2 * Pi32 * frequency * t ) * amplitude;
+	return math::sin( 2 * Pi32 * frequency * t ) * amplitude;
 }
 
 // t in [0,1], returns values in [-1,1]

@@ -5,7 +5,7 @@ float dot( vec2arg a, vec2arg b ) { return a.x * b.x + a.y * b.y; }
 float length( vec2arg v )
 {
 	auto lengthSquared = dot( v, v );
-	return sqrt( lengthSquared );
+	return math::sqrt( lengthSquared );
 }
 bool hasMagnitude( vec2arg v )
 {
@@ -15,7 +15,7 @@ vec2 normalize( vec2arg v )
 {
 	auto lengthSquared = dot( v, v );
 	assert( lengthSquared != 0 );
-	auto oneOverLength = rsqrt( lengthSquared );
+	auto oneOverLength = math::rsqrt( lengthSquared );
 	return v * oneOverLength;
 }
 vec2 normalize( vec2arg v, float* outLength )
@@ -23,7 +23,7 @@ vec2 normalize( vec2arg v, float* outLength )
 	assert( outLength );
 	auto lengthSquared = dot( v, v );
 	assert( lengthSquared != 0 );
-	auto length = sqrt( lengthSquared );
+	auto length = math::sqrt( lengthSquared );
 	*outLength  = length;
 	return v / length;
 }
@@ -33,7 +33,7 @@ vec2 safeNormalize( vec2arg v, vec2arg def /* = {}*/ )
 	if( lengthSquared == 0 ) {
 		return def;
 	}
-	auto oneOverLength = rsqrt( lengthSquared );
+	auto oneOverLength = math::rsqrt( lengthSquared );
 	return v * oneOverLength;
 }
 vec2 safeNormalize( vec2arg v, float* outLength, vec2arg def /* = {}*/ )
@@ -43,19 +43,19 @@ vec2 safeNormalize( vec2arg v, float* outLength, vec2arg def /* = {}*/ )
 		*outLength = 0;
 		return def;
 	}
-	auto length = sqrt( lengthSquared );
+	auto length = math::sqrt( lengthSquared );
 	*outLength  = length;
 	return v / length;
 }
 
-float angle( vec2arg v ) { return atan2( v.y, v.x ); }
-float angle( vec2arg a, vec2arg b ) { return atan2( cross( a, b ), dot( a, b ) ); }
+float angle( vec2arg v ) { return math::atan2( v.y, v.x ); }
+float angle( vec2arg a, vec2arg b ) { return math::atan2( cross( a, b ), dot( a, b ) ); }
 
 vec2 rotate( vec2arg v, float angle )
 {
 	vec2 result;
 	float c, s;
-	sincos( angle, &c, &s );
+	math::sincos( angle, &c, &s );
 	result.x = v.x * c - v.y * s;
 	result.y = v.x * s + v.y * c;
 	return result;
@@ -72,7 +72,7 @@ vec2 rotateAround( vec2arg v, vec2arg origin, float angle )
 	vec2 result;
 	v -= origin;
 	float c, s;
-	sincos( angle, &c, &s );
+	math::sincos( angle, &c, &s );
 	result.x = v.x * c - v.y * s;
 	result.y = v.x * s + v.y * c;
 	result += origin;
@@ -110,13 +110,13 @@ float dot( vec3arg a, vec3arg b ) { return a.x * b.x + a.y * b.y + a.z * b.z; }
 float length( vec3arg v )
 {
 	auto lengthSquared = dot( v, v );
-	return sqrt( lengthSquared );
+	return math::sqrt( lengthSquared );
 }
 vec3 normalize( vec3arg v )
 {
 	auto lengthSquared = dot( v, v );
 	assert( lengthSquared != 0 );
-	auto oneOverLength = rsqrt( lengthSquared );
+	auto oneOverLength = math::rsqrt( lengthSquared );
 	return v * oneOverLength;
 }
 vec3 normalize( vec3arg v, float* outLength )
@@ -124,7 +124,7 @@ vec3 normalize( vec3arg v, float* outLength )
 	assert( outLength );
 	auto lengthSquared = dot( v, v );
 	assert( lengthSquared != 0 );
-	auto length = sqrt( lengthSquared );
+	auto length = math::sqrt( lengthSquared );
 	*outLength  = length;
 	return v / length;
 }
@@ -134,7 +134,7 @@ vec3 safeNormalize( vec3arg v, vec3arg def /* = {}*/ )
 	if( lengthSquared == 0 ) {
 		return def;
 	}
-	auto oneOverLength = rsqrt( lengthSquared );
+	auto oneOverLength = math::rsqrt( lengthSquared );
 	return v * oneOverLength;
 }
 vec3 safeNormalize( vec3arg v, float* outLength, vec3arg def /* = {}*/ )
@@ -144,7 +144,7 @@ vec3 safeNormalize( vec3arg v, float* outLength, vec3arg def /* = {}*/ )
 		*outLength = 0;
 		return def;
 	}
-	auto length = sqrt( lengthSquared );
+	auto length = math::sqrt( lengthSquared );
 	*outLength  = length;
 	return v / length;
 }
@@ -153,18 +153,18 @@ vec3 safeNormalize( vec3arg v, float* outLength, vec3arg def /* = {}*/ )
 // n should be normalized
 float angle( vec3arg a, vec3arg b, vec3arg n )
 {
-	return atan2( dot( cross( a, b ), n ), dot( a, b ) );
+	return math::atan2( dot( cross( a, b ), n ), dot( a, b ) );
 }
 float angle( vec3arg a, vec3arg b )
 {
-	return atan2( length( cross( a, b ) ), dot( a, b ) );
+	return math::atan2( length( cross( a, b ) ), dot( a, b ) );
 }
 
 vec3 rotate( vec3arg v, float angle, vec3arg normal )
 {
 	auto halfAngle = angle * 0.5f;
 	float c, s;
-	sincos( halfAngle, &c, &s );
+	math::sincos( halfAngle, &c, &s );
 	return rotate( v, s, c, normal );
 }
 vec3 rotate( vec3arg v, float sin, float cos, vec3arg normal )
@@ -209,7 +209,7 @@ vec3 rotateAround( vec3arg v, vec3arg origin, float angle, vec3arg normal )
 {
 	auto halfAngle = angle * 0.5f;
 	float c, s;
-	sincos( halfAngle, &c, &s );
+	math::sincos( halfAngle, &c, &s );
 	return rotateAround( v, origin, c, s, normal );
 }
 vec3 rotateAround( vec3arg v, vec3arg origin, float sin, float cos, vec3arg normal )
@@ -267,13 +267,13 @@ float dot( vec4arg a, vec4arg b ) { return a.x * b.x + a.y * b.y + a.z * b.z + a
 float length( vec4arg v )
 {
 	auto lengthSquared = dot( v, v );
-	return sqrt( lengthSquared );
+	return math::sqrt( lengthSquared );
 }
 vec4 normalize( vec4arg v )
 {
 	auto lengthSquared = dot( v, v );
 	assert( lengthSquared != 0 );
-	auto oneOverLength = rsqrt( lengthSquared );
+	auto oneOverLength = math::rsqrt( lengthSquared );
 	return v * oneOverLength;
 }
 vec4 normalize( vec4arg v, float* outLength )
@@ -281,7 +281,7 @@ vec4 normalize( vec4arg v, float* outLength )
 	assert( outLength );
 	auto lengthSquared = dot( v, v );
 	assert( lengthSquared != 0 );
-	auto length = sqrt( lengthSquared );
+	auto length = math::sqrt( lengthSquared );
 	*outLength  = length;
 	return v / length;
 }
@@ -291,7 +291,7 @@ vec4 safeNormalize( vec4arg v, vec4arg def /* = {}*/ )
 	if( lengthSquared == 0 ) {
 		return def;
 	}
-	auto oneOverLength = rsqrt( lengthSquared );
+	auto oneOverLength = math::rsqrt( lengthSquared );
 	return v * oneOverLength;
 }
 vec4 safeNormalize( vec4arg v, float* outLength, vec4arg def /* = {}*/ )
@@ -301,7 +301,7 @@ vec4 safeNormalize( vec4arg v, float* outLength, vec4arg def /* = {}*/ )
 		*outLength = 0;
 		return def;
 	}
-	auto length = sqrt( lengthSquared );
+	auto length = math::sqrt( lengthSquared );
 	*outLength  = length;
 	return v / length;
 }

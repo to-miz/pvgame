@@ -28,7 +28,7 @@ struct pair {
 	B second;
 };
 template < class A, class B >
-pair< A, B > make_pair( A&& a, B&& b )
+pair< typename std::decay< A >::type, typename std::decay< B >::type > make_pair( A&& a, B&& b )
 {
 	return {std::forward< A >( a ), std::forward< B >( b )};
 }
@@ -211,6 +211,12 @@ auto erase_if( Container& container, Pred pred ) -> typename Container::iterator
 {
 	auto last = end( container );
 	return container.erase( erase_if( begin( container ), last, pred ), last );
+}
+template < class Container, class Pred >
+auto erase_if( Container& container, typename Container::iterator first,
+               typename Container::iterator last, Pred pred ) -> typename Container::iterator
+{
+	return container.erase( erase_if( first, last, pred ), last );
 }
 
 // removes elements from container that are equal to value, changing the size of the container
@@ -496,6 +502,18 @@ RandomAccessIterator upper_bound( RandomAccessIterator first, RandomAccessIterat
                                   const ValueType& value )
 {
 	return upper_bound( first, last, value, less() );
+}
+
+template < class Iterator, class T, class Compare >
+pair< Iterator, Iterator > equal_range( Iterator first, Iterator last, const T& val, Compare&& cmp )
+{
+	auto it = lower_bound( first, last, val, cmp );
+	return make_pair( it, upper_bound( it, last, val, cmp ) );
+}
+template < class Iterator, class T, class Compare >
+pair< Iterator, Iterator > equal_range( Iterator first, Iterator last, const T& val )
+{
+	return equal_range( first, last, val, less() );
 }
 
 // sorts (last - 1)st element into array of [first, last)

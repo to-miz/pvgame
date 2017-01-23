@@ -112,7 +112,7 @@ void free( StackAllocator* allocator, void* ptr, size_t size, uint32 alignment )
 #define allocateArray( allocator, type, count ) \
 	( type* ) allocate( ( allocator ), sizeof( type ) * ( count ), alignof( type ) )
 #define maxAllocateArray( allocator, type ) \
-	( type* )allocate( ( allocator ), remaining( allocator, alignof( type ) ) / sizeof( type ) );
+	( type* )allocate( ( allocator ), remaining( allocator, alignof( type ) ) / sizeof( type ) )
 #define freeStruct( allocator, ptr ) \
 	free( ( allocator ), ptr, sizeof( *( ptr ) ), alignof( typeof( *( ptr ) ) ) )
 

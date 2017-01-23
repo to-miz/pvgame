@@ -4,6 +4,8 @@
 #include <Warnings.h>
 #include <cstdarg>
 
+#include "win32malloc.h"
+
 #include <type_traits>
 #include <Core/Macros.h>
 #include <cstring>
@@ -70,6 +72,7 @@ struct Win32AppContextData {
 	OpenGlContext* openGlContext;
 	TextureMap* textureMap;
 	PlatformInfo* info;
+	mspace dlmallocator;
 };
 
 extern global Win32AppContextData Win32AppContext;
@@ -95,8 +98,8 @@ extern global TextureMap* GlobalTextureMap;
 #include "win32PlatformServices.cpp"
 
 // globals
-global IngameLog* GlobalIngameLog = nullptr;
-global TextureMap* GlobalTextureMap = nullptr;
+global IngameLog* GlobalIngameLog          = nullptr;
+global TextureMap* GlobalTextureMap        = nullptr;
 global Win32AppContextData Win32AppContext = {};
 
 typedef INITIALIZE_APP( InitializeAppType );
@@ -109,7 +112,7 @@ RELOAD_APP( ReloadAppStub ) { return {}; }
 
 InitializeAppType* initializeApp     = InitializeAppStub;
 UpdateAndRenderType* updateAndRender = UpdateAndRenderStub;
-ReloadAppType* reloadApp = ReloadAppStub;
+ReloadAppType* reloadApp             = ReloadAppStub;
 
 bool isResizing = false;
 
@@ -409,18 +412,30 @@ struct Win32InputRecording {
 
 void win32Remap( PlatformRemapInfo* info )
 {
-	GlobalIngameLog = info->logStorage;
+	GlobalIngameLog  = info->logStorage;
 	GlobalTextureMap = info->textureMap;
 }
 
 int CALLBACK WinMain( HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine, int nCmdShow )
 {
-	size_t memorySize = megabytes( 20 );
+	const size_t memorySize         = megabytes( 20 );
+	const size_t gameMemorySize     = memorySize / 2;
+	const size_t dlmallocMemorySize = memorySize - gameMemorySize;
+
 	auto memory = VirtualAlloc( nullptr, memorySize, MEM_COMMIT | MEM_RESERVE, PAGE_READWRITE );
 	if( !memory ) {
 		LOG( ERROR, "Out of memory" );
 		return 0;
 	}
+	void* gameMemory     = memory;
+	void* dlmallocMemory = (void*)( (char*)memory + gameMemorySize );
+	Win32AppContext.dlmallocator =
+	    create_mspace_with_base( dlmallocMemory, dlmallocMemorySize, false );
+	if( !Win32AppContext.dlmallocator ) {
+		LOG( ERROR, "Could not create dlmallocator" );
+		return 0;
+	}
+	mspace_track_large_chunks( Win32AppContext.dlmallocator, true );
 
 	auto dll = win32MakeGameDllNames( L"game_dll.dll", L"game_copy.dll", L"lock.tmp" );
 	win32LoadGameDll( &dll );
@@ -432,10 +447,12 @@ int CALLBACK WinMain( HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdL
 	                                     &freeImageData,          &win32LoadFont,
 	                                     &win32WriteBufferToFile, &win32ReadFileToBuffer,
 	                                     &win32UploadMeshToGpu,   &win32GetOpenFilename,
-	                                     &win32GetSaveFilename,   &win32GetKeyboardKeyName};
-	PlatformInfo info    = {};
+	                                     &win32GetSaveFilename,   &win32GetKeyboardKeyName,
+	                                     &win32DlmallocAllocate,  &win32DlmallocReallocate,
+	                                     win32DlmallocFree};
+	PlatformInfo info     = {};
 	Win32AppContext.info  = &info;
-	auto initializeResult = initializeApp( memory, memorySize, platformServices, &info );
+	auto initializeResult = initializeApp( gameMemory, gameMemorySize, platformServices, &info );
 	if( !initializeResult.success ) {
 		LOG( ERROR, "App initialization failed" );
 		return 0;
@@ -543,7 +560,7 @@ int CALLBACK WinMain( HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdL
 
 	while( running ) {
 		if( win32LoadGameDll( &dll ) ) {
-			auto remapInfo = reloadApp( memory, memorySize );
+			auto remapInfo = reloadApp( gameMemory, gameMemorySize );
 			win32Remap( &remapInfo );
 		}
 
@@ -652,7 +669,7 @@ int CALLBACK WinMain( HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdL
 
 		if( !replayStepped || replayStep ) {
 			auto startTime = win32PerformanceCounter();
-			renderCommands = updateAndRender( memory, &inputs, clampedElapsedTime );
+			renderCommands = updateAndRender( gameMemory, &inputs, clampedElapsedTime );
 			auto gameTime = win32PerformanceCounter() - startTime;
 			info.gameTime = (float)gameTime;
 			gameTimeAcc += gameTime;

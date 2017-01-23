@@ -534,8 +534,18 @@ static void renderTextClippedOffset( RenderCommands* renderer, Font* font, Strin
 }
 
 bool imguiHasFocus( ImGuiHandle handle ) { return ImGui->focus == handle; }
+bool imguiHasMyChildFocus( ImGuiHandle handle )
+{
+	auto focus        = ImGui->focus;
+	focus.type        = {};
+	focus.shortIndex  = 0;
+	handle.type       = {};
+	handle.shortIndex = 0;
+	return focus == handle;
+}
 bool imguiHasCapture( ImGuiHandle handle ) { return ImGui->capture == handle; }
-bool imguiIsHover( ImGuiHandle handle ) {
+bool imguiIsHover( ImGuiHandle handle )
+{
 	return ( ImGui->processInputs )
 	       && ( ( ImGui->modalContainer < 0 && ImGui->hoverContainer == handle.container )
 	            || ( ImGui->modalContainer == handle.container ) );

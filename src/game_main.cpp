@@ -1,5 +1,8 @@
 #include "DebugSwitches.h"
 
+#include <cmath>
+#include <cfloat>
+
 #include <cassert>
 #include "Core/IntegerTypes.h"
 #include "Core/CoreTypes.h"
@@ -132,6 +135,41 @@ StringView toString( VirtualKeyEnumValues key )
 	assert( GlobalPlatformServices );
 	return GlobalPlatformServices->getKeyboardKeyName( key );
 }
+
+// global allocation methods
+void* allocate( size_t size, uint32 alignment )
+{
+	assert( GlobalPlatformServices );
+	return GlobalPlatformServices->allocate( size, alignment );
+}
+void* reallocate( void* ptr, size_t newSize, size_t oldSize, uint32 alignment )
+{
+	assert( GlobalPlatformServices );
+	return GlobalPlatformServices->reallocate( ptr, newSize, oldSize, alignment );
+}
+void free( void* ptr, size_t size, uint32 alignment )
+{
+	assert( GlobalPlatformServices );
+	GlobalPlatformServices->free( ptr, size, alignment );
+}
+
+template < class T >
+T* allocate( size_t count = 1 )
+{
+	return (T*)::allocate( count * sizeof( T ), alignof( T ) );
+}
+template< class T >
+T* reallocate( T* ptr, size_t newCount, size_t oldCount )
+{
+	return (T*)::reallocate( ptr, newCount * sizeof( T ), oldCount * sizeof( T ), alignof( T ) );
+}
+template< class T >
+void free( T* ptr, size_t count = 1 )
+{
+	::free( ptr, count * sizeof( T ), alignof( T ) );
+}
+
+// #include "Core/DArray.h"
 
 void debug_Clear()
 {
@@ -2446,7 +2484,7 @@ static void doGame( AppData* app, GameInputs* inputs, bool focus, float dt, bool
 
 		// auto followWidth         = app->width * 0.25f;
 		// auto followHeight        = app->height * 0.25f;
-		game->camera             = makeGameCamera( {0, -50, -200}, {0, 0, 1}, {0, 1, 0} );
+		game->camera             = makeGameCamera( {0, -50, -150}, {0, 0, 1}, {0, 1, 0} );
 		game->cameraFollowRegion = {-25, -50, 25, 50};
 		game->useGameCamera      = true;
 		game->lighting           = false;

@@ -276,6 +276,15 @@ AnimatorNode* addNewNode( AnimatorState* animator, const AnimatorNode& node )
 		*result       = node;
 		result->id    = animator->nodeIds++;
 		result->voxel = -1;
+		if( result->scale.x == 0 ) {
+			result->scale.x = 1;
+		}
+		if( result->scale.y == 0 ) {
+			result->scale.y = 1;
+		}
+		if( result->scale.z == 0 ) {
+			result->scale.z = 1;
+		}
 		bindParent( animator, result );
 		if( result->name.size() <= 0 ) {
 			auto idString      = toNumberString( result->id );
@@ -346,6 +355,28 @@ void addKeyframe( AnimatorState* animator, const AnimatorKeyframe& key )
 		insertion_sort_last_elem(
 		    animator->keyframes.begin(), animator->keyframes.end(),
 		    []( const AnimatorKeyframe* a, const AnimatorKeyframe* b ) { return a->t < b->t; } );
+	}
+}
+// delete duplicate keyframes, keeping those that are selected
+void deleteDuplicateKeyframes( AnimatorState* animator )
+{
+	if( !animator->currentAnimation ) {
+		return;
+	}
+	FOR( selected : animator->selected ) {
+		assert( selected->selected );
+		auto range = equal_range(
+		    animator->keyframes.begin(), animator->keyframes.end(), selected,
+		    []( const AnimatorKeyframe* a, const AnimatorKeyframe* b ) { return a->t < b->t; } );
+		auto group = selected->group;
+		erase_if( animator->keyframes, range.first, range.second,
+		          [animator, group]( AnimatorKeyframe* key ) {
+			          if( !key->selected && key->group == group ) {
+				          freeStruct( &animator->keyframesAllocator, key );
+				          return true;
+			          }
+			          return false;
+			      } );
 	}
 }
 
@@ -443,6 +474,8 @@ void doKeyframesNames( AppData* app, GameInputs* inputs, float width, float heig
 	const auto expandWidth  = ::width( style->rects[ExpandBox] );
 	const auto expandHeight = ::height( style->rects[ExpandBox] );
 	auto cell               = RectSetHeight( inner, cellHeight );
+	cell.top += style->innerPadding;
+	cell.bottom += style->innerPadding;
 	cell.left += padding;
 
 	renderer->color = 0xFF1D3E81;
@@ -492,7 +525,7 @@ void doKeyframesNames( AppData* app, GameInputs* inputs, float width, float heig
 	}
 }
 
-void doKeyframesFrameNumbers( AppData* app, GameInputs* inputs, float width )
+void doKeyframesFrameNumbers( ImGuiHandle handle, AppData* app, GameInputs* inputs, float width )
 {
 	auto animator = &app->animatorState;
 	auto renderer = &app->renderer;
@@ -514,8 +547,7 @@ void doKeyframesFrameNumbers( AppData* app, GameInputs* inputs, float width )
 	auto frameNumber    = start - start % 5;
 	auto x              = fmod( -offset, distance ) + inner.left;
 
-	auto handle = imguiMakeHandle( animator, ImGuiControlType::Custom );
-
+	handle.shortIndex = 1;
 	if( imguiHasCapture( handle ) || ( isPointInside( inner, inputs->mouse.position )
 	                                   && isKeyPressed( inputs, KC_LButton ) ) ) {
 		imguiFocus( handle );
@@ -576,9 +608,10 @@ void settleSelected( AnimatorState* animator, bool altDown )
 			selected->t -= fmod( selected->t, KeyframePrecision );
 		}
 	}
+	deleteDuplicateKeyframes( animator );
 }
 
-void doKeyframesSelection( AppData* app, GameInputs* inputs,
+void doKeyframesSelection( ImGuiHandle handle, AppData* app, GameInputs* inputs,
                            const ImGuiScrollableRegionResult* scrollable, bool clickedAny )
 {
 	auto animator = &app->animatorState;
@@ -587,14 +620,12 @@ void doKeyframesSelection( AppData* app, GameInputs* inputs,
 
 	auto altDown = isKeyDown( inputs, KC_Alt );
 
-	auto selectionHandle =
-	    imguiMakeHandle( &animator->selectionRectValid, ImGuiControlType::Slider );
-	if( isPointInside( scrollable->inner, inputs->mouse.position )
-	    || imguiHasCapture( selectionHandle ) ) {
+	handle.shortIndex = 2;
+	if( isPointInside( scrollable->inner, inputs->mouse.position ) || imguiHasCapture( handle ) ) {
 
 		if( !animator->mouseSelecting && isKeyPressed( inputs, KC_LButton ) && !clickedAny ) {
-			imguiFocus( selectionHandle );
-			imguiCapture( selectionHandle );
+			imguiFocus( handle );
+			imguiCapture( handle );
 			auto absSelection = getAbsSelection( animator, scrollable );
 			if( animator->selectionRectValid
 			    && isPointInside( absSelection, inputs->mouse.position ) ) {
@@ -625,27 +656,30 @@ void doKeyframesSelection( AppData* app, GameInputs* inputs,
 					auto groups = beginVector( allocator, GroupId );
 
 					if( animator->visibleGroups.size() ) {
-						auto groupHeight = PaddleHeight + ImGui->style.innerPadding;
+						auto groupHeight = PaddleHeight + ImGui->style.innerPadding * 2;
 						auto firstGroup  = (int32)floor( selection.top / groupHeight );
-						auto lastGroup   = (int32)ceil( selection.bottom / groupHeight );
-						firstGroup = clamp( firstGroup, 0, animator->visibleGroups.size() - 1 );
-						lastGroup  = clamp( lastGroup, 0, animator->visibleGroups.size() - 1 );
-						if( firstGroup == 0 ) {
-							// top level group is every visible group
-							FOR( visible : animator->visibleGroups ) {
-								if( visible.group >= 0 ) {
-									groups.push_back( visible.group );
+						auto lastGroupF  = ceil( selection.bottom / groupHeight );
+						auto lastGroup   = (int32)lastGroupF;
+						if( firstGroup < animator->visibleGroups.size() ) {
+							firstGroup = clamp( firstGroup, 0, animator->visibleGroups.size() - 1 );
+							lastGroup  = clamp( lastGroup, 0, animator->visibleGroups.size() );
+							if( firstGroup == 0 ) {
+								// top level group is every visible group
+								FOR( visible : animator->visibleGroups ) {
+									if( visible.group >= 0 ) {
+										groups.push_back( visible.group );
+									}
 								}
-							}
-						} else {
-							for( auto i = firstGroup; i <= lastGroup; ++i ) {
-								auto visible = &animator->visibleGroups[i];
-								append_unique( groups, visible->group );
-								if( visible->children && visible->group >= 0 ) {
-									// group is parent group, add all child groups
-									auto children = visible->children;
-									for( auto i = children.min; i < children.max; ++i ) {
-										append_unique( groups, i );
+							} else {
+								for( auto i = firstGroup; i < lastGroup; ++i ) {
+									auto visible = &animator->visibleGroups[i];
+									append_unique( groups, visible->group );
+									if( visible->children && visible->group >= 0 ) {
+										// group is parent group, add all child groups
+										auto children = visible->children;
+										for( auto i = children.min; i < children.max; ++i ) {
+											append_unique( groups, i );
+										}
 									}
 								}
 							}
@@ -714,7 +748,7 @@ void doKeyframesSelection( AppData* app, GameInputs* inputs,
 		}
 	}
 }
-bool doKeyframesDisplay( AppData* app, GameInputs* inputs, const GroupId group )
+bool doKeyframesDisplay( ImGuiHandle handle, AppData* app, GameInputs* inputs, const GroupId group )
 {
 	auto renderer = &app->renderer;
 	auto animator = &app->animatorState;
@@ -783,7 +817,7 @@ bool doKeyframesDisplay( AppData* app, GameInputs* inputs, const GroupId group )
 	if( ( isParent || isRoot ) && clickedAny ) {
 		// select any frame which is whithin equal range of t
 		FOR( frame : animator->keyframes ) {
-			if( ( isRoot || isInRange( parent->children, group ) )
+			if( ( isRoot || isInRange( parent->children, frame->group ) )
 			    && floatEqSoft( frame->t, clickedT ) ) {
 
 				frame->selected = true;
@@ -799,6 +833,7 @@ bool doKeyframesDisplay( AppData* app, GameInputs* inputs, const GroupId group )
 
 		animator->moving = false;
 		settleSelected( animator, altDown );
+		imguiFocus( handle );
 	}
 	if( !clickedAny && !isKeyDown( inputs, KC_LButton ) ) {
 		animator->moving = false;
@@ -857,12 +892,14 @@ void doKeyframesControl( AppData* app, GameInputs* inputs )
 	auto width                     = animator->duration + regionWidth;
 	animator->scrollableRegion.dim = {width, RegionHeight};
 
-	doKeyframesFrameNumbers( app, inputs, regionWidth );
+	auto handle = imguiMakeHandle( &animator->duration, ImGuiControlType::Custom );
+
+	doKeyframesFrameNumbers( handle, app, inputs, regionWidth );
 	auto scrollable =
 	    imguiBeginScrollableRegion( &animator->scrollableRegion, regionWidth, RegionHeight, true );
 	bool clickedAny = false;
 	FOR( visible : animator->visibleGroups ) {
-		if( doKeyframesDisplay( app, inputs, visible.group ) ) {
+		if( doKeyframesDisplay( handle, app, inputs, visible.group ) ) {
 			clickedAny = true;
 		}
 	}
@@ -872,11 +909,23 @@ void doKeyframesControl( AppData* app, GameInputs* inputs )
 	} else {
 		animator->duration = 0;
 	}
-	doKeyframesSelection( app, inputs, &scrollable, clickedAny );
+	doKeyframesSelection( handle, app, inputs, &scrollable, clickedAny );
 	imguiEndScrollableRegion( &animator->scrollableRegion, &scrollable );
 
 	if( animator->keyframesMoved ) {
 		sortKeyframes( animator );
+	}
+
+	if( imguiHasMyChildFocus( handle ) && isKeyPressed( inputs, KC_Delete ) ) {
+		// delete selected keyframes
+		erase_if( animator->keyframes, [animator]( AnimatorKeyframe* key ) {
+			if( key->selected ) {
+				freeStruct( &animator->keyframesAllocator, key );
+				return true;
+			}
+			return false;
+		} );
+		clearSelectedKeyframes( animator );
 	}
 }
 
@@ -1008,10 +1057,10 @@ void doAnimatorMenu( AppData* app, GameInputs* inputs, rectfarg rect )
 					} else {
 						if( node.parent ) {
 							node.parent->childrenCount -= node.childrenCount;
+							node.parentId = -1;
+							node.parent   = nullptr;
+							changeModelSpace( &node, matrixIdentity() );
 						}
-						node.parentId = -1;
-						node.parent   = nullptr;
-						changeModelSpace( &node, matrixIdentity() );
 					}
 				}
 			}
@@ -1591,7 +1640,7 @@ void doEditor( AppData* app, GameInputs* inputs, rectfarg rect )
 		editor->moving = false;
 	}
 
-	if( isKeyPressed( inputs, KC_Delete ) && editor->clickedNode ) {
+	if( imguiHasFocus( handle ) && isKeyPressed( inputs, KC_Delete ) && editor->clickedNode ) {
 		// delete node and all its children
 		deleteDeep( animator, editor->clickedNode );
 	}
@@ -1726,7 +1775,7 @@ void doEditor( AppData* app, GameInputs* inputs, rectfarg rect )
 	}
 
 	renderer->color = Color::White;
-	if( imguiContextMenu( editor->contextMenu ) ) {
+	if( !animator->currentAnimation && imguiContextMenu( editor->contextMenu ) ) {
 		if( imguiContextMenuEntry( "New Node" ) ) {
 			AnimatorNode node = {};
 			node.length = 10;
@@ -1742,6 +1791,8 @@ void doEditor( AppData* app, GameInputs* inputs, rectfarg rect )
 			addNewNode( animator, node );
 		}
 		imguiEndContainer();
+	} else {
+		imguiGetContainer( editor->contextMenu )->setHidden( true );
 	}
 }
 
@@ -1771,7 +1822,7 @@ void doAnimator( AppData* app, GameInputs* inputs, bool focus, float dt )
 		animator->stringPool     = makeStringPool( allocator, 100 );
 		animator->keyframes      = makeUArray( allocator, AnimatorKeyframe*, MaxNodes );
 		animator->selected       = makeUArray( allocator, AnimatorKeyframe*, MaxNodes );
-		animator->groups         = makeUArray( allocator, AnimatorGroup, MaxNodes );
+		animator->groups         = makeUArray( allocator, AnimatorGroup, MaxNodes * 5 );
 		animator->visibleGroups  = makeUArray( allocator, AnimatorGroupDisplay, MaxNodes * 5 );
 		animator->baseNodes      = makeUArray( allocator, AnimatorNode*, MaxNodes );
 		animator->nodes          = makeUArray( allocator, AnimatorNode*, MaxNodes );

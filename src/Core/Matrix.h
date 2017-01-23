@@ -42,7 +42,7 @@ mat4 rotateZLocal( mat4arg mat, float angle )
 {
 	mat4 result = mat;
 	float s, c;
-	sincos( angle, &s, &c );
+	math::sincos( angle, &s, &c );
 
 	auto m0     = result.m[0];
 	auto m1     = result.m[1];
@@ -62,7 +62,7 @@ mat4 rotateZOriginLocal( mat4arg mat, float angle, float originx, float originy 
 {
 	mat4 result = mat;
 	float s, c;
-	sincos( angle, &s, &c );
+	math::sincos( angle, &s, &c );
 	auto a = -originx * c + originy * s + originx;
 	auto b = -originx * s - originy * c + originy;
 

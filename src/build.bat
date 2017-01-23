@@ -41,12 +41,12 @@ goto :building
 :is_release
 set "defines=%defines% /DNDEBUG"
 set "cl_switches=/MD /GS- /Gy /fp:fast /Ox /Oy- /GL /Oi /O2"
-set "link_switches="
+set "link_switches=/LTCG"
 goto :building
 
 :building
 
-set "libraries=/I%project_path%/lib/ssemath/ /I%project_path%/lib/tm/ /I%project_path%/lib/stb/"
+set "libraries=/I%project_path%/lib/ssemath/ /I%project_path%/lib/tm/ /I%project_path%/lib/stb/ /I%project_path%/lib/dlmalloc/"
 set "includes=/I%project_path%/src/ %libraries%"
 
 rem check whether we are doing a full build, only exe or only dll
@@ -54,7 +54,8 @@ if "%2" == "" goto :full_build
 if "%2" == "dll" goto :dll_build
 
 :full_build
-cl %platform_defines% %defines% %cl_switches% /W4 /Oi %includes% /FC /EHsc- %project_path%/src/platform/win32/win32main.cpp /link user32.lib gdi32.lib opengl32.lib Comdlg32.lib Shlwapi.lib /SUBSYSTEM:WINDOWS /OUT:game.exe /INCREMENTAL:NO /nologo
+cl %cl_switches% /W4 /Oi /FC /EHsc- /I%project_path%/lib/dlmalloc/ %project_path%/src/platform/win32/win32malloc.cpp -c /nologo
+cl %platform_defines% %defines% %cl_switches% /W4 /Oi %includes% /FC /EHsc- %project_path%/src/platform/win32/win32main.cpp win32malloc.obj /link user32.lib gdi32.lib opengl32.lib Comdlg32.lib Shlwapi.lib %link_switches% /NODEFAULTLIB:MSVCRT /SUBSYSTEM:WINDOWS /OUT:game.exe /INCREMENTAL:NO /nologo
 if "%2" == "exe" goto :end
 
 :dll_build

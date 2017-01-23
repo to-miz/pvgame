@@ -8,8 +8,10 @@ struct DoubleBits {
 	uint32 data[2];
 };
 #if defined( ARCHITECTURE_LITTLE_ENDIAN ) && defined( ARCHITECTURE_IEEE_754 )
-	#define FLT_MAX 3.402823466e+38f         // max value
-	#define FLT_MIN 1.175494351e-38f         // min normalized positive value
+	#ifdef COREFLOAT_NO_CRT
+		#define FLT_MAX 3.402823466e+38f         // max value
+		#define FLT_MIN 1.175494351e-38f         // min normalized positive value
+	#endif // COREFLOAT_NO_CRT
 	#define DBL_MAX 1.7976931348623158e+308  // max value
 	#define DBL_MIN 2.2250738585072014e-308  // min positive value
 
@@ -21,16 +23,18 @@ struct DoubleBits {
 	#define DBL_NEGATIVE_INF_BITS 0xFFF00000u
 	#define DBL_SIGN_MASK 0x80000000u
 
-	inline bool signbit( double v )
-	{
-		auto p = (char*)&v;
-		return ( (uint8)p[sizeof( double ) - 1] & 0x80 ) != 0;
-	}
-	inline bool signbit( float v )
-	{
-		auto p = (char*)&v;
-		return ( (uint8)p[sizeof( float ) - 1] & 0x80 ) != 0;
-	}
+	#ifdef COREFLOAT_NO_CRT
+		inline bool signbit( double v )
+		{
+			auto p = (char*)&v;
+			return ( (uint8)p[sizeof( double ) - 1] & 0x80 ) != 0;
+		}
+		inline bool signbit( float v )
+		{
+			auto p = (char*)&v;
+			return ( (uint8)p[sizeof( float ) - 1] & 0x80 ) != 0;
+		}
+	#endif // COREFLOAT_NO_CRT
 
 	inline bool isinf( float v )
 	{

@@ -203,3 +203,44 @@ StringView win32GetKeyboardKeyName( VirtualKeyEnumValues key )
 	auto entry = &keyboardKeyNames[(int32)key];
 	return {entry->data, entry->size};
 }
+
+void* win32DlmallocAllocate( size_t size, uint32 alignment )
+{
+	auto allocator = Win32AppContext.dlmallocator;
+	assert( allocator );
+	auto result = mspace_memalign( allocator, alignment, size );
+	assert_alignment( result, alignment );
+	return result;
+}
+void* win32DlmallocReallocate( void* ptr, size_t newSize, size_t oldSize, uint32 alignment )
+{
+	assert_alignment( ptr, alignment );
+	auto allocator = Win32AppContext.dlmallocator;
+	assert( allocator );
+	if( !newSize ) {
+		if( ptr && oldSize ) {
+			mspace_free( allocator, ptr );
+		}
+		return nullptr;
+	} else {
+		auto result = mspace_realloc_in_place( allocator, ptr, newSize );
+		if( !result && newSize ) {
+			result = mspace_memalign( allocator, alignment, newSize );
+			if( result ) {
+				assert_alignment( result, alignment );
+				memcpy( result, ptr, min( newSize, oldSize ) );
+			}
+			mspace_free( allocator, ptr );
+		}
+		return result;
+	}
+}
+void win32DlmallocFree( void* ptr, size_t size, uint32 alignment )
+{
+	auto allocator = Win32AppContext.dlmallocator;
+	assert( allocator );
+	assert_alignment( ptr, alignment );
+	if( ptr && size ) {
+		mspace_free( allocator, ptr );
+	}
+}

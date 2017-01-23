@@ -61,7 +61,7 @@ mat4 matrixRotation( vec3arg r )
 mat4 matrixRotationX( float angle )
 {
 	float s, c;
-	sincos( angle, &s, &c );
+	math::sincos( angle, &s, &c );
 
 	mat4 result;
 	result.m[0] = result.m[15] = 1;
@@ -77,7 +77,7 @@ mat4 matrixRotationX( float angle )
 mat4 matrixRotationY( float angle )
 {
 	float s, c;
-	sincos( angle, &s, &c );
+	math::sincos( angle, &s, &c );
 
 	mat4 result;
 	result.m[1] = result.m[3] = result.m[4] = result.m[6] = result.m[7] = result.m[9] =
@@ -93,7 +93,7 @@ mat4 matrixRotationY( float angle )
 mat4 matrixRotationZ( float angle )
 {
 	float s, c;
-	sincos( angle, &s, &c );
+	math::sincos( angle, &s, &c );
 
 	mat4 result;
 	result.m[2] = result.m[3] = result.m[6] = result.m[7] = result.m[8] = result.m[9] =
@@ -111,7 +111,7 @@ mat4 matrixRotationZOrigin( float angle, float originx, float originy )
 {
 	mat4 result;
 	float s, c;
-	sincos( angle, &s, &c );
+	math::sincos( angle, &s, &c );
 	auto a = -originx * c + originy * s + originx;
 	auto b = -originx * s - originy * c + originy;
 
@@ -209,7 +209,7 @@ mat4 matrixPerspectiveFovProjection( float fovY, float aspect, float nearPlane, 
 	  0          0          farPlane/(farPlane-nearPlane)             1
 	  0          0          -nearPlane*farPlane/(farPlane-nearPlane)  0
 	  where:
-	  yScale = cot(fovY/2)
+	  yScale = math::cot(fovY/2)
 	  xScale = yScale / aspect ratio*/
 
 	mat4 result;
@@ -217,7 +217,7 @@ mat4 matrixPerspectiveFovProjection( float fovY, float aspect, float nearPlane, 
 	nearPlane = -nearPlane;
 	farPlane = -farPlane;
 #endif
-	float yScale = cot( fovY * 0.5f );
+	float yScale = math::cot( fovY * 0.5f );
 	float xScale = yScale / aspect;
 
 	result.m[1] = result.m[2] = result.m[3] = result.m[4] = result.m[6] = result.m[7] =
@@ -235,7 +235,7 @@ mat4 matrixPerspectiveFovProjection( float fovY, float aspect, float nearPlane, 
 	result.m[14] = -result.m[14];
 #endif
 
-	/*float f = cot( fovY );
+	/*float f = math::cot( fovY );
 
 	result.m[1] = result.m[2] = result.m[3] = result.m[4] = result.m[6] = result.m[7] =
 		result.m[8] = result.m[9] = result.m[12] = result.m[13] = result.m[15] = 0;

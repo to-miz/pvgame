@@ -21,6 +21,10 @@ typedef int32 GetSaveFilenameType( const char* filter, const char* initialDir, c
 
 typedef StringView GetKeyboardKeyNameType( VirtualKeyEnumValues key );
 
+typedef void* AllocateType( size_t size, uint32 alignment );
+typedef void* ReallocateType( void* ptr, size_t newSize, size_t oldSize, uint32 alignment );
+typedef void FreeType( void* ptr, size_t size, uint32 alignment );
+
 struct PlatformServices {
 	LoadTextureType* loadTexture;
 	LoadTextureFromMemoryType* loadTextureFromMemory;
@@ -38,6 +42,10 @@ struct PlatformServices {
 	GetSaveFilenameType* getSaveFilename;
 
 	GetKeyboardKeyNameType* getKeyboardKeyName;
+
+	AllocateType* allocate;
+	ReallocateType* reallocate;
+	FreeType* free;
 };
 
 // structures that get passed into the platform layer, get filled and passed back
