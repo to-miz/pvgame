@@ -63,8 +63,8 @@ bool testRayVsAabb( vec3arg rayOrigin, vec3arg rayDir, aabbarg box, float* t = n
 	auto mmX  = minmax( tMinX, tMaxX );
 	auto mmY  = minmax( tMinY, tMaxY );
 	auto mmZ  = minmax( tMinZ, tMaxZ );
-	auto tMin = max( mmX.min, mmY.min, mmZ.min );
-	auto tMax = min( mmX.max, mmY.max, mmZ.max );
+	auto tMin = max( mmX.first, mmY.first, mmZ.first );
+	auto tMax = min( mmX.second, mmY.second, mmZ.second );
 
 	if( t ) {
 		*t = tMin;
@@ -103,8 +103,8 @@ bool testRayVsAabb( vec3arg rayOrigin, vec3arg rayDir, aabbarg box, TestRayVsAab
 	auto mmX  = minmax( tMinX, tMaxX );
 	auto mmY  = minmax( tMinY, tMaxY );
 	auto mmZ  = minmax( tMinZ, tMaxZ );
-	auto tMin = max( mmX.min, mmY.min, mmZ.min );
-	auto tMax = min( mmX.max, mmY.max, mmZ.max );
+	auto tMin = max( mmX.first, mmY.first, mmZ.first );
+	auto tMax = min( mmX.second, mmY.second, mmZ.second );
 
 	out->enter.t      = tMin.t;
 	out->enter.normal = tMin.normal;
@@ -140,8 +140,8 @@ bool testRayVsObb( vec3arg rayOrigin, vec3arg rayDir, aabbarg box, mat4arg trans
 	auto mmX  = minmax( tMinX, tMaxX );
 	auto mmY  = minmax( tMinY, tMaxY );
 	auto mmZ  = minmax( tMinZ, tMaxZ );
-	auto tMin = max( mmX.min, mmY.min, mmZ.min );
-	auto tMax = min( mmX.max, mmY.max, mmZ.max );
+	auto tMin = max( mmX.first, mmY.first, mmZ.first );
+	auto tMax = min( mmX.second, mmY.second, mmZ.second );
 
 	if( t ) {
 		*t = tMin;

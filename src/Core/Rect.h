@@ -510,7 +510,7 @@ template <class T > trect< T > correct( trectarg< T > r )
 {
 	auto lr = minmax( r.left, r.right );
 	auto tb = minmax( r.top, r.bottom );
-	return {lr.min, tb.min, lr.max, tb.max};
+	return {lr.first, tb.first, lr.second, tb.second};
 }
 template <class T > trect< T > correct( tvec2arg< T > a, tvec2arg< T > b )
 {

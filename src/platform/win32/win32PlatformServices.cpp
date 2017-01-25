@@ -186,7 +186,7 @@ struct win32KeyboardKeyName {
 	char data[20];
 	int32 size;
 };
-global win32KeyboardKeyName keyboardKeyNames[KC_Count];
+global_var win32KeyboardKeyName keyboardKeyNames[KC_Count];
 
 void win32PopulateKeyboardKeyNames()
 {
@@ -202,6 +202,32 @@ StringView win32GetKeyboardKeyName( VirtualKeyEnumValues key )
 {
 	auto entry = &keyboardKeyNames[(int32)key];
 	return {entry->data, entry->size};
+}
+
+void* win32DlmallocMalloc( size_t size )
+{
+	auto allocator = Win32AppContext.dlmallocator;
+	assert( allocator );
+	return mspace_malloc( allocator, size );
+}
+void* win32DlmallocRealloc( void* ptr, size_t size )
+{
+	auto allocator = Win32AppContext.dlmallocator;
+	assert( allocator );
+	if( !size ) {
+		if( ptr ) {
+			mspace_free( allocator, ptr );
+		}
+		return nullptr;
+	} else {
+		return mspace_realloc( allocator, ptr, size );
+	}
+}
+void win32DlmallocMfree( void* ptr )
+{
+	auto allocator = Win32AppContext.dlmallocator;
+	assert( allocator );
+	mspace_free( allocator, ptr );
 }
 
 void* win32DlmallocAllocate( size_t size, uint32 alignment )
@@ -240,7 +266,6 @@ void win32DlmallocFree( void* ptr, size_t size, uint32 alignment )
 	auto allocator = Win32AppContext.dlmallocator;
 	assert( allocator );
 	assert_alignment( ptr, alignment );
-	if( ptr && size ) {
-		mspace_free( allocator, ptr );
-	}
+	assert( !ptr || size );
+	mspace_free( allocator, ptr );
 }

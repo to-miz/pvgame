@@ -1,15 +1,21 @@
 #include "DebugSwitches.h"
 
-#include <cmath>
-#include <cfloat>
-
+#include <type_traits>
 #include <cassert>
 #include "Core/IntegerTypes.h"
 #include "Core/CoreTypes.h"
 #include "Warnings.h"
 #include <cstdarg>
 
-#include <type_traits>
+// #define GAME_NO_STD
+#ifndef GAME_NO_STD
+	#include "GameStl.h"
+#else
+	#define MATH_NO_CRT
+	#define COREFLOAT_NO_CRT
+	#include "Core/StlAlgorithm.h"
+#endif
+
 #include "Core/Macros.h"
 #include <cstring>
 
@@ -20,15 +26,17 @@
 #include "Utility.cpp"
 #include "Core/Log.h"
 
-#include "Core/NumericLimits.h"
+#ifdef GAME_NO_STD
+	#include "Core/NumericLimits.h"
+#endif
 #include "Core/Truncate.h"
 #include "Core/NullableInt.h"
 #include "Core/Algorithm.h"
 
 #ifdef GAME_DEBUG
-#define ARGS_AS_CONST_REF 1
+	#define ARGS_AS_CONST_REF 1
 #else
-#define ARGS_AS_CONST_REF 0
+	#define ARGS_AS_CONST_REF 0
 #endif
 #include "Core/StackAllocator.cpp"
 #define VEC3_ARGS_AS_CONST_REF ARGS_AS_CONST_REF
@@ -65,7 +73,7 @@
 #include "Graphics/Font.h"
 #include "TextureMap.cpp"
 
-global string_builder* GlobalDebugPrinter = nullptr;
+global_var string_builder* GlobalDebugPrinter = nullptr;
 #if defined( GAME_DEBUG ) || ( GAME_DEBUG_PRINTING )
 	#define debugPrint( ... ) GlobalDebugPrinter->print( __VA_ARGS__ );
 	#define debugPrintln( ... ) GlobalDebugPrinter->println( __VA_ARGS__ );
@@ -112,15 +120,15 @@ constexpr const float TileHeight = 16.0f;
 struct DebugValues;
 
 // globals
-global PlatformServices* GlobalPlatformServices = nullptr;
-global TextureMap* GlobalTextureMap             = nullptr;
-global IngameLog* GlobalIngameLog               = nullptr;
-global ImmediateModeGui* ImGui                  = nullptr;
-global ProfilingTable* GlobalProfilingTable     = nullptr;
+global_var PlatformServices* GlobalPlatformServices = nullptr;
+global_var TextureMap* GlobalTextureMap             = nullptr;
+global_var IngameLog* GlobalIngameLog               = nullptr;
+global_var ImmediateModeGui* ImGui                  = nullptr;
+global_var ProfilingTable* GlobalProfilingTable     = nullptr;
 
-global MeshStream* debug_MeshStream = nullptr;
-global bool debug_FillMeshStream    = true;
-global DebugValues* debug_Values    = nullptr;
+global_var MeshStream* debug_MeshStream = nullptr;
+global_var bool debug_FillMeshStream    = true;
+global_var DebugValues* debug_Values    = nullptr;
 
 struct DebugValues {
 	float groundPosition;
@@ -136,7 +144,7 @@ StringView toString( VirtualKeyEnumValues key )
 	return GlobalPlatformServices->getKeyboardKeyName( key );
 }
 
-// global allocation methods
+// global_var allocation methods
 void* allocate( size_t size, uint32 alignment )
 {
 	assert( GlobalPlatformServices );
@@ -168,6 +176,31 @@ void free( T* ptr, size_t count = 1 )
 {
 	::free( ptr, count * sizeof( T ), alignof( T ) );
 }
+
+void* operator new( std::size_t size ) /*throw( std::bad_alloc )*/
+{
+	assert( GlobalPlatformServices );
+	return GlobalPlatformServices->malloc( size );
+}
+void operator delete( void* ptr ) /*throw()*/
+{
+	assert( GlobalPlatformServices );
+	GlobalPlatformServices->mfree( ptr );
+}
+void* operator new[]( std::size_t size ) /*throw(std::bad_alloc)*/
+{
+	assert( GlobalPlatformServices );
+	return GlobalPlatformServices->malloc( size );
+}
+void operator delete[]( void* ptr ) /*throw()*/
+{
+	assert( GlobalPlatformServices );
+	GlobalPlatformServices->mfree( ptr );
+}
+
+#include <vector>
+#include <new>
+#include <memory>
 
 // #include "Core/DArray.h"
 
@@ -1222,8 +1255,15 @@ GAME_STORAGE PlatformRemapInfo initializeApp( void* memory, size_t size,
                                               PlatformInfo* platformInfo );
 INITIALIZE_APP( initializeApp )
 {
+	// temporarily set GlobalPlatformServices to point to platformServices, so that the constructor
+	// of AppData has access to platform services
+	// reloadApp will properly initialize GlobalPlatformServices later
+	GlobalPlatformServices = &platformServices;
+
 	char* p  = (char*)memory;
 	auto app = (AppData*)p;
+	new( app ) AppData();
+
 	assert( isAligned( app ) );
 	assert( size >= sizeof( AppData ) );
 	p += sizeof( AppData );
@@ -1983,7 +2023,7 @@ void processCollidables( Array< CollidableComponent > entries, TileGrid grid,
 		// amount it will be alive for
 		float remaining = 1;
 		if( wasAlive ) {
-			remaining = min( 1, entry.aliveCountdown.value );
+			remaining = min( 1.0f, entry.aliveCountdown.value );
 		}
 
 		entry.lastCollision.clear();
@@ -2210,6 +2250,10 @@ static StringView detailedDebugOutput( AppData* app, char* buffer, int32 size )
 	                 getSpatialStateString( player->spatialState ), player->spatialStateTimer );
 	builder.println( "Player pos: {}\nPlayer velocity: {}", player->position, player->velocity );
 	builder.println( "Camera follow: {:.2}", app->gameState.cameraFollowRegion );
+
+	builder << '\n' << '\n';
+	builder.println( "Malloc Allocated: {}\nMalloc Free: {}\nMalloc Footprint: {}",
+	                 info->mallocAllocated, info->mallocFree, info->mallocFootprint );
 
 	return asStringView( builder );
 }
@@ -2484,7 +2528,7 @@ static void doGame( AppData* app, GameInputs* inputs, bool focus, float dt, bool
 
 		// auto followWidth         = app->width * 0.25f;
 		// auto followHeight        = app->height * 0.25f;
-		game->camera             = makeGameCamera( {0, -50, -150}, {0, 0, 1}, {0, 1, 0} );
+		game->camera             = makeGameCamera( {0, -50, -200}, {0, 0, 1}, {0, 1, 0} );
 		game->cameraFollowRegion = {-25, -50, 25, 50};
 		game->useGameCamera      = true;
 		game->lighting           = false;

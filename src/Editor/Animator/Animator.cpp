@@ -23,7 +23,8 @@ rectf getAbsSelection( AnimatorState* animator, const ImGuiScrollableRegionResul
 	return selection;
 }
 
-bool compareKeyframes( const AnimatorKeyframe* a, const AnimatorKeyframe* b )
+bool compareKeyframes( const AnimatorKeyframes::value_type& a,
+                       const AnimatorKeyframes::value_type& b )
 {
 	return a->t < b->t;
 }
@@ -44,26 +45,32 @@ void clearSelectedNodes( AnimatorState* animator )
 	animator->editor.clickedNode = nullptr;
 }
 
-Array< AnimatorGroup > addAnimatorGroups( AnimatorState* animator, StringView parentName,
-                                          Array< const StringView > childNames )
+int32 makeAnimatorKeyframeId( int16 ownerId, int32 index )
 {
-	Array< AnimatorGroup > result = {};
+	assert( index >= 0 && index < 256 );
+	return (int32)( (uint32)ownerId << 8 | (uint32)index );
+}
+GroupId addAnimatorGroups( AnimatorState* animator, StringView parentName,
+                           Array< const StringView > childNames, int16 ownerId )
+{
+	Array< AnimatorGroup > groups = {};
 	auto count                    = childNames.size() + 1;
-	if( animator->groups.remaining() >= count ) {
-		auto start = animator->groups.append( count, {} );
-		result     = makeArrayView( start, animator->groups.end() );
-		for( auto i = 0; i < count; ++i ) {
-			auto entry      = &result[i];
-			entry->name     = ( i == 0 ) ? parentName : childNames[i - 1];
-			entry->id       = animator->ids;
-			entry->expanded = false;
-			++animator->ids;
-		}
-		if( count > 1 ) {
-			result[0].children = {result[1].id, animator->ids};
-		}
+	auto start                    = safe_truncate< int32 >( animator->groups.size() );
+	auto end                      = start + count;
+	animator->groups.resize( end, {} );
+	groups = makeRangeView( animator->groups, start, end );
+	for( auto i = 0; i < count; ++i ) {
+		auto entry      = &groups[i];
+		entry->name     = ( i == 0 ) ? parentName : childNames[i - 1];
+		entry->id       = makeAnimatorKeyframeId( ownerId, i );
+		entry->expanded = false;
 	}
-	return result;
+	if( count > 1 ) {
+		groups[0].children = {groups[1].id, groups[1].id + childNames.size()};
+	} else {
+		groups[0].children = {};
+	}
+	return groups[0].id;
 }
 void clearAnimatorGroups( AnimatorState* animator )
 {
@@ -115,13 +122,12 @@ AnimatorKeyframeData lerp( float t, const AnimatorKeyframeData& a, const Animato
 	}
 	return result;
 }
-AnimatorKeyframe** lowerBoundKeyframeIt( AnimatorState* animator, float t, GroupId group )
+AnimatorKeyframes::iterator lowerBoundKeyframeIt( AnimatorState* animator, float t, GroupId group )
 {
 	auto first = animator->keyframes.begin();
-	auto last = animator->keyframes.end();
-	auto it = lower_bound( first, last, t, []( const AnimatorKeyframe* keyframe, float t ) {
-		return keyframe->t < t;
-	} );
+	auto last  = animator->keyframes.end();
+	auto it    = lower_bound( first, last, t, []( const AnimatorKeyframes::value_type& keyframe,
+	                                           float t ) { return keyframe->t < t; } );
 	if( first != last ) {
 		if( it == last ) {
 			--it;
@@ -129,11 +135,14 @@ AnimatorKeyframe** lowerBoundKeyframeIt( AnimatorState* animator, float t, Group
 		if( ( *it )->group == group && ( *it )->t <= t ) {
 			return it;
 		}
-		--it;
-		while( it >= first && ( *it )->group != group ) {
-			--it;
-		}
-		if( it < first ) {
+		if( it != first ) {
+			while( it > first && ( *it )->group != group ) {
+				--it;
+			}
+			if( it == first && ( *it )->group != group ) {
+				it = last;
+			}
+		} else {
 			it = last;
 		}
 		return it;
@@ -146,7 +155,7 @@ AnimatorKeyframe* lowerBoundKeyframe( AnimatorState* animator, float t, GroupId 
 	auto last = animator->keyframes.end();
 	auto it   = lowerBoundKeyframeIt( animator, t, group );
 	if( it != last ) {
-		return *it;
+		return it->get();
 	}
 	return nullptr;
 }
@@ -156,7 +165,7 @@ AnimatorKeyframeData getInterpolatedKeyframe( AnimatorState* animator, float t, 
 	auto last                   = animator->keyframes.end();
 	auto first                  = lowerBoundKeyframeIt( animator, t, group );
 	if( first != last && ( *first )->group == group ) {
-		auto a = *first;
+		auto a = first->get();
 		result = a->data;
 		if( a->t < t && first + 1 != last ) {
 			auto second = first + 1;
@@ -164,7 +173,7 @@ AnimatorKeyframeData getInterpolatedKeyframe( AnimatorState* animator, float t, 
 				++second;
 			}
 			if( second != last && ( *second )->group == group ) {
-				auto b = *second;
+				auto b = second->get();
 				assert( b->t >= a->t );
 				assert( a->data.type == b->data.type );
 
@@ -183,7 +192,7 @@ AnimatorKeyframeData getInterpolatedKeyframe( AnimatorState* animator, float t, 
 
 AnimatorNode getCurrentFrameNode( AnimatorState* animator, AnimatorNode* node )
 {
-	auto base   = *find_first_where( animator->baseNodes, entry->id == node->id );
+	auto base   = find_first_where( animator->baseNodes, entry->id == node->id )->get();
 	auto result = *base;
 
 	auto group            = find_first_where( animator->groups, entry.id == node->group );
@@ -231,22 +240,13 @@ AnimatorNode toRelativeNode( const AnimatorNode* base, const AnimatorNode* abs )
 	return result;
 }
 
-AnimatorNode* allocateNode( AnimatorState* animator )
-{
-	AnimatorNode* result = allocateStruct( &animator->nodeAllocator, AnimatorNode );
-	if( result ) {
-		*result       = {};
-		result->voxel = -1;
-	}
-	return result;
-}
 void bindParent( AnimatorState* animator, AnimatorNode* node )
 {
 	node->parent = nullptr;
 	if( node->parentId >= 0 ) {
 		auto id = node->parentId;
 		if( auto parent = find_first_where( animator->nodes, entry->id == id ) ) {
-			node->parent = *parent;
+			node->parent = parent->get();
 			++node->parent->childrenCount;
 		}
 	}
@@ -254,110 +254,70 @@ void bindParent( AnimatorState* animator, AnimatorNode* node )
 		node->parentId = -1;
 	}
 }
-AnimatorNode* allocateNode( AnimatorState* animator, const AnimatorNode& node )
-{
-	auto result = allocateNode( animator );
-	if( result ) {
-		*result    = node;
-		result->id = animator->nodeIds++;
-		bindParent( animator, result );
-		if( result->name.size() <= 0 ) {
-			auto idString      = toNumberString( result->id );
-			result->name.resize( snprint( result->name.data(), result->name.capacity(),
-			                              "Unnamed {}", StringView{idString} ) );
-		}
-	}
-	return result;
-}
 AnimatorNode* addNewNode( AnimatorState* animator, const AnimatorNode& node )
 {
-	auto result = allocateNode( animator );
-	if( result ) {
-		*result       = node;
-		result->id    = animator->nodeIds++;
-		result->voxel = -1;
-		if( result->scale.x == 0 ) {
-			result->scale.x = 1;
-		}
-		if( result->scale.y == 0 ) {
-			result->scale.y = 1;
-		}
-		if( result->scale.z == 0 ) {
-			result->scale.z = 1;
-		}
-		bindParent( animator, result );
-		if( result->name.size() <= 0 ) {
-			auto idString      = toNumberString( result->id );
-			result->name.resize( snprint( result->name.data(), result->name.capacity(),
-			                              "Unnamed {}", StringView{idString} ) );
-		}
-		animator->nodes.push_back( result );
-		auto groups =
-		    addAnimatorGroups( animator, result->name, makeArrayView( animator->fieldNames ) );
-		if( groups.size() ) {
-			result->group = groups[0].id;
-		} else {
-			result->group = -1;
-		}
+	animator->nodes.push_back( std::make_unique< AnimatorNode >( node ) );
+	auto result = animator->nodes.back().get();
+	result->id  = animator->nodeIds++;
+	bindParent( animator, result );
+	if( result->name.size() <= 0 ) {
+		auto idString = toNumberString( result->id );
+		result->name.resize( snprint( result->name.data(), result->name.capacity(), "Unnamed {}",
+		                              StringView{idString} ) );
 	}
+	result->group = addAnimatorGroups( animator, result->name,
+	                                   makeArrayView( animator->fieldNames ), result->id );
 	return result;
 }
 AnimatorNode* addExistingNode( AnimatorState* animator, const AnimatorNode& node )
 {
-	auto result = allocateNode( animator );
-	if( result ) {
-		*result               = node;
-		result->parent        = nullptr;
-		result->childrenCount = 0;
-		animator->nodes.push_back( result );
-		auto groups =
-		    addAnimatorGroups( animator, result->name, makeArrayView( animator->fieldNames ) );
-		if( groups.size() ) {
-			result->group = groups[0].id;
-		} else {
-			result->group = -1;
-		}
-	}
+	animator->nodes.push_back( std::make_unique< AnimatorNode >( node ) );
+	auto result           = animator->nodes.back().get();
+	result->parent        = nullptr;
+	result->childrenCount = 0;
+	result->group         = addAnimatorGroups( animator, result->name,
+	                                   makeArrayView( animator->fieldNames ), result->id );
 	return result;
 }
 
 void sortNodes( AnimatorState* animator )
 {
 	sort( animator->nodes.begin(), animator->nodes.end(),
-	      []( const AnimatorNode* a, const AnimatorNode* b ) {
+	      []( const UniqueAnimatorNode& a, const UniqueAnimatorNode& b ) {
 		      return a->childrenCount > b->childrenCount;
 		  } );
 }
 void sortKeyframes( AnimatorState* animator )
 {
-	sort( animator->keyframes.begin(), animator->keyframes.end(),
-	      []( const AnimatorKeyframe* a, const AnimatorKeyframe* b ) { return a->t < b->t; } );
+	sort( animator->keyframes.begin(), animator->keyframes.end(), compareKeyframes );
 }
 
-AnimatorKeyframe* allocateKeyframe( AnimatorState* animator, const AnimatorKeyframe& key )
-{
-	auto result = allocateStruct( &animator->keyframesAllocator, AnimatorKeyframe );
-	if( result ) {
-		*result = key;
-	}
-	return result;
-}
 void addKeyframe( AnimatorState* animator, const AnimatorKeyframe& key )
 {
 	auto existing = find_first_where( animator->keyframes,
 	                                  entry->group == key.group && floatEqSoft( entry->t, key.t ) );
 	if( existing ) {
 		**existing = key;
-	} else if( animator->keyframes.remaining() ) {
-		auto added = allocateStruct( &animator->keyframesAllocator, AnimatorKeyframe );
-		*added     = key;
-		animator->keyframes.push_back( added );
-		insertion_sort_last_elem(
-		    animator->keyframes.begin(), animator->keyframes.end(),
-		    []( const AnimatorKeyframe* a, const AnimatorKeyframe* b ) { return a->t < b->t; } );
+	} else {
+		animator->keyframes.push_back( std::make_unique< AnimatorKeyframe >( key ) );
+		insertion_sort_last_elem( animator->keyframes.begin(), animator->keyframes.end(),
+		                          compareKeyframes );
 	}
 }
 // delete duplicate keyframes, keeping those that are selected
+// need functor because of equal_range passes in arguments both ways, so we can't use a simple
+// lambda if the types of the two arguments don't match
+struct DeleteDuplicateKeyframesFunctor {
+	bool operator()( const AnimatorKeyframes::value_type& a, const AnimatorKeyframe* b ) const
+	{
+		return a->t < b->t;
+	}
+	bool operator()( const AnimatorKeyframe* a, const AnimatorKeyframes::value_type& b ) const
+	{
+		return a->t < b->t;
+	}
+};
+
 void deleteDuplicateKeyframes( AnimatorState* animator )
 {
 	if( !animator->currentAnimation ) {
@@ -365,17 +325,12 @@ void deleteDuplicateKeyframes( AnimatorState* animator )
 	}
 	FOR( selected : animator->selected ) {
 		assert( selected->selected );
-		auto range = equal_range(
-		    animator->keyframes.begin(), animator->keyframes.end(), selected,
-		    []( const AnimatorKeyframe* a, const AnimatorKeyframe* b ) { return a->t < b->t; } );
+		auto range = equal_range( animator->keyframes.begin(), animator->keyframes.end(), selected,
+		                          DeleteDuplicateKeyframesFunctor() );
 		auto group = selected->group;
 		erase_if( animator->keyframes, range.first, range.second,
-		          [animator, group]( AnimatorKeyframe* key ) {
-			          if( !key->selected && key->group == group ) {
-				          freeStruct( &animator->keyframesAllocator, key );
-				          return true;
-			          }
-			          return false;
+		          [animator, group]( const AnimatorKeyframes::value_type& key ) {
+			          return !key->selected && key->group == group;
 			      } );
 	}
 }
@@ -385,7 +340,7 @@ void openAnimation( AnimatorState* animator, AnimatorAnimation* animation )
 	assert( !animator->currentAnimation );
 	animator->currentAnimation = animation;
 
-	animator->baseNodes.assign( animator->nodes );
+	animator->baseNodes = std::move( animator->nodes );
 	animator->nodes.clear();
 	// clear marked flag
 	FOR( node : animator->baseNodes ) {
@@ -397,7 +352,7 @@ void openAnimation( AnimatorState* animator, AnimatorAnimation* animation )
 	FOR( node : animation->nodes ) {
 		auto baseIt = find_first_where( animator->baseNodes, entry->id == node.id );
 		if( baseIt ) {
-			auto base = *baseIt;
+			auto base = baseIt->get();
 			assert( !base->marked );
 			if( base->marked ) {
 				continue;
@@ -414,44 +369,43 @@ void openAnimation( AnimatorState* animator, AnimatorAnimation* animation )
 
 	// reassign parents
 	FOR( node : animator->nodes ) {
-		bindParent( animator, node );
+		bindParent( animator, node.get() );
 	}
 	sortNodes( animator );
 	clearSelectedNodes( animator );
 
 	populateVisibleGroups( animator );
+
+	animator->keyframes.end();
+	animator->keyframes.reserve( animation->keyframes.size() );
+	FOR( keyframe : animation->keyframes ) {
+		animator->keyframes.push_back( std::make_unique< AnimatorKeyframe >( keyframe ) );
+	}
 }
 
-void closeAnimation( StackAllocator* allocator, AnimatorState* animator )
+void closeAnimation( AnimatorState* animator )
 {
 	assert( animator->currentAnimation );
 
-	// TODO: handle keyframes
-
 	auto animation = animator->currentAnimation;
-	if( animation->nodes.size() < animator->nodes.size() ) {
-		animation->nodes = makeArray( allocator, AnimatorNode, animator->nodes.size() );
-	}
+	animation->nodes.resize( animator->nodes.size() );
 
-	if( animation->nodes.size() == animator->nodes.size() ) {
-		zip_for( animation->nodes, animator->nodes ) {
-			auto baseIt = find_first_where( animator->baseNodes, entry->id == ( *second )->id );
-			if( baseIt ) {
-				auto base = *baseIt;
-				*first    = toRelativeNode( base, ( *second ) );
-			}
+	zip_for( animation->nodes, animator->nodes ) {
+		auto base = find_first_where( animator->baseNodes, entry->id == ( *second )->id );
+		if( base ) {
+			*first = toRelativeNode( base->get(), second->get() );
 		}
-	} else {
-		LOG( ERROR, "out of memory for animation nodes" );
 	}
 
-	// free node memory
-	FOR( node : animator->nodes ) {
-		freeStruct( &animator->nodeAllocator, node );
+	animation->keyframes.resize( animator->keyframes.size() );
+	zip_for( animation->keyframes, animator->keyframes ) {
+		*first = **second;
 	}
+	animator->keyframes.clear();
 
 	clearAnimatorGroups( animator );
-	animator->nodes.assign( animator->baseNodes );
+	animator->nodes = std::move( animator->baseNodes );
+	animator->baseNodes.clear();
 	animator->currentAnimation = nullptr;
 	clearSelectedNodes( animator );
 }
@@ -560,7 +514,7 @@ void doKeyframesFrameNumbers( ImGuiHandle handle, AppData* app, GameInputs* inpu
 		if( !floatEqSoft( oldFrame, pos ) ) {
 			// current frame changed
 			FOR( node : animator->nodes ) {
-				*node = getCurrentFrameNode( animator, node );
+				*node = getCurrentFrameNode( animator, node.get() );
 			}
 		}
 	}
@@ -660,9 +614,10 @@ void doKeyframesSelection( ImGuiHandle handle, AppData* app, GameInputs* inputs,
 						auto firstGroup  = (int32)floor( selection.top / groupHeight );
 						auto lastGroupF  = ceil( selection.bottom / groupHeight );
 						auto lastGroup   = (int32)lastGroupF;
-						if( firstGroup < animator->visibleGroups.size() ) {
-							firstGroup = clamp( firstGroup, 0, animator->visibleGroups.size() - 1 );
-							lastGroup  = clamp( lastGroup, 0, animator->visibleGroups.size() );
+						if( firstGroup < ::size( animator->visibleGroups ) ) {
+							auto visibleGroupsCount = ::size( animator->visibleGroups );
+							firstGroup = clamp( firstGroup, 0, visibleGroupsCount - 1 );
+							lastGroup  = clamp( lastGroup, 0, visibleGroupsCount );
 							if( firstGroup == 0 ) {
 								// top level group is every visible group
 								FOR( visible : animator->visibleGroups ) {
@@ -687,7 +642,8 @@ void doKeyframesSelection( ImGuiHandle handle, AppData* app, GameInputs* inputs,
 					}
 
 					float minT = FLOAT_MAX;
-					FOR( frame : animator->keyframes ) {
+					FOR( entry : animator->keyframes ) {
+						auto frame = entry.get();
 						if( frame->t + 1 >= selection.left && frame->t < selection.right
 						    && exists( groups, frame->group ) ) {
 
@@ -769,7 +725,8 @@ bool doKeyframesDisplay( ImGuiHandle handle, AppData* app, GameInputs* inputs, c
 	auto isParent   = ( parent && !isEmpty( parent->children ) );
 	MESH_STREAM_BLOCK( stream, renderer ) {
 		Color colors[] = {Color::White, Color::Red};
-		FOR( frame : animator->keyframes ) {
+		FOR( entry : animator->keyframes ) {
+			auto frame = entry.get();
 			if( group >= 0 && !isParent && frame->group != group ) {
 				continue;
 			}
@@ -816,7 +773,8 @@ bool doKeyframesDisplay( ImGuiHandle handle, AppData* app, GameInputs* inputs, c
 	bool isRoot = group < 0;
 	if( ( isParent || isRoot ) && clickedAny ) {
 		// select any frame which is whithin equal range of t
-		FOR( frame : animator->keyframes ) {
+		FOR( entry : animator->keyframes ) {
+			auto frame = entry.get();
 			if( ( isRoot || isInRange( parent->children, frame->group ) )
 			    && floatEqSoft( frame->t, clickedT ) ) {
 
@@ -918,12 +876,8 @@ void doKeyframesControl( AppData* app, GameInputs* inputs )
 
 	if( imguiHasMyChildFocus( handle ) && isKeyPressed( inputs, KC_Delete ) ) {
 		// delete selected keyframes
-		erase_if( animator->keyframes, [animator]( AnimatorKeyframe* key ) {
-			if( key->selected ) {
-				freeStruct( &animator->keyframesAllocator, key );
-				return true;
-			}
-			return false;
+		erase_if( animator->keyframes, [animator]( const AnimatorKeyframes::value_type& key ) {
+			return key->selected;
 		} );
 		clearSelectedKeyframes( animator );
 	}
@@ -978,7 +932,7 @@ void doAnimatorMenu( AppData* app, GameInputs* inputs, rectfarg rect )
 					animator->showRelativeProperties = true;
 				}
 				if( animator->showRelativeProperties ) {
-					base = *find_first_where( animator->baseNodes, entry->id == node.id );
+					base = find_first_where( animator->baseNodes, entry->id == node.id )->get();
 					node = toRelativeNode( base, selected );
 				}
 			}
@@ -1025,19 +979,23 @@ void doAnimatorMenu( AppData* app, GameInputs* inputs, rectfarg rect )
 				auto comboHandle = imguiMakeHandle( &node.parentId );
 				int32 index      = -1;
 				if( node.parent ) {
-					index = distance( animator->nodes.begin(),
-					                  find_first_where( animator->nodes, entry == node.parent ) );
+					auto pos = find_if( animator->nodes,
+					                    [node]( const UniqueAnimatorNode& entry ) {
+						                    return entry.get() == node.parent;
+						                } );
+					index = ::distance( animator->nodes.begin(), pos );
 				}
-				if( imguiCombo( comboHandle, (const void*)animator->nodes.data(),
-				                (int32)sizeof( AnimatorNode* ), animator->nodes.size(), &index,
-				                []( const void* entry ) -> StringView {
-					                assert_alignment( entry, alignof( AnimatorNode** ) );
-					                auto node = *(AnimatorNode**)entry;
-					                return node->name;
-					            },
-				                true ) ) {
+				if( imguiCombo(
+				        comboHandle, (const void*)animator->nodes.data(),
+				        (int32)sizeof( AnimatorNode* ), (int32)animator->nodes.size(), &index,
+				        []( const void* entry ) -> StringView {
+					        assert_alignment( entry, alignof( UniqueAnimatorNode* ) );
+					        auto node = (UniqueAnimatorNode*)entry;
+					        return node->get()->name;
+					    },
+				        true ) ) {
 					if( index >= 0 ) {
-						auto newParent = animator->nodes[index];
+						auto newParent = animator->nodes[index].get();
 						auto isMyChild = []( AnimatorNode* parent, AnimatorNode* potentialChild ) {
 							bounded_while( potentialChild&& potentialChild != parent, 100 ) {
 								potentialChild = potentialChild->parent;
@@ -1137,30 +1095,28 @@ void doAnimatorMenu( AppData* app, GameInputs* inputs, rectfarg rect )
 		if( imguiBeginDropGroup( "Animations", &editor->expandedFlags,
 		                         AnimatorEditor::Animations ) ) {
 			if( imguiButton( "New Animation" ) ) {
-				if( animator->animations.remaining() ) {
-					auto added = animator->animations.emplace_back();
-					*added     = {};
-					added->name.assign( "Unnamed" );
-					added->id = -1;
-				}
+				animator->animations.emplace_back();
+				auto added = &animator->animations.back();
+				added->name.assign( "Unnamed" );
+				added->id = -1;
 			}
-			AnimatorAnimation* selected = nullptr;
-			AnimatorAnimation* deleted = nullptr;
-			FOR( animation : animator->animations ) {
+			auto end      = animator->animations.end();
+			auto selected = end;
+			auto deleted  = end;
+			for( auto it = animator->animations.begin(); it != end; ++it ) {
 				imguiSameLine( 3 );
-				imguiText( animation.name );
+				imguiText( it->name );
 				if( imguiButton( "Open" ) ) {
-					selected = &animation;
+					selected = it;
 				}
 				if( imguiButton( "Delete" ) ) {
-					deleted = &animation;
+					deleted = it;
 				}
 			}
-			if( selected ) {
-				openAnimation( animator, selected );
+			if( selected != end ) {
+				openAnimation( animator, &*selected );
 			}
-			if( deleted ) {
-				// TODO: cleanup of resources
+			if( deleted != end ) {
 				// TODO: ask user whether to really delete
 				animator->animations.erase( deleted );
 			}
@@ -1174,7 +1130,7 @@ void doAnimatorMenu( AppData* app, GameInputs* inputs, rectfarg rect )
 			imguiButton( "Commit" );
 			if( imguiButton( "Close" ) ) {
 				// TODO: ask user whether to keep changes
-				closeAnimation( &app->stackAllocator, animator );
+				closeAnimation( animator );
 			}
 		}
 	}
@@ -1261,14 +1217,14 @@ vec3 rayIntersectionWithPlane( const Ray3& ray, vec3arg base, vec3arg planeNorma
 	return result;
 }
 
-void deleteDeep( AnimatorState* animator, AnimatorNode* node );
+void deleteDeep( AnimatorState* animator, AnimatorNodes::iterator node );
 void deleteChildren( AnimatorState* animator, AnimatorNode* parent )
 {
 	auto first = animator->nodes.begin();
 	auto last = animator->nodes.end();
 	for( auto it = first; it != last; ) {
 		if( ( *it )->parent == parent ) {
-			deleteDeep( animator, *it );
+			deleteDeep( animator, it );
 			first = animator->nodes.begin();
 			last = animator->nodes.end();
 			it = first;
@@ -1277,14 +1233,20 @@ void deleteChildren( AnimatorState* animator, AnimatorNode* parent )
 		++it;
 	}
 }
-void deleteDeep( AnimatorState* animator, AnimatorNode* node )
+void deleteDeep( AnimatorState* animator, AnimatorNodes::iterator node )
 {
-	if( animator->editor.clickedNode == node ) {
+	if( animator->editor.clickedNode == node->get() ) {
 		animator->editor.clickedNode = nullptr;
 	}
-	deleteChildren( animator, node );
-	unordered_remove( animator->nodes, node );
-	freeStruct( &animator->nodeAllocator, node );
+	deleteChildren( animator, node->get() );
+	unordered_erase( animator->nodes, node );
+}
+void deleteDeep( AnimatorState* animator, AnimatorNode* node )
+{
+	auto it = find_if( animator->nodes, [node]( const UniqueAnimatorNode& entry ) {
+		return entry.get() == node;
+	} );
+	deleteDeep( animator, it );
 }
 
 struct Plane {
@@ -1586,7 +1548,7 @@ void doEditor( AppData* app, GameInputs* inputs, rectfarg rect )
 			    && imguiIsHover( handle ) ) {
 
 				selectedAny = true;
-				selectNode( node, head );
+				selectNode( node.get(), head );
 				editor->mouseOffset  = head - inputs->mouse.position;
 				editor->clickedVoxel = false;
 			}
@@ -1601,7 +1563,8 @@ void doEditor( AppData* app, GameInputs* inputs, rectfarg rect )
 				                                 app->width, app->height );
 				ray.dir = safeNormalize( ray.dir );
 
-				FOR( node : animator->nodes ) {
+				FOR( entry : animator->nodes ) {
+					auto node = entry.get();
 					if( node->voxel >= 0 ) {
 						auto animation  = &animator->voxels.voxels.animations[node->voxel];
 						auto range      = animation->range;
@@ -1820,17 +1783,6 @@ void doAnimator( AppData* app, GameInputs* inputs, bool focus, float dt )
 		const auto MaxKeyframes  = 50;
 		const auto MaxAnimations = 20;
 		animator->stringPool     = makeStringPool( allocator, 100 );
-		animator->keyframes      = makeUArray( allocator, AnimatorKeyframe*, MaxNodes );
-		animator->selected       = makeUArray( allocator, AnimatorKeyframe*, MaxNodes );
-		animator->groups         = makeUArray( allocator, AnimatorGroup, MaxNodes * 5 );
-		animator->visibleGroups  = makeUArray( allocator, AnimatorGroupDisplay, MaxNodes * 5 );
-		animator->baseNodes      = makeUArray( allocator, AnimatorNode*, MaxNodes );
-		animator->nodes          = makeUArray( allocator, AnimatorNode*, MaxNodes );
-		animator->animations     = makeUArray( allocator, AnimatorAnimation, MaxAnimations );
-		animator->nodeAllocator  = makeFixedSizeAllocator(
-		    allocator, MaxNodes * 2, sizeof( AnimatorNode ), alignof( AnimatorNode ) );
-		animator->keyframesAllocator = makeFixedSizeAllocator(
-		    allocator, MaxKeyframes, sizeof( AnimatorKeyframe ), alignof( AnimatorKeyframe ) );
 
 		animator->fieldNames[0] = pushString( &animator->stringPool, "Translation" );
 		animator->fieldNames[1] = pushString( &animator->stringPool, "Rotation" );
@@ -1843,8 +1795,12 @@ void doAnimator( AppData* app, GameInputs* inputs, bool focus, float dt )
 		animator->timelineRootExpanded = true;
 
 #if 1
-		addNewNode( animator, {{}, {0, 0, HalfPi32}, {1, 1, 1}, 40, -1} );
-		addNewNode( animator, {{}, {0, 0, HalfPi32}, {1, 1, 1}, 40, 0} );
+		AnimatorNode node;
+		node.rotation = {0, 0, HalfPi32};
+		node.length = 40;
+		addNewNode( animator, node );
+		node.parentId = 0;
+		addNewNode( animator, node );
 		populateVisibleGroups( animator );
 
 		if( loadVoxelCollection( allocator, "Data/voxels/hero.json", &animator->voxels.voxels ) ) {
@@ -1888,7 +1844,7 @@ void doAnimator( AppData* app, GameInputs* inputs, bool focus, float dt )
 
 #if 1
 	// debug
-	debugPrintln( "Keyframes Count: {}", animator->keyframes.size() );
+	debugPrintln( "AnimatorKeyframes Count: {}", animator->keyframes.size() );
 #endif
 
 	imguiUpdate( dt );

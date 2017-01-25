@@ -21,6 +21,10 @@ typedef int32 GetSaveFilenameType( const char* filter, const char* initialDir, c
 
 typedef StringView GetKeyboardKeyNameType( VirtualKeyEnumValues key );
 
+typedef void* MallocType( size_t size );
+typedef void* ReallocType( void* ptr, size_t size );
+typedef void MfreeType( void* ptr );
+
 typedef void* AllocateType( size_t size, uint32 alignment );
 typedef void* ReallocateType( void* ptr, size_t newSize, size_t oldSize, uint32 alignment );
 typedef void FreeType( void* ptr, size_t size, uint32 alignment );
@@ -42,6 +46,10 @@ struct PlatformServices {
 	GetSaveFilenameType* getSaveFilename;
 
 	GetKeyboardKeyNameType* getKeyboardKeyName;
+
+	MallocType* malloc;
+	ReallocType* realloc;
+	MfreeType* mfree;
 
 	AllocateType* allocate;
 	ReallocateType* reallocate;
@@ -81,6 +89,10 @@ struct PlatformInfo {
 	int32 vertices;
 	int32 indices;
 	int32 drawCalls;
+
+	size_t mallocAllocated;
+	size_t mallocFree;
+	size_t mallocFootprint;
 };
 
 #ifdef GAME_DLL

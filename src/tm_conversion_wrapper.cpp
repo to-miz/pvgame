@@ -106,6 +106,7 @@ struct string_builder {
 	int32 remaining() { return cap - sz; }
 	void clear() { sz = 0; }
 
+	string_builder() = default;
 	string_builder( char* ptr, int32 cap )
 	: ptr( ptr ), sz( 0 ), cap( cap ), format( defaultPrintFormat() )
 	{

@@ -324,7 +324,7 @@ void generateMeshFromVoxelGrid( MeshStream* stream, VoxelGrid* grid, VoxelGridTe
 	plane.hAxis        = {1, 0, 0};
 	plane.vAxis        = {0, -1, 0};
 	plane.zAxis        = {0, 0, 1};
-	plane.faceNormal = {0, 0, 1};
+	plane.faceNormal   = {0, 0, 1};
 	plane.hComponent   = VectorComponent_X;
 	plane.vComponent   = VectorComponent_Y;
 	plane.zComponent   = VectorComponent_Z;

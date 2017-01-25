@@ -15,7 +15,7 @@ struct TextureMap {
 	UArray< TextureMapEntry > entries;
 };
 
-extern global TextureMap* GlobalTextureMap;
+extern global_var TextureMap* GlobalTextureMap;
 
 TextureMapEntry* getTextureInfo( TextureId id )
 {

@@ -22,8 +22,8 @@ struct ProfilingTable {
 };
 
 #ifndef NO_PROFILING
-	
-	extern global ProfilingTable* GlobalProfilingTable;
+
+	extern global_var ProfilingTable* GlobalProfilingTable;
 
 	uint16 getProfilingInfo( const char* file, const char* block, int32 line )
 	{

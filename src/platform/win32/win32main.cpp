@@ -1,12 +1,22 @@
+#include "DebugSwitches.h"
+
+#include <type_traits>
 #include <cassert>
 #include <Core/IntegerTypes.h>
 #include <Core/CoreTypes.h>
 #include <Warnings.h>
 #include <cstdarg>
 
+#ifndef GAME_NO_STD
+	#include "GameStl.h"
+#else
+	#define MATH_NO_CRT
+	#define COREFLOAT_NO_CRT
+	#include "Core/StlAlgorithm.h"
+#endif
+
 #include "win32malloc.h"
 
-#include <type_traits>
 #include <Core/Macros.h>
 #include <cstring>
 
@@ -17,7 +27,9 @@
 #include <Utility.cpp>
 #include <Core/Log.h>
 
-#include <Core/NumericLimits.h>
+#ifdef GAME_NO_STD
+	#include "Core/NumericLimits.h"
+#endif
 #include <Core/Truncate.h>
 #include <Core/NullableInt.h>
 #include <Core/Algorithm.h>
@@ -75,7 +87,7 @@ struct Win32AppContextData {
 	mspace dlmallocator;
 };
 
-extern global Win32AppContextData Win32AppContext;
+extern global_var Win32AppContextData Win32AppContext;
 
 #include <platform/common/WString.cpp>
 #include "win32Filesystem.cpp"
@@ -94,13 +106,13 @@ extern global Win32AppContextData Win32AppContext;
 #include "win32_opengl.cpp"
 #include "win32FontGeneration.cpp"
 
-extern global TextureMap* GlobalTextureMap;
+extern global_var TextureMap* GlobalTextureMap;
 #include "win32PlatformServices.cpp"
 
 // globals
-global IngameLog* GlobalIngameLog          = nullptr;
-global TextureMap* GlobalTextureMap        = nullptr;
-global Win32AppContextData Win32AppContext = {};
+global_var IngameLog* GlobalIngameLog          = nullptr;
+global_var TextureMap* GlobalTextureMap        = nullptr;
+global_var Win32AppContextData Win32AppContext = {};
 
 typedef INITIALIZE_APP( InitializeAppType );
 typedef UPDATE_AND_RENDER( UpdateAndRenderType );
@@ -280,7 +292,7 @@ double win32PerformanceInit()
 	QueryPerformanceFrequency( &frequency );
 	return 1000.0 / (double)frequency.QuadPart;
 }
-global double Win32PerformanceFrequency = win32PerformanceInit();
+global_var double Win32PerformanceFrequency = win32PerformanceInit();
 
 double win32PerformanceCounter()
 {
@@ -442,14 +454,15 @@ int CALLBACK WinMain( HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdL
 
 	win32PopulateKeyboardKeyNames();
 
-	PlatformServices platformServices = {&win32LoadTexture,       &win32LoadTextureFromMemory,
-	                                     &win32DeleteTexture,     &loadImageToMemory,
-	                                     &freeImageData,          &win32LoadFont,
-	                                     &win32WriteBufferToFile, &win32ReadFileToBuffer,
-	                                     &win32UploadMeshToGpu,   &win32GetOpenFilename,
-	                                     &win32GetSaveFilename,   &win32GetKeyboardKeyName,
-	                                     &win32DlmallocAllocate,  &win32DlmallocReallocate,
-	                                     win32DlmallocFree};
+	PlatformServices platformServices = {&win32LoadTexture,        &win32LoadTextureFromMemory,
+	                                     &win32DeleteTexture,      &loadImageToMemory,
+	                                     &freeImageData,           &win32LoadFont,
+	                                     &win32WriteBufferToFile,  &win32ReadFileToBuffer,
+	                                     &win32UploadMeshToGpu,    &win32GetOpenFilename,
+	                                     &win32GetSaveFilename,    &win32GetKeyboardKeyName,
+	                                     &win32DlmallocMalloc,     &win32DlmallocRealloc,
+	                                     &win32DlmallocMfree,      &win32DlmallocAllocate,
+	                                     &win32DlmallocReallocate, win32DlmallocFree};
 	PlatformInfo info     = {};
 	Win32AppContext.info  = &info;
 	auto initializeResult = initializeApp( gameMemory, gameMemorySize, platformServices, &info );
@@ -668,6 +681,13 @@ int CALLBACK WinMain( HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdL
 		info.replayingInputs = replayingInputs;
 
 		if( !replayStepped || replayStep ) {
+			{
+				auto mallinfo        = mspace_mallinfo( Win32AppContext.dlmallocator );
+				info.mallocAllocated = mallinfo.uordblks;
+				info.mallocFree      = mallinfo.fordblks;
+				info.mallocFootprint = info.mallocAllocated + info.mallocFree;
+			}
+
 			auto startTime = win32PerformanceCounter();
 			renderCommands = updateAndRender( gameMemory, &inputs, clampedElapsedTime );
 			auto gameTime = win32PerformanceCounter() - startTime;

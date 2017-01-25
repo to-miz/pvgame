@@ -14,7 +14,7 @@ struct IngameLog {
 	int32 count;
 };
 
-extern global IngameLog* GlobalIngameLog;
+extern global_var IngameLog* GlobalIngameLog;
 
 enum ErrorLevelValues {
 	ERROR,

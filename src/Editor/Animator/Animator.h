@@ -3,31 +3,31 @@
 #ifndef _ANIMATOR_H_INCLUDED_
 #define _ANIMATOR_H_INCLUDED_
 
-typedef int16 GroupId;
+typedef int32 GroupId;
 typedef trange< GroupId > GroupChildren;
 
 struct AnimatorNode {
-	vec3 translation;
-	vec3 rotation;
-	vec3 scale;
-	float length;
+	vec3 translation = {};
+	vec3 rotation    = {};
+	vec3 scale       = {1, 1, 1};
+	float length     = {};
 
-	int16 parentId;
-	int16 id;
-	AnimatorNode* parent;
+	int16 parentId       = -1;
+	int16 id             = -1;
+	AnimatorNode* parent = nullptr;
 
-	int32 childrenCount;
+	int32 childrenCount = {};
 
-	bool8 selected;
-	bool8 marked;
-	int16 voxel;
-	int16 frame;
-	GroupId group;
+	bool8 selected = {};
+	bool8 marked   = {};
+	int16 voxel    = -1;
+	int16 frame    = {};
+	GroupId group  = -1;
 
-	mat4 base;
-	mat4 world;
+	mat4 base  = {};
+	mat4 world = {};
 
-	short_string< 10 > name;
+	short_string< 10 > name = {};
 };
 
 struct AnimatorKeyframeData {
@@ -50,8 +50,8 @@ struct AnimatorKeyframe {
 struct AnimatorGroup {
 	StringView name;
 	GroupId id;
-	bool8 expanded;
 	GroupChildren children;
+	bool8 expanded;
 };
 struct AnimatorGroupDisplay {
 	GroupId group;
@@ -112,26 +112,28 @@ struct AnimatorVoxelCollection {
 };
 
 struct AnimatorAnimation {
-	Array< AnimatorNode > nodes;
-	Array< AnimatorKeyframe > keyframes;
+	std::vector< AnimatorNode > nodes;
+	std::vector< AnimatorKeyframe > keyframes;
 	short_string< 10 > name;
 	int32 id;
 };
+
+typedef std::vector< std::unique_ptr< AnimatorKeyframe > > AnimatorKeyframes;
+typedef std::unique_ptr< AnimatorNode > UniqueAnimatorNode;
+typedef std::vector< std::unique_ptr< AnimatorNode > > AnimatorNodes;
 
 struct AnimatorState {
 	ImmediateModeGui gui;
 	bool initialized;
 
 	ImGuiScrollableRegion scrollableRegion;
-	UArray< AnimatorKeyframe* > keyframes;
-	UArray< AnimatorKeyframe* > selected;
-	UArray< AnimatorGroup > groups;
-	UArray< AnimatorGroupDisplay > visibleGroups;
-	UArray< AnimatorNode* > baseNodes;
-	UArray< AnimatorNode* > nodes;
-	UArray< AnimatorAnimation > animations;
-	FixedSizeAllocator nodeAllocator;
-	FixedSizeAllocator keyframesAllocator;
+	AnimatorKeyframes keyframes;
+	std::vector< AnimatorKeyframe* > selected;
+	std::vector< AnimatorGroup > groups;
+	std::vector< AnimatorGroupDisplay > visibleGroups;
+	AnimatorNodes baseNodes;
+	AnimatorNodes nodes;
+	std::vector< AnimatorAnimation > animations;
 
 	AnimatorVoxelCollection voxels;
 	AnimatorAnimation* currentAnimation;

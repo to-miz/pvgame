@@ -1,5 +1,5 @@
 /*
-tm_utility v1.1.1a - public domain
+tm_utility v1.1.2 - public domain
 written by Tolga Mizrak 2016
 
 USAGE
@@ -14,6 +14,7 @@ NOTES
 	See comments at declarations for more info.
 
 HISTORY
+	v1.1.2  24.01.17 changed clamp to take two different types as min and max
 	v1.1.1a 02.10.16 fixed a minor warning of unused variable when asserts are not used
 	v1.1.1  02.10.16 added TMUT_NO_CSTYLE_TAGGED_UNION_MACROS and c-style tagged union macros
 	v1.1.0a 15.09.16 added an alternate implementation of countof
@@ -202,8 +203,8 @@ inline TMUT_CONSTEXPR const T& max( const T& a, const T& b, const T& c, Compare 
 
 template< class T >
 struct MinMaxPair {
-	T min;
-	T max;
+	T first;
+	T second;
 };
 
 template < class T >
@@ -222,10 +223,10 @@ template < class T >
 inline MinMaxPair< const T& > minmax( const T& a, const T& b, const T& c )
 {
 	MinMaxPair< const T& > mm = minmax( a, c );
-	if( b < mm.min ) {
-		return MinMaxPair< const T& >{b, mm.max};
-	} else if( mm.max < b ) {
-		return MinMaxPair< const T& >{mm.min, b};
+	if( b < mm.first ) {
+		return MinMaxPair< const T& >{b, mm.second};
+	} else if( mm.second < b ) {
+		return MinMaxPair< const T& >{mm.first, b};
 	}
 	return mm;
 }
@@ -234,10 +235,10 @@ template < class T, class Compare >
 inline MinMaxPair< const T& > minmax( const T& a, const T& b, const T& c, Compare comp )
 {
 	MinMaxPair< const T& > mm = minmax( a, c, comp );
-	if( comp( b, mm.min ) ) {
-		return MinMaxPair< const T& >{b, mm.max};
-	} else if( mm.max < b ) {
-		return MinMaxPair< const T& >{mm.min, b};
+	if( comp( b, mm.first ) ) {
+		return MinMaxPair< const T& >{b, mm.second};
+	} else if( mm.second < b ) {
+		return MinMaxPair< const T& >{mm.first, b};
 	}
 	return mm;
 }
@@ -246,19 +247,19 @@ template < class T >
 inline const T& median( const T& a, const T& b, const T& c )
 {
 	MinMaxPair< const T& > mm = minmax( a, b );
-	if( mm.max < c ) {
-		return mm.max;
-	} else if( mm.min < c ) {
+	if( mm.second < c ) {
+		return mm.second;
+	} else if( mm.first < c ) {
 		return c;
 	}
-	return mm.min;
+	return mm.first;
 }
 template < class T, class Compare >
 inline const T& median( const T& a, const T& b, const T& c, Compare comp )
 {
 	MinMaxPair< const T& > mm = minmax( a, b, comp );
-	if( comp( mm.max, c ) ) {
-		return mm.max;
+	if( comp( mm.second, c ) ) {
+		return mm.second;
 	} else if( comp( mm.min, c ) ) {
 		return c;
 	}
@@ -413,8 +414,8 @@ template < class T >
 void zeroMemory( T* dest, size_t count );
 
 // return clamped value in [lower, upper]
-template < class T >
-T clamp( T val, T lower, T upper );
+template < class T, class A, class B >
+T clamp( T val, A lower, B upper );
 // used most often with float, so a simple overload with default values
 float clamp( float val, float lower = 0, float upper = 1 );
 
@@ -682,8 +683,8 @@ inline ResultType promote_as_is_to( ValueType value )
 	return static_cast< ResultType >( unsignedof( value ) );
 }
 
-template < class T >
-inline T clamp( T val, T lower, T upper )
+template < class T, class A, class B >
+inline T clamp( T val, A lower, B upper )
 {
 	return ( val < lower ) ? ( lower ) : ( ( val > upper ) ? ( upper ) : ( val ) );
 }

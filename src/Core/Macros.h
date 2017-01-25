@@ -7,8 +7,8 @@
 #define megabytes( x ) ( ( x ) * 1024 * 1024 )
 #define gigabytes( x ) ( ( x ) * 1024 * 1024 * 1024 )
 
-// attribute to mark mutable global objects
-#define global
+// attribute to mark mutable global_var objects
+#define global_var
 
 #define InvalidDefaultCase                   \
 	default: {                               \

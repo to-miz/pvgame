@@ -1,5 +1,5 @@
 /*
-tm_arrayview.h v1.1.4 - public domain
+tm_arrayview.h v1.1.4a - public domain
 written by Tolga Mizrak 2016
 
 no warranty; use at your own risk
@@ -36,6 +36,7 @@ SWITCHES
 	    std::container usage and UninitializedArrayView usage will require code changes.
 
 HISTORY
+	v1.1.4  10.01.17 fixed a warning for signed/unsigned mismatch if tma_size_t is signed
 	v1.1.4  10.01.17 added a conversion operator overload from ArrayView< T > to
 	                 ArrayView< const T >
 	v1.1.3  07.12.16 added std::initializer_list assign to UninitializedArrayView
@@ -282,26 +283,27 @@ ArrayView< const T > makeArrayView( const std::initializer_list< T >& list )
 // makeRangeView family of functions
 // returns ArrayView of the subsequence [start, end) of the original container
 template < class Container >
-ArrayView< typename Container::value_type > makeRangeView( Container& container,
-														   tma_size_t start )
+ArrayView< typename Container::value_type > makeRangeView( Container& container, tma_size_t start )
 {
 	TMA_ASSERT( start >= 0 );
-	if( start >= container.size() ) {
-		start = static_cast< tma_size_t >( container.size() );
+	auto sz = static_cast< tma_size_t >( container.size() );
+	if( start >= sz ) {
+		start = sz;
 	}
-	return {container.data() + start, static_cast< tma_size_t >( container.size() - start )};
+	return {container.data() + start, sz - start};
 }
 template < class Container >
-ArrayView< typename Container::value_type > makeRangeView( Container& container,
-														   tma_size_t start, tma_size_t end )
+ArrayView< typename Container::value_type > makeRangeView( Container& container, tma_size_t start,
+                                                           tma_size_t end )
 {
 	TMA_ASSERT( start >= 0 );
 	TMA_ASSERT( end >= 0 );
-	if( start >= container.size() ) {
-		start = static_cast< tma_size_t >( container.size() );
+	tma_size_t sz = static_cast< tma_size_t >( container.size() );
+	if( start >= sz ) {
+		start = sz;
 	}
-	if( end >= container.size() ) {
-		end = static_cast< tma_size_t >( container.size() );
+	if( end >= sz ) {
+		end = sz;
 	}
 	TMA_ASSERT( start <= end );
 	return {container.data() + start, end - start};
@@ -311,21 +313,23 @@ template < class T, size_t N >
 ArrayView< T > makeRangeView( T ( &array )[N], tma_size_t start )
 {
 	TMA_ASSERT( start >= 0 );
-	if( start >= N ) {
-		start = static_cast< tma_size_t >( N );
+	const tma_size_t n = static_cast< tma_size_t >( N );
+	if( start >= n ) {
+		start = n;
 	}
-	return {array + start, static_cast< tma_size_t >( N - start )};
+	return {array + start, n - start};
 }
 template < class T, size_t N >
 ArrayView< T > makeRangeView( T ( &array )[N], tma_size_t start, tma_size_t end )
 {
 	TMA_ASSERT( start >= 0 );
 	TMA_ASSERT( end >= 0 );
-	if( start >= N ) {
-		start = static_cast< tma_size_t >( N );
+	const tma_size_t n = static_cast< tma_size_t >( N );
+	if( start >= n ) {
+		start = n;
 	}
-	if( end >= N ) {
-		end = static_cast< tma_size_t >( N );
+	if( end >= n ) {
+		end = n;
 	}
 	TMA_ASSERT( start <= end );
 	return {array + start, end - start};

@@ -27,20 +27,21 @@ set debug=1
 if "%2" == "release" ( set "debug=0" )
 if "%3" == "release" ( set "debug=0" )
 
-set "defines=/DNOMINMAX /DUNICODE /DGAME_FLIP_Z /D_CRT_SECURE_NO_WARNINGS"
+set "defines=/DNOMINMAX /DUNICODE /DGAME_FLIP_Z /D_CRT_SECURE_NO_WARNINGS /D_SCL_SECURE_NO_WARNINGS"
+set "cl_switches="
 
 if %debug% == 1 goto :is_debug
 if %debug% == 0 goto :is_release
 
 :is_debug
 set "defines=%defines% /DGAME_DEBUG=1 /D_DEBUG"
-set "cl_switches=/Od /Zi /MDd"
+set "cl_switches=%cl_switches% /Od /Zi /MDd"
 set "link_switches="
 goto :building
 
 :is_release
 set "defines=%defines% /DNDEBUG"
-set "cl_switches=/MD /GS- /Gy /fp:fast /Ox /Oy- /GL /Oi /O2"
+set "cl_switches=%cl_switches% /MD /GS- /Gy /fp:fast /Ox /Oy- /GL /Oi /O2"
 set "link_switches=/LTCG"
 goto :building
 

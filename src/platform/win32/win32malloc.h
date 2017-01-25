@@ -8,7 +8,7 @@
 #define ONLY_MSPACES 1
 #define USE_LOCKS 0
 #define REALLOC_ZERO_BYTES_FREES
-#define NO_MALLINFO 1
+#define NO_MALLINFO 0
 
 #if DLMALLOC_DEBUG_CHECKS
 	#define FOOTERS 1

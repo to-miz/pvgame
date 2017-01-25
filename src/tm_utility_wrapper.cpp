@@ -1,7 +1,6 @@
 #define TM_UTILITY_IMPLEMENTATION
 // #define TMUT_IMPLEMENT_CTYPE_FUNCTIONS
 #define TMUT_STRLEN strlen
-#define TM_USE_OWN_BEGIN_END
 #define TMUT_MEMCPY memcpy
 #define TMUT_MEMSET memset
 #define TMUT_MEMCMP memcmp
@@ -27,7 +26,15 @@
 #define TMUT_SAFE_COUNTOF_ALT
 typedef int32 tmut_size_t;
 typedef uintptr tmut_uintptr;
+
+#ifndef GAME_NO_STD
+	#define TMUT_NO_SWAP
+#else
+	#define TM_USE_OWN_BEGIN_END
+#endif
+
 #include <tm_utility.h>
+
 using utility::min;
 using utility::max;
 using utility::MinMaxPair;
@@ -38,18 +45,7 @@ using utility::median;
 #define FOR( x ) for( auto&& x )
 
 template < class T >
-int32 distance( T* a, T* b )
+int32 distance( T a, T b )
 {
 	return safe_truncate< int32 >( b - a );
-}
-
-template < class T, class U, class V = typename std::common_type< T, U >::type >
-const V& min( const T& a, const U& b )
-{
-	return ::min( (V)a, (V)b );
-}
-template < class T, class U, class V = typename std::common_type< T, U >::type >
-const V& max( const T& a, const U& b )
-{
-	return ::max( (V)a, (V)b );
 }

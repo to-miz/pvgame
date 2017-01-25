@@ -258,7 +258,7 @@ ImmediateModeGui defaultImmediateModeGui()
 	result.modalContainer   = -1;
 	return result;
 }
-extern global ImmediateModeGui* ImGui;
+extern global_var ImmediateModeGui* ImGui;
 
 void imguiLoadDefaultStyle( ImmediateModeGui* gui, PlatformServices* platform )
 {
@@ -1566,7 +1566,7 @@ static bool imguiPaddle( ImGuiHandle handle, float* value, float min, float max,
 			*innerValue = innerMax;
 		}
 		auto mm = minmax( min, max );
-		*value = clamp( *value, mm.min, mm.max );
+		*value = clamp( *value, mm.first, mm.second );
 		return true;
 	}
 	return false;
@@ -1607,7 +1607,7 @@ ImGuiCustomSliderState imguiCustomSlider( ImGuiHandle handle, float* value, floa
 
 	auto sliderArea = inner;
 	auto mm         = minmax( min, max );
-	*value          = clamp( *value, mm.min, mm.max );
+	*value          = clamp( *value, mm.first, mm.second );
 	sliderArea.right -= paddleWidth;
 	float paddlePosition = ( ( *value - min ) / ( max - min ) ) * ::width( sliderArea );
 
@@ -1961,7 +1961,7 @@ bool imguiSlider( ImGuiHandle handle, float* value, float min, float max, rectfa
 
 	auto changed     = false;
 	auto mm          = minmax( min, max );
-	*value           = clamp( *value, mm.min, mm.max );
+	*value           = clamp( *value, mm.first, mm.second );
 	auto paddleWidth = ::width( style->rects[SliderKnob] );
 	auto sliderArea  = rect;
 	sliderArea.right -= paddleWidth;
