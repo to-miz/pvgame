@@ -126,6 +126,8 @@ struct AnimatorState {
 	ImmediateModeGui gui;
 	bool initialized;
 
+	int32 fileMenu;
+
 	ImGuiScrollableRegion scrollableRegion;
 	AnimatorKeyframes keyframes;
 	std::vector< AnimatorKeyframe* > selected;

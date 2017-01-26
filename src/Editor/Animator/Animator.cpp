@@ -1,9 +1,10 @@
-constexpr const float PaddleWidth            = 5;
-constexpr const float PaddleHeight           = 10;
-constexpr const float KeyframePrecision      = 1.0f / 5.0f;
-constexpr const float PropertiesColumnWidth  = 200;
-constexpr const float NamesWidth             = 100;
-constexpr const float RegionHeight           = 200;
+constexpr const float PaddleWidth           = 5;
+constexpr const float PaddleHeight          = 10;
+constexpr const float KeyframePrecision     = 1.0f / 5.0f;
+constexpr const float PropertiesColumnWidth = 200;
+constexpr const float NamesWidth            = 100;
+constexpr const float RegionHeight          = 200;
+constexpr const float MenuHeight            = 18;
 
 static const vec3 AnimatorInitialRotation = {0, -0.2f, 0};
 constexpr const float AnimatorMinScale = 0.1f;
@@ -49,6 +50,10 @@ int32 makeAnimatorKeyframeId( int16 ownerId, int32 index )
 {
 	assert( index >= 0 && index < 256 );
 	return (int32)( (uint32)ownerId << 8 | (uint32)index );
+}
+GroupId getAnimatorParentGroup( GroupId id )
+{
+	return (int32)( (uint32)id & 0xFFFFFF00u );
 }
 GroupId addAnimatorGroups( AnimatorState* animator, StringView parentName,
                            Array< const StringView > childNames, int16 ownerId )
@@ -126,9 +131,9 @@ AnimatorKeyframes::iterator lowerBoundKeyframeIt( AnimatorState* animator, float
 {
 	auto first = animator->keyframes.begin();
 	auto last  = animator->keyframes.end();
-	auto it    = lower_bound( first, last, t, []( const AnimatorKeyframes::value_type& keyframe,
-	                                           float t ) { return keyframe->t < t; } );
 	if( first != last ) {
+		auto it = lower_bound( first, last, t, []( const AnimatorKeyframes::value_type& keyframe,
+		                                           float t ) { return keyframe->t < t; } );
 		if( it == last ) {
 			--it;
 		}
@@ -136,7 +141,8 @@ AnimatorKeyframes::iterator lowerBoundKeyframeIt( AnimatorState* animator, float
 			return it;
 		}
 		if( it != first ) {
-			while( it > first && ( *it )->group != group ) {
+			--it;
+			while( it != first && ( *it )->group != group ) {
 				--it;
 			}
 			if( it == first && ( *it )->group != group ) {
@@ -146,9 +152,8 @@ AnimatorKeyframes::iterator lowerBoundKeyframeIt( AnimatorState* animator, float
 			it = last;
 		}
 		return it;
-	} else {
-		return it;
 	}
+	return last;
 }
 AnimatorKeyframe* lowerBoundKeyframe( AnimatorState* animator, float t, GroupId group )
 {
@@ -195,12 +200,12 @@ AnimatorNode getCurrentFrameNode( AnimatorState* animator, AnimatorNode* node )
 	auto base   = find_first_where( animator->baseNodes, entry->id == node->id )->get();
 	auto result = *base;
 
-	auto group            = find_first_where( animator->groups, entry.id == node->group );
-	GroupId translationId = group->id + 1;
-	GroupId rotationId    = group->id + 2;
-	GroupId scaleId       = group->id + 3;
-	GroupId frameId       = group->id + 4;
-	assert( width( group->children ) == 4 );
+	assert_init( auto group = find_first_where( animator->groups, entry.id == node->group ),
+	             width( group->children ) == 4 );
+	GroupId translationId = node->group + 1;
+	GroupId rotationId    = node->group + 2;
+	GroupId scaleId       = node->group + 3;
+	GroupId frameId       = node->group + 4;
 
 	auto translationKeyframe =
 	    getInterpolatedKeyframe( animator, animator->currentFrame, translationId );
@@ -221,22 +226,80 @@ AnimatorNode getCurrentFrameNode( AnimatorState* animator, AnimatorNode* node )
 }
 AnimatorNode toAbsoluteNode( const AnimatorNode* base, const AnimatorNode* rel )
 {
-	AnimatorNode result = *base;
+	auto result = *base;
 	result.translation += rel->translation;
 	result.rotation += rel->rotation;
 	result.scale = multiplyComponents( result.scale, rel->scale );
 	result.frame += rel->frame;
+
+	result.parentId = rel->parentId;
+	result.id       = rel->id;
+	result.parent   = rel->parent;
 	return result;
 }
 AnimatorNode toRelativeNode( const AnimatorNode* base, const AnimatorNode* abs )
 {
-	AnimatorNode result = *base;
+	auto result = *base;
 	result.translation  = abs->translation - base->translation;
 	result.rotation     = abs->rotation - base->rotation;
 	result.scale.x      = safeDivide( abs->scale.x, base->scale.x, 1 );
 	result.scale.y      = safeDivide( abs->scale.y, base->scale.y, 1 );
 	result.scale.z      = safeDivide( abs->scale.z, base->scale.z, 1 );
 	result.frame        = abs->frame - base->frame;
+
+	result.parentId = abs->parentId;
+	result.id       = abs->id;
+	result.parent   = abs->parent;
+	return result;
+}
+AnimatorKeyframe toAbsoluteKeyframe( const AnimatorNode* base, const AnimatorKeyframe* keyframe )
+{
+	auto result = *keyframe;
+	switch( result.data.type ) {
+		case AnimatorKeyframeData::type_translation: {
+			result.data.translation += base->translation;
+			break;
+		}
+		case AnimatorKeyframeData::type_rotation: {
+			result.data.rotation += base->rotation;
+			break;
+		}
+		case AnimatorKeyframeData::type_scale: {
+			result.data.scale = multiplyComponents( base->scale, result.data.scale );
+			break;
+		}
+		case AnimatorKeyframeData::type_frame: {
+			result.data.frame += base->frame;
+			break;
+		}
+		InvalidDefaultCase;
+	}
+	return result;
+}
+AnimatorKeyframe toRelativeKeyframe( const AnimatorNode* base, const AnimatorKeyframe* keyframe )
+{
+	auto result = *keyframe;
+	switch( result.data.type ) {
+		case AnimatorKeyframeData::type_translation: {
+			result.data.translation -= base->translation;
+			break;
+		}
+		case AnimatorKeyframeData::type_rotation: {
+			result.data.rotation -= base->rotation;
+			break;
+		}
+		case AnimatorKeyframeData::type_scale: {
+			result.data.scale.x = safeDivide( result.data.scale.x, base->scale.x, 1 );
+			result.data.scale.y = safeDivide( result.data.scale.y, base->scale.y, 1 );
+			result.data.scale.z = safeDivide( result.data.scale.z, base->scale.z, 1 );
+			break;
+		}
+		case AnimatorKeyframeData::type_frame: {
+			result.data.frame -= base->frame;
+			break;
+		}
+		InvalidDefaultCase;
+	}
 	return result;
 }
 
@@ -379,7 +442,10 @@ void openAnimation( AnimatorState* animator, AnimatorAnimation* animation )
 	animator->keyframes.end();
 	animator->keyframes.reserve( animation->keyframes.size() );
 	FOR( keyframe : animation->keyframes ) {
-		animator->keyframes.push_back( std::make_unique< AnimatorKeyframe >( keyframe ) );
+		auto base = find_first_where( animator->baseNodes,
+		                              entry->group == getAnimatorParentGroup( keyframe.group ) );
+		animator->keyframes.push_back(
+		    std::make_unique< AnimatorKeyframe >( toAbsoluteKeyframe( base->get(), &keyframe ) ) );
 	}
 }
 
@@ -399,7 +465,9 @@ void closeAnimation( AnimatorState* animator )
 
 	animation->keyframes.resize( animator->keyframes.size() );
 	zip_for( animation->keyframes, animator->keyframes ) {
-		*first = **second;
+		auto base = find_first_where(
+		    animator->baseNodes, entry->group == getAnimatorParentGroup( second->get()->group ) );
+		*first = toRelativeKeyframe( base->get(), second->get() );
 	}
 	animator->keyframes.clear();
 
@@ -623,6 +691,10 @@ void doKeyframesSelection( ImGuiHandle handle, AppData* app, GameInputs* inputs,
 								FOR( visible : animator->visibleGroups ) {
 									if( visible.group >= 0 ) {
 										groups.push_back( visible.group );
+										auto children = visible.children;
+										for( auto i = children.min; i < children.max; ++i ) {
+											groups.push_back( i );
+										}
 									}
 								}
 							} else {
@@ -840,21 +912,23 @@ void doKeyframesControl( AppData* app, GameInputs* inputs )
 	auto animator = &app->animatorState;
 	animator->keyframesMoved = false;
 
-	auto layout = imguiBeginColumn( NamesWidth );
-	imguiAddItem( NamesWidth, ImGui->style.innerPadding * 2 + stringHeight( ImGui->font ) );
-	doKeyframesNames( app, inputs, NamesWidth, RegionHeight );
+	auto layout             = imguiBeginColumn( NamesWidth );
+	const auto namesHeight  = ImGui->style.innerPadding * 2 + stringHeight( ImGui->font );
+	const auto regionHeight = RegionHeight - namesHeight;
+	imguiAddItem( NamesWidth, namesHeight );
+	doKeyframesNames( app, inputs, NamesWidth, regionHeight );
 
 	const auto regionWidth = app->width - NamesWidth;
 	imguiNextColumn( &layout, regionWidth );
 
 	auto width                     = animator->duration + regionWidth;
-	animator->scrollableRegion.dim = {width, RegionHeight};
+	animator->scrollableRegion.dim = {width, regionHeight};
 
 	auto handle = imguiMakeHandle( &animator->duration, ImGuiControlType::Custom );
 
 	doKeyframesFrameNumbers( handle, app, inputs, regionWidth );
 	auto scrollable =
-	    imguiBeginScrollableRegion( &animator->scrollableRegion, regionWidth, RegionHeight, true );
+	    imguiBeginScrollableRegion( &animator->scrollableRegion, regionWidth, regionHeight, true );
 	bool clickedAny = false;
 	FOR( visible : animator->visibleGroups ) {
 		if( doKeyframesDisplay( handle, app, inputs, visible.group ) ) {
@@ -987,7 +1061,7 @@ void doAnimatorMenu( AppData* app, GameInputs* inputs, rectfarg rect )
 				}
 				if( imguiCombo(
 				        comboHandle, (const void*)animator->nodes.data(),
-				        (int32)sizeof( AnimatorNode* ), (int32)animator->nodes.size(), &index,
+				        (int32)sizeof( UniqueAnimatorNode* ), (int32)animator->nodes.size(), &index,
 				        []( const void* entry ) -> StringView {
 					        assert_alignment( entry, alignof( UniqueAnimatorNode* ) );
 					        auto node = (UniqueAnimatorNode*)entry;
@@ -1030,6 +1104,7 @@ void doAnimatorMenu( AppData* app, GameInputs* inputs, rectfarg rect )
 				*selected = node;
 			}
 		}
+		imguiEndDropGroup();
 	}
 
 	{
@@ -1132,6 +1207,7 @@ void doAnimatorMenu( AppData* app, GameInputs* inputs, rectfarg rect )
 				// TODO: ask user whether to keep changes
 				closeAnimation( animator );
 			}
+			imguiEndDropGroup();
 		}
 	}
 	if( animator->currentAnimation && editor->clickedNode
@@ -1777,6 +1853,7 @@ void doAnimator( AppData* app, GameInputs* inputs, bool focus, float dt )
 		imguiLoadDefaultStyle( gui, &app->platform );
 
 		animator->editor.contextMenu = imguiGenerateContainer( gui, {}, true );
+		animator->fileMenu           = imguiGenerateContainer( gui, {}, true );
 
 		auto allocator           = &app->stackAllocator;
 		const auto MaxNodes      = 10;
@@ -1825,12 +1902,27 @@ void doAnimator( AppData* app, GameInputs* inputs, bool focus, float dt )
 	rectf guiBounds = {0, 0, app->width, app->height};
 	imguiBind( gui, renderer, font, inputs, app->stackAllocator.ptr, guiBounds );
 
-	auto keyframesControlHeight = ( animator->currentAnimation ) ? ( RegionHeight ) : ( 0 );
-	auto mainRowHeight  = app->height - keyframesControlHeight - 30;
-	auto editorWidth    = app->width - PropertiesColumnWidth;
-	auto layout         = imguiBeginColumn( PropertiesColumnWidth );
+	auto keyframesControlHeight =
+	    ( animator->currentAnimation ) ? ( RegionHeight + MenuHeight ) : ( 0 );
+	auto mainRowHeight = app->height - keyframesControlHeight - ImGui->style.innerPadding * 2;
+	auto editorWidth   = app->width - PropertiesColumnWidth;
+	auto layout        = imguiBeginColumn( app->width );
 
-	doAnimatorMenu( app, inputs, RectSetHeight( imguiCurrentContainer()->rect, mainRowHeight ) );
+	if( imguiMenu( true ) ) {
+		imguiMenuItem( "File", animator->fileMenu );
+		imguiMenuItem( "Edit" );
+		imguiMenuItem( "View" );
+		imguiMenuItem( "Preferences" );
+		imguiMenuItem( "Help" );
+	}
+
+	imguiEndColumn( &layout );
+	imguiNextColumn( &layout, PropertiesColumnWidth );
+
+	auto container = imguiCurrentContainer();
+	auto menuRect =
+	    RectSetHeight( translate( container->rect, container->addPosition ), mainRowHeight );
+	doAnimatorMenu( app, inputs, menuRect );
 
 	imguiNextColumn( &layout, editorWidth );
 	auto editorRect = imguiAddItem( editorWidth, mainRowHeight );
@@ -1842,11 +1934,19 @@ void doAnimator( AppData* app, GameInputs* inputs, bool focus, float dt )
 		doKeyframesControl( app, inputs );
 	}
 
+	if( imguiContextMenu( animator->fileMenu ) ) {
+		imguiContextMenuEntry( "New" );
+		imguiContextMenuEntry( "Open" );
+		imguiContextMenuEntry( "Save" );
+		imguiContextMenuEntry( "Save As" );
+		imguiEndContainer();
+	}
+
+	imguiUpdate( dt );
+	imguiFinalize();
+
 #if 1
 	// debug
 	debugPrintln( "AnimatorKeyframes Count: {}", animator->keyframes.size() );
 #endif
-
-	imguiUpdate( dt );
-	imguiFinalize();
 }

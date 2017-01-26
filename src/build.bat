@@ -55,8 +55,7 @@ if "%2" == "" goto :full_build
 if "%2" == "dll" goto :dll_build
 
 :full_build
-cl %cl_switches% /W4 /Oi /FC /EHsc- /I%project_path%/lib/dlmalloc/ %project_path%/src/platform/win32/win32malloc.cpp -c /nologo
-cl %platform_defines% %defines% %cl_switches% /W4 /Oi %includes% /FC /EHsc- %project_path%/src/platform/win32/win32main.cpp win32malloc.obj /link user32.lib gdi32.lib opengl32.lib Comdlg32.lib Shlwapi.lib %link_switches% /NODEFAULTLIB:MSVCRT /SUBSYSTEM:WINDOWS /OUT:game.exe /INCREMENTAL:NO /nologo
+cl %platform_defines% %defines% %cl_switches% /W4 /Oi %includes% /FC /EHsc- %project_path%/src/platform/win32/win32main.cpp %project_path%/src/platform/win32/win32malloc.cpp /link user32.lib gdi32.lib opengl32.lib Comdlg32.lib Shlwapi.lib %link_switches% /SUBSYSTEM:WINDOWS /OUT:game.exe /INCREMENTAL:NO /nologo
 if "%2" == "exe" goto :end
 
 :dll_build

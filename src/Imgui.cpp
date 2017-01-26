@@ -544,11 +544,15 @@ bool imguiHasMyChildFocus( ImGuiHandle handle )
 	return focus == handle;
 }
 bool imguiHasCapture( ImGuiHandle handle ) { return ImGui->capture == handle; }
-bool imguiIsHover( ImGuiHandle handle )
+bool imguiIsHover( int32 container )
 {
 	return ( ImGui->processInputs )
-	       && ( ( ImGui->modalContainer < 0 && ImGui->hoverContainer == handle.container )
-	            || ( ImGui->modalContainer == handle.container ) );
+	       && ( ( ImGui->modalContainer < 0 && ImGui->hoverContainer == container )
+	            || ( ImGui->modalContainer == container ) );
+}
+bool imguiIsHover( ImGuiHandle handle )
+{
+	return imguiIsHover( handle.container );
 }
 void imguiCapture( ImGuiHandle handle, uint8 captureKey = KC_LButton )
 {
@@ -805,8 +809,18 @@ rectf imguiAddItem( float width, float height )
 	if( result.right > container->xMax ) {
 		container->xMax = result.right;
 	}
+	container->lastRect = result;
 	return result;
 }
+rectf imguiAddItemSameLine( float width, float height )
+{
+	auto container         = imguiCurrentContainer();
+	container->addPosition.x = container->lastRect.right;
+	container->addPosition.y = container->lastRect.top;
+	auto result = imguiAddItem( width, height );
+	return result;
+}
+
 void imguiSameLine( int32 count )
 {
 	auto container             = imguiCurrentContainer();
@@ -970,6 +984,74 @@ static bool imguiKeypressButton( ImGuiHandle handle, rectfarg rect )
 	return false;
 }
 
+void imguiShowContainerAt( int32 containerIndex, vec2arg position )
+{
+	auto container  = imguiGetContainer( containerIndex );
+	container->rect = RectWH( position, dimensions( container->rect ) );
+	container->setHidden( false );
+	container->setMinimized( false );
+	imguiBringToFront( safe_truncate< int8 >( containerIndex ) );
+}
+
+bool imguiMenu( bool show )
+{
+	if( !show ) {
+		return false;
+	}
+	auto style     = &ImGui->style;
+	auto renderer  = ImGui->renderer;
+	auto container = imguiCurrentContainer();
+
+	auto padding = style->innerPadding;
+	auto rect    = RectSetHeight( container->rect, 2 * padding + stringHeight( ImGui->font ) );
+	// set container->lastRect so that imguiAddItemSameLine puts first item inside the menu
+	container->lastRect.right = rect.left;
+	container->lastRect.top   = rect.top;
+
+	RENDER_COMMANDS_STATE_BLOCK( renderer ) {
+		renderer->color = multiply( renderer->color, 0x80000000 );
+		setTexture( renderer, 0, null );
+		addRenderCommandSingleQuad( renderer, rect );
+	}
+
+	return true;
+}
+bool imguiMenuItem( ImGuiHandle handle, StringView text, int32 containerIndex = -1 )
+{
+	auto style     = &ImGui->style;
+	auto renderer  = ImGui->renderer;
+	auto font      = ImGui->font;
+	auto inputs   = ImGui->inputs;
+
+	auto width   = stringWidth( font, text );
+	auto padding = style->innerPadding;
+
+	auto rect = imguiAddItemSameLine( width + padding, 2 * padding + stringHeight( font ) );
+
+	auto textColor = renderer->color;
+	if( isPointInside( rect, inputs->mouse.position ) ) {
+		renderer->color = multiply( renderer->color, 0xFF6D8CB6 );
+		setTexture( renderer, 0, null );
+		addRenderCommandSingleQuad( renderer, rect );
+	}
+	renderer->color = textColor;
+	renderTextVCenteredClipped( renderer, font, text, rect );
+
+	if( imguiKeypressButton( handle, rect ) ) {
+		if( containerIndex >= 0 ) {
+			imguiShowContainerAt( containerIndex, {rect.left, rect.bottom} );
+			ImGui->processInputs = false;
+		}
+		return true;
+	}
+	return false;
+}
+bool imguiMenuItem( StringView text, int32 containerIndex = -1 )
+{
+	auto sh = imguiMakeStringHandle( text );
+	return imguiMenuItem( sh.handle, sh.string, containerIndex );
+}
+
 bool imguiContextMenu( int32 containerIndex )
 {
 	auto container = imguiGetContainer( containerIndex );
@@ -990,15 +1072,17 @@ bool imguiContextMenu( int32 containerIndex )
 
 	rectf rect = container->rect;
 
-	if( isKeyPressed( inputs, KC_LButton ) && !isPointInside( rect, inputs->mouse.position ) ) {
+	if( ImGui->processInputs && isKeyPressed( inputs, KC_LButton )
+	    && ( !isPointInside( rect, inputs->mouse.position ) || !imguiIsHover( containerIndex ) ) ) {
+
 		container->setHidden( true );
 		return false;
 	}
-	auto handle    = imguiSetCurrentContainer( container );
+	auto handle = imguiSetCurrentContainer( container );
 	imguiBringToFront( handle.container );
 
 	imguiRenderSortableBlock( container->z );
-	auto bgColor = multiply( renderer->color, 0x80222D39 );
+	auto bgColor = multiply( renderer->color, 0xFF222D39 );
 
 	setTexture( renderer, 0, null );
 	auto meshCommand  = addRenderCommandMesh( renderer, 4, 6 );
@@ -1047,11 +1131,7 @@ bool imguiContextMenuEntry( StringView text )
 }
 void imguiShowContextMenu( int32 containerIndex, vec2arg position )
 {
-	auto container = imguiGetContainer( containerIndex );
-	container->rect = RectWH( position, dimensions( container->rect ) );
-	container->setHidden( false );
-	container->setMinimized( false );
-	imguiBringToFront( safe_truncate< int8 >( containerIndex ) );
+	imguiShowContainerAt( containerIndex, position );
 }
 
 bool imguiEditbox( ImGuiHandle handle, StringView name, char* data, int32* length, int32 size,
@@ -2200,23 +2280,26 @@ void imguiFitContainerToSize()
 }
 void imguiNextColumn( ImGuiBeginColumnResult* columns, float width )
 {
-	auto container                = imguiCurrentContainer();
-	auto lastColumnWidth          = columns->lastColumnWidth;
-	columns->lastColumnWidth      = width;
-	container->rect               = columns->rect;
-	container->rect.left          = columns->x + lastColumnWidth + ImGui->style.innerPadding;
-	container->rect.right         = container->rect.left + width;
-	container->addPosition.x      = container->rect.left;
-	container->addPosition.y      = columns->y;
-	container->rect = RectSetWidth( container->rect, width );
-	columns->x      = container->rect.left;
+	auto container           = imguiCurrentContainer();
+	auto lastColumnWidth     = columns->lastColumnWidth;
+	columns->lastColumnWidth = width;
+	container->rect          = columns->rect;
+	container->rect.left     = columns->x + lastColumnWidth + ImGui->style.innerPadding;
+	container->rect.right    = container->rect.left + width;
+	container->addPosition.x = container->rect.left;
+	container->addPosition.y = columns->y;
+	container->rect          = RectSetWidth( container->rect, width );
+	columns->x               = container->rect.left;
 }
 void imguiEndColumn( ImGuiBeginColumnResult* columns )
 {
-	auto container         = imguiCurrentContainer();
-	container->rect        = columns->rect;
-	container->rect.top    = container->addPosition.y;
-	container->addPosition = container->rect.leftTop;
+	auto container           = imguiCurrentContainer();
+	container->rect          = columns->rect;
+	container->rect.top      = container->addPosition.y;
+	container->addPosition   = container->rect.leftTop;
+	columns->lastColumnWidth = 0;
+	columns->x               = container->addPosition.x;
+	columns->y               = container->addPosition.y;
 }
 
 struct ImGuiListboxItem {
