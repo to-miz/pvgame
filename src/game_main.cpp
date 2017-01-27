@@ -115,6 +115,10 @@ constexpr const float WallslideFrictionCoefficient = 0.05f;
 
 constexpr const float TileWidth  = 16.0f;
 constexpr const float TileHeight = 16.0f;
+
+constexpr const float DeltaToFrameTime = 60.0f / 1000.0f;  // constant to convert elapsed
+                                                           // miliseconds to number between 0 and 1,
+                                                           // where 1 = 1/60 of a second
 }
 
 struct DebugValues;
@@ -1142,12 +1146,27 @@ void processControlSystem( GameState* game, ControlSystem* control,
 	}
 }
 
-enum class AppFocus { Game, Voxel, TexturePack, Animator };
+enum class AppFocus { Game, Voxel, TexturePack, Animator, Easing };
 
 #include "PhysicsHitTest.cpp"
 
 #include "Editor/TexturePack/TexturePack.h"
 #include "Editor/Animator/Animator.h"
+
+struct EasingState {
+	bool initialized;
+	ImmediateModeGui gui;
+	float t;
+	float lastT;
+
+	vec2 position;
+	vec2 velocity;
+	float duration;
+
+	enum { Count = 100 };
+	float yPositions0[Count];
+	float yPositions1[Count];
+};
 
 struct AppData {
 	PlatformServices platform;
@@ -1185,6 +1204,7 @@ struct AppData {
 	GameState gameState;
 	TexturePackState texturePackState;
 	AnimatorState animatorState;
+	EasingState easingState;
 
 	bool mouseLocked;
 	bool displayDebug;
@@ -2797,6 +2817,149 @@ static void visitBlock( Array< ProfilingInfo > infos, ProfilingBlock* block, int
 	}
 }
 
+void doEasing( AppData* app, GameInputs* inputs, bool focus, float dt )
+{
+	if( !focus ) {
+		return;
+	}
+
+	auto easing   = &app->easingState;
+	auto gui      = &easing->gui;
+	auto renderer = &app->renderer;
+	auto font     = &app->font;
+
+	const vec2 InitialPosition   = {0, 0};
+	const float SimHeight        = 200;
+	auto reset = [=]() {
+		easing->position = InitialPosition;
+		easing->velocity = {};
+	};
+
+	imguiBind( gui );
+	if( !easing->initialized ) {
+		*gui = defaultImmediateModeGui();
+		imguiLoadDefaultStyle( gui, &app->platform );
+
+		reset();
+
+		easing->initialized = true;
+	}
+	imguiBind( gui, renderer, font, inputs, app, {0, 0, app->width, app->height} );
+	setProjection( renderer, ProjectionType::Orthogonal );
+
+	renderer->color = Color::White;
+	renderer->clearColor = 0xFF1B2B34;
+	imguiEditbox( "Duration", &easing->duration );
+
+	imguiSameLine( 2 );
+	auto simRect = imguiAddItem( 200, SimHeight );
+	auto wipRect = imguiAddItem( 200, SimHeight );
+
+	auto frameDelta = dt * GameConstants::DeltaToFrameTime;
+	easing->t += frameDelta;
+	if( easing->t > easing->duration ) {
+		easing->t     = 0;
+		easing->lastT = 0;
+		reset();
+	}
+
+	if( easing->t - easing->lastT >= 1.0f ) {
+		easing->velocity.y += GameConstants::Gravity * 2;
+		easing->lastT = easing->t;
+	}
+	easing->position += easing->velocity * frameDelta;
+	if( easing->position.y >= SimHeight ) {
+		easing->velocity.y = easing->velocity.y * -0.5f;
+		easing->position.y = SimHeight;
+	}
+
+	imguiSameLine( 3 );
+	auto visualizer0        = imguiAddItem( 200, 200 );
+	auto visualizer1        = imguiAddItem( 200, 200 );
+	auto combinedVisualizer = imguiAddItem( 200, 200 );
+
+	auto t                      = easing->t / easing->duration;
+	auto tIndex                 = ( int32 )( t * countof( easing->yPositions0 ) );
+	tIndex                      = clamp( tIndex, 0, countof( easing->yPositions0 ) - 1 );
+	easing->yPositions0[tIndex] = ( easing->position.y - InitialPosition.y ) / SimHeight;
+
+	auto easingWip = []( float t ) -> float {
+		if( t <= 0.4f ) {
+			t /= 0.4f;
+			return t * t;
+		} else if( t < 0.8f ) {
+			t -= 0.4f;
+			t /= ( 0.8f - 0.4f );
+			t *= 2;
+			t -= 1;
+			return ( t * t ) * 0.25f + 0.75f;
+		} else {
+			t -= 0.8f;
+			t /= ( 1 - 0.8f );
+			t *= 2;
+			t -= 1;
+			return ( t * t ) * 0.25f * 0.25f + 1 - ( 0.25f * 0.25f );
+		}
+		return 0;
+	};
+
+	easing->yPositions1[tIndex] = easingWip( t );
+
+	auto renderVisualizer = []( LineMeshStream* stream, const float* vals, rectfarg rect ) {
+		assert( vals );
+		if( !hasCapacity( stream, EasingState::Count, EasingState::Count + 1 ) ) {
+			OutOfMemory();
+			return;
+		}
+		for( auto i = 0; i < EasingState::Count; ++i ) {
+			auto t   = i / (float)EasingState::Count;
+			vec3 cur = {rect.left + t * width( rect ), rect.top + vals[i] * height( rect ), 0};
+			pushLineStripVertexUnchecked( stream, cur.x, cur.y, cur.z );
+		}
+		pushEndLineStripUnchecked( stream );
+	};
+
+	if( isPointInside( visualizer0, inputs->mouse.position ) ) {
+		auto mouse = inputs->mouse.position - visualizer0.leftTop;
+		auto x = mouse.x / width( visualizer0 );
+		auto number = toNumberString( x );
+		renderer->color = Color::White;
+		renderText( renderer, font, number,
+		            RectWH( inputs->mouse.position.x, inputs->mouse.position.y - 16, 0, 0 ) );
+	}
+
+	setTexture( renderer, 0, null );
+	MESH_STREAM_BLOCK( stream, renderer ) {
+		stream->color = Color::Red;
+		vec2 simPos   = easing->position + simRect.leftTop;
+		simPos.x += width( simRect ) * 0.5f;
+		pushQuad( stream, RectHalfSize( simPos, 4, 4 ) );
+
+		stream->color = Color::Blue;
+		vec2 wipPos   = {center( wipRect ).x,
+		               easing->yPositions1[tIndex] * height( wipRect ) + wipRect.top};
+		pushQuad( stream, RectHalfSize( wipPos, 4, 4 ) );
+	}
+	LINE_MESH_STREAM_BLOCK( stream, renderer ) {
+		stream->color = Color::Red;
+		renderVisualizer( stream, easing->yPositions0, visualizer0 );
+		stream->color = Color::Blue;
+		renderVisualizer( stream, easing->yPositions1, visualizer1 );
+		stream->color = Color::Red;
+		renderVisualizer( stream, easing->yPositions0, combinedVisualizer );
+		stream->color = Color::Blue;
+		renderVisualizer( stream, easing->yPositions1, combinedVisualizer );
+		if( isPointInside( visualizer0, inputs->mouse.position ) ) {
+			stream->color = Color::Blue;
+			pushLine( stream, {inputs->mouse.position.x, visualizer0.top, 0},
+			          {inputs->mouse.position.x, visualizer0.bottom, 0} );
+		}
+	}
+
+	imguiUpdate( dt );
+	imguiFinalize();
+}
+
 GAME_STORAGE struct RenderCommands* updateAndRender( void* memory, struct GameInputs* inputs,
                                                      float dt );
 UPDATE_AND_RENDER( updateAndRender )
@@ -2854,6 +3017,9 @@ UPDATE_AND_RENDER( updateAndRender )
 	if( isKeyPressed( inputs, KC_F4 ) ) {
 		app->focus = AppFocus::Animator;
 	}
+	if( isKeyPressed( inputs, KC_F8 ) ) {
+		app->focus = AppFocus::Easing;
+	}
 	if( isHotkeyPressed( inputs, KC_Key_R, KC_Control ) ) {
 		renderer->lightPosition = app->voxelState.camera.position;
 	}
@@ -2891,6 +3057,7 @@ UPDATE_AND_RENDER( updateAndRender )
 	}
 	doTexturePack( app, inputs, app->focus == AppFocus::TexturePack, dt );
 	doAnimator( app, inputs, app->focus == AppFocus::Animator, dt );
+	doEasing( app, inputs, app->focus == AppFocus::Easing, dt );
 
 	addRenderCommandMesh( renderer, toMesh( debug_MeshStream ) );
 

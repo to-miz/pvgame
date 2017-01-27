@@ -35,7 +35,7 @@ void clearSelectedKeyframes( AnimatorState* animator )
 		frame->selected = false;
 	}
 	animator->selected.clear();
-	animator->selectionRectValid = false;
+	animator->flags.selectionRectValid = false;
 	animator->clickedGroup       = -1;
 }
 void clearSelectedNodes( AnimatorState* animator )
@@ -88,7 +88,7 @@ void populateVisibleGroups( AnimatorState* animator )
 {
 	animator->visibleGroups.clear();
 	animator->visibleGroups.push_back( {-1, -1} );
-	if( animator->timelineRootExpanded ) {
+	if( animator->flags.timelineRootExpanded ) {
 		for( auto it = animator->groups.begin(), end = animator->groups.end(); it < end; ++it ) {
 			animator->visibleGroups.push_back( {it->id, it->children} );
 			if( !it->expanded && it->children ) {
@@ -502,7 +502,7 @@ void doKeyframesNames( AppData* app, GameInputs* inputs, float width, float heig
 
 	renderer->color = 0xFF1D3E81;
 	setTexture( renderer, 0, null );
-	addRenderCommandSingleQuad( renderer, inner );
+	addRenderCommandSingleQuad( renderer, rect );
 
 	bool repopulateVisibleGroups = false;
 	renderer->color              = Color::White;
@@ -517,7 +517,7 @@ void doKeyframesNames( AppData* app, GameInputs* inputs, float width, float heig
 			setTexture( renderer, 0, null );
 			renderer->color = Color::White;
 			int32 typeIndex = ExpandBox;
-			if( ( !group && animator->timelineRootExpanded ) || ( group && group->expanded ) ) {
+			if( ( !group && animator->flags.timelineRootExpanded ) || ( group && group->expanded ) ) {
 				typeIndex = RetractBox;
 			}
 			auto texCoords = makeQuadTexCoords( style->texCoords[typeIndex] );
@@ -530,7 +530,7 @@ void doKeyframesNames( AppData* app, GameInputs* inputs, float width, float heig
 				if( group ) {
 					group->expanded = !group->expanded;
 				} else {
-					animator->timelineRootExpanded = !animator->timelineRootExpanded;
+					animator->flags.timelineRootExpanded = !animator->flags.timelineRootExpanded;
 				}
 				repopulateVisibleGroups = true;
 			}
@@ -570,8 +570,9 @@ void doKeyframesFrameNumbers( ImGuiHandle handle, AppData* app, GameInputs* inpu
 	auto x              = fmod( -offset, distance ) + inner.left;
 
 	handle.shortIndex = 1;
-	if( imguiHasCapture( handle ) || ( isPointInside( inner, inputs->mouse.position )
-	                                   && isKeyPressed( inputs, KC_LButton ) ) ) {
+	auto leftButton   = isKeyPressed( inputs, KC_LButton );
+	if( imguiHasCapture( handle )
+	    || ( isPointInside( inner, inputs->mouse.position ) && leftButton ) ) {
 		imguiFocus( handle );
 		imguiCapture( handle );
 		auto pos = ( inputs->mouse.position.x - inner.left + offset ) / PaddleWidth;
@@ -579,8 +580,8 @@ void doKeyframesFrameNumbers( ImGuiHandle handle, AppData* app, GameInputs* inpu
 			pos = 0;
 		}
 		auto oldFrame = exchange( animator->currentFrame, pos );
-		if( !floatEqSoft( oldFrame, pos ) ) {
-			// current frame changed
+		if( !floatEqSoft( oldFrame, pos ) && !leftButton ) {
+			// current frame changed and mouse moved
 			FOR( node : animator->nodes ) {
 				*node = getCurrentFrameNode( animator, node.get() );
 			}
@@ -613,11 +614,11 @@ void moveSelected( AnimatorState* animator, float movement )
 	FOR( selected : animator->selected ) {
 		selected->t += movement;
 	}
-	if( animator->selectionRectValid ) {
+	if( animator->flags.selectionRectValid ) {
 		animator->selectionA.x += movement;
 		animator->selectionB.x += movement;
 	}
-	animator->keyframesMoved = true;
+	animator->flags.keyframesMoved = true;
 }
 void settleSelected( AnimatorState* animator, bool altDown )
 {
@@ -645,19 +646,19 @@ void doKeyframesSelection( ImGuiHandle handle, AppData* app, GameInputs* inputs,
 	handle.shortIndex = 2;
 	if( isPointInside( scrollable->inner, inputs->mouse.position ) || imguiHasCapture( handle ) ) {
 
-		if( !animator->mouseSelecting && isKeyPressed( inputs, KC_LButton ) && !clickedAny ) {
+		if( !animator->flags.mouseSelecting && isKeyPressed( inputs, KC_LButton ) && !clickedAny ) {
 			imguiFocus( handle );
 			imguiCapture( handle );
 			auto absSelection = getAbsSelection( animator, scrollable );
-			if( animator->selectionRectValid
+			if( animator->flags.selectionRectValid
 			    && isPointInside( absSelection, inputs->mouse.position ) ) {
 				// moving selection around
-				animator->moveSelection = true;
+				animator->flags.moveSelection = true;
 				animator->mouseStart =
 				    ( inputs->mouse.position - absSelection.leftTop ) / PaddleWidth;
 			} else {
-				animator->mouseSelecting     = true;
-				animator->selectionRectValid = false;
+				animator->flags.mouseSelecting     = true;
+				animator->flags.selectionRectValid = false;
 				animator->selectionA         = inputs->mouse.position - scrollable->inner.leftTop
 				                       - animator->scrollableRegion.scrollPos;
 				animator->selectionA.x /= PaddleWidth;
@@ -665,9 +666,9 @@ void doKeyframesSelection( ImGuiHandle handle, AppData* app, GameInputs* inputs,
 			}
 		}
 
-		if( animator->mouseSelecting ) {
+		if( animator->flags.mouseSelecting ) {
 			if( !isKeyDown( inputs, KC_LButton ) ) {
-				animator->mouseSelecting = false;
+				animator->flags.mouseSelecting = false;
 
 				animator->selected.clear();
 				// convert selection to time
@@ -721,7 +722,7 @@ void doKeyframesSelection( ImGuiHandle handle, AppData* app, GameInputs* inputs,
 
 							frame->selected = true;
 							animator->selected.push_back( frame );
-							animator->selectionRectValid = true;
+							animator->flags.selectionRectValid = true;
 							if( minT > frame->t ) {
 								minT = frame->t;
 							}
@@ -739,12 +740,13 @@ void doKeyframesSelection( ImGuiHandle handle, AppData* app, GameInputs* inputs,
 			}
 		}
 		if( !isKeyDown( inputs, KC_LButton ) ) {
-			if( animator->moveSelection ) {
+			if( animator->flags.moveSelection ) {
 				settleSelected( animator, altDown );
 			}
-			animator->moveSelection = false;
+			animator->flags.moveSelection = false;
 		}
-		if( animator->selectionRectValid && animator->moveSelection && animator->selected.size() ) {
+		if( animator->flags.selectionRectValid && animator->flags.moveSelection
+		    && animator->selected.size() ) {
 			// convert absolute mouse coordinates to frame time
 			auto framePos = ( inputs->mouse.position.x - scrollable->inner.left ) / PaddleWidth;
 			// offset framePos by mouse start so that movement is relative to where we first clicked
@@ -765,10 +767,10 @@ void doKeyframesSelection( ImGuiHandle handle, AppData* app, GameInputs* inputs,
 
 			moveSelected( animator, offset );
 		} else {
-			animator->moveSelection = false;
+			animator->flags.moveSelection = false;
 		}
 	}
-	if( animator->mouseSelecting || animator->selectionRectValid ) {
+	if( animator->flags.mouseSelecting || animator->flags.selectionRectValid ) {
 		RENDER_COMMANDS_STATE_BLOCK( renderer ) {
 			renderer->color = setAlpha( Color::Blue, 0x80 );
 			auto selection = getAbsSelection( animator, scrollable );
@@ -786,7 +788,7 @@ bool doKeyframesDisplay( ImGuiHandle handle, AppData* app, GameInputs* inputs, c
 	auto altDown = isKeyDown( inputs, KC_Alt );
 
 	setTexture( renderer, 0, null );
-	if( animator->selectionRectValid
+	if( animator->flags.selectionRectValid
 	    && isPointInside( getSelection( animator ), inputs->mouse.position ) ) {
 		gui->processInputs = false;
 	}
@@ -827,10 +829,10 @@ bool doKeyframesDisplay( ImGuiHandle handle, AppData* app, GameInputs* inputs, c
 					}
 				}
 				animator->clickedGroup = group;
-				animator->moving = true;
+				animator->flags.moving = true;
 			}
 			if( custom.changed() ) {
-				animator->moving = true;
+				animator->flags.moving = true;
 				if( frame->selected ) {
 					movement = frame->t - oldT;
 				}
@@ -855,22 +857,22 @@ bool doKeyframesDisplay( ImGuiHandle handle, AppData* app, GameInputs* inputs, c
 			}
 		}
 	}
-	if( animator->moving ) {
+	if( animator->flags.moving ) {
 		moveSelected( animator, movement );
 	}
-	if( !clickedAny && animator->moving && animator->selected.size()
+	if( !clickedAny && animator->flags.moving && animator->selected.size()
 	    && !isKeyDown( inputs, KC_LButton ) ) {
 
-		animator->moving = false;
+		animator->flags.moving = false;
 		settleSelected( animator, altDown );
 		imguiFocus( handle );
 	}
 	if( !clickedAny && !isKeyDown( inputs, KC_LButton ) ) {
-		animator->moving = false;
+		animator->flags.moving = false;
 	}
 	gui->processInputs = true;
 	if( animator->selected.empty() ) {
-		animator->selectionRectValid = false;
+		animator->flags.selectionRectValid = false;
 	}
 	return clickedAny;
 }
@@ -910,12 +912,61 @@ void changeModelSpace( AnimatorNode* node, mat4arg model )
 void doKeyframesControl( AppData* app, GameInputs* inputs )
 {
 	auto animator = &app->animatorState;
-	animator->keyframesMoved = false;
+	animator->flags.keyframesMoved = false;
 
-	auto layout             = imguiBeginColumn( NamesWidth );
-	const auto namesHeight  = ImGui->style.innerPadding * 2 + stringHeight( ImGui->font );
-	const auto regionHeight = RegionHeight - namesHeight;
-	imguiAddItem( NamesWidth, namesHeight );
+	auto layout              = imguiBeginColumn( NamesWidth );
+	const auto numbersHeight = ImGui->style.innerPadding * 2 + stringHeight( ImGui->font );
+	const auto regionHeight  = RegionHeight - numbersHeight;
+
+	static const float ControlWidths[] = {
+	    11,  // resume
+	    14,  // play
+	    5,   // pause
+	    11,  // stop
+	    10,  // repeat
+	    10,  // mirror
+	};
+	float icw                             = 1.0f / 66;
+	float ich                             = 1.0f / 11;
+	static const rectf ControlTexCoords[] = {
+		scale( RectWH( 0, 0, 11, 11 ), icw, ich ),
+		scale( RectWH( 12, 0, 14, 11 ), icw, ich ),
+		scale( RectWH( 27, 0, 5, 11 ), icw, ich ),
+		scale( RectWH( 33, 0, 11, 11 ), icw, ich ),
+		scale( RectWH( 45, 0, 10, 11 ), icw, ich ),
+		scale( RectWH( 56, 0, 10, 11 ), icw, ich ),
+	};
+	imguiSameLine( 6 );
+	imguiAddItem( 2, 11 );
+	auto buttonHandle = imguiMakeHandle( app, ImGuiControlType::Custom );
+	auto playIndex    = ( animator->flags.playing ) ? ( 2 ) : ( 0 );
+	if( imguiIconButton( buttonHandle, ControlWidths[0], numbersHeight, animator->controlIcons,
+	                     makeQuadTexCoords( ControlTexCoords[playIndex] ), ControlWidths[playIndex],
+	                     11 ) ) {
+		animator->flags.playing = !animator->flags.playing;
+	}
+	if( imguiIconButton( buttonHandle, ControlWidths[1], numbersHeight, animator->controlIcons,
+	                     makeQuadTexCoords( ControlTexCoords[1] ), ControlWidths[1], 11 ) ) {
+		animator->flags.playing = true;
+		animator->currentFrame  = 0;
+	}
+	if( imguiIconButton( buttonHandle, ControlWidths[3], numbersHeight, animator->controlIcons,
+	                     makeQuadTexCoords( ControlTexCoords[3] ), ControlWidths[3], 11 ) ) {
+		animator->flags.playing = false;
+	}
+	auto renderer   = ImGui->renderer;
+	renderer->color = ( animator->flags.repeat ) ? ( Color::Red ) : ( Color::White );
+	if( imguiIconButton( buttonHandle, ControlWidths[4], numbersHeight, animator->controlIcons,
+	                     makeQuadTexCoords( ControlTexCoords[4] ), ControlWidths[4], 11 ) ) {
+		animator->flags.repeat = !animator->flags.repeat;
+	}
+	renderer->color = ( animator->flags.mirror ) ? ( Color::Red ) : ( Color::White );
+	if( imguiIconButton( buttonHandle, ControlWidths[5], numbersHeight, animator->controlIcons,
+	                     makeQuadTexCoords( ControlTexCoords[5] ), ControlWidths[5], 11 ) ) {
+		animator->flags.mirror = !animator->flags.mirror;
+	}
+	renderer->color = Color::White;
+
 	doKeyframesNames( app, inputs, NamesWidth, regionHeight );
 
 	const auto regionWidth = app->width - NamesWidth;
@@ -944,7 +995,7 @@ void doKeyframesControl( AppData* app, GameInputs* inputs )
 	doKeyframesSelection( handle, app, inputs, &scrollable, clickedAny );
 	imguiEndScrollableRegion( &animator->scrollableRegion, &scrollable );
 
-	if( animator->keyframesMoved ) {
+	if( animator->flags.keyframesMoved ) {
 		sortKeyframes( animator );
 	}
 
@@ -997,15 +1048,16 @@ void doAnimatorMenu( AppData* app, GameInputs* inputs, rectfarg rect )
 				imguiSameLine( 2 );
 				auto handle = imguiMakeHandle( animator );
 				handle.shortIndex = 0;
-				if( imguiPushButton( handle, "Absolute", !animator->showRelativeProperties ) ) {
-					animator->showRelativeProperties = false;
+				if( imguiPushButton( handle, "Absolute",
+				                     !animator->flags.showRelativeProperties ) ) {
+					animator->flags.showRelativeProperties = false;
 				}
 				handle.shortIndex = 1;
 				if( imguiPushButton( handle, "Relative",
-				                     animator->showRelativeProperties == true ) ) {
-					animator->showRelativeProperties = true;
+				                     animator->flags.showRelativeProperties == true ) ) {
+					animator->flags.showRelativeProperties = true;
 				}
-				if( animator->showRelativeProperties ) {
+				if( animator->flags.showRelativeProperties ) {
 					base = find_first_where( animator->baseNodes, entry->id == node.id )->get();
 					node = toRelativeNode( base, selected );
 				}
@@ -1097,7 +1149,7 @@ void doAnimatorMenu( AppData* app, GameInputs* inputs, rectfarg rect )
 				}
 			}
 
-			if( animator->currentAnimation && animator->showRelativeProperties ) {
+			if( animator->currentAnimation && animator->flags.showRelativeProperties ) {
 				assert( base );
 				*selected = toAbsoluteNode( base, &node );
 			} else {
@@ -1486,6 +1538,9 @@ void doEditor( AppData* app, GameInputs* inputs, rectfarg rect )
 	auto mat = matrixRotationY( editor->rotation.x ) * matrixRotationX( editor->rotation.y )
 	           * matrixTranslation( editor->translation )
 	           * matrixScale( editor->scale, editor->scale, 1 ) * matrixTranslation( 0, 0, 200 );
+	if( animator->flags.mirror ) {
+		mat = matrixScale( -1, 1, 1 ) * mat;
+	}
 	renderer->view = mat;
 
 	auto handleMouse = [&]( uint8 button, uint8 modifier,
@@ -1852,6 +1907,8 @@ void doAnimator( AppData* app, GameInputs* inputs, bool focus, float dt )
 		*gui = defaultImmediateModeGui();
 		imguiLoadDefaultStyle( gui, &app->platform );
 
+		animator->controlIcons = app->platform.loadTexture( "Data/Images/animator_controls.png" );
+
 		animator->editor.contextMenu = imguiGenerateContainer( gui, {}, true );
 		animator->fileMenu           = imguiGenerateContainer( gui, {}, true );
 
@@ -1869,7 +1926,7 @@ void doAnimator( AppData* app, GameInputs* inputs, bool focus, float dt )
 		animator->editor.rotation = AnimatorInitialRotation;
 		animator->editor.scale    = 1;
 		animator->editor.expandedFlags |= AnimatorEditor::Properties;
-		animator->timelineRootExpanded = true;
+		animator->flags.timelineRootExpanded = true;
 
 #if 1
 		AnimatorNode node;
@@ -1898,6 +1955,23 @@ void doAnimator( AppData* app, GameInputs* inputs, bool focus, float dt )
 
 	setProjection( renderer, ProjectionType::Orthogonal );
 	setRenderState( renderer, RenderStateType::DepthTest, false );
+
+	if( animator->currentAnimation && animator->flags.playing ) {
+		animator->currentFrame += dt * ( 60.0f / 1000.0f );
+		if( animator->currentFrame > animator->duration ) {
+			animator->currentFrame = animator->duration;
+		}
+		FOR( node : animator->nodes ) {
+			*node = getCurrentFrameNode( animator, node.get() );
+		}
+		if( animator->currentFrame >= animator->duration ) {
+			if( animator->flags.repeat ) {
+				animator->currentFrame = 0;
+			} else {
+				animator->flags.playing = false;
+			}
+		}
+	}
 
 	rectf guiBounds = {0, 0, app->width, app->height};
 	imguiBind( gui, renderer, font, inputs, app->stackAllocator.ptr, guiBounds );

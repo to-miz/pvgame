@@ -127,6 +127,7 @@ struct AnimatorState {
 	bool initialized;
 
 	int32 fileMenu;
+	TextureId controlIcons;
 
 	ImGuiScrollableRegion scrollableRegion;
 	AnimatorKeyframes keyframes;
@@ -142,14 +143,20 @@ struct AnimatorState {
 
 	float duration;
 	float currentFrame;
-	bool8 timelineRootExpanded;
-	bool8 showRelativeProperties;
 
-	bool8 mouseSelecting;
-	bool8 selectionRectValid;
-	bool8 moveSelection;
-	bool8 moving;
-	bool8 keyframesMoved;
+	struct {
+		uint32 timelineRootExpanded : 1;
+		uint32 showRelativeProperties : 1;
+		uint32 mirror : 1;
+		uint32 repeat : 1;
+		uint32 playing : 1;
+		uint32 mouseSelecting : 1;
+		uint32 selectionRectValid : 1;
+		uint32 moveSelection : 1;
+		uint32 moving : 1;
+		uint32 keyframesMoved : 1;
+	} flags;
+
 	vec2 selectionA;
 	vec2 selectionB;
 	vec2 mouseStart;
