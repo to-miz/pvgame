@@ -1161,6 +1161,7 @@ struct EasingState {
 
 	vec2 position;
 	vec2 velocity;
+	vec2 acceleration;
 	float duration;
 
 	enum { Count = 100 };
@@ -2828,11 +2829,13 @@ void doEasing( AppData* app, GameInputs* inputs, bool focus, float dt )
 	auto renderer = &app->renderer;
 	auto font     = &app->font;
 
-	const vec2 InitialPosition   = {0, 0};
-	const float SimHeight        = 200;
+	const vec2 InitialPosition = {0, 0};
+	const vec2 TargetPosition  = {0, 200};
+	const float SimHeight      = 200;
 	auto reset = [=]() {
-		easing->position = InitialPosition;
-		easing->velocity = {};
+		easing->position     = InitialPosition;
+		easing->velocity     = {};
+		easing->acceleration = {};
 	};
 
 	imguiBind( gui );
@@ -2851,9 +2854,10 @@ void doEasing( AppData* app, GameInputs* inputs, bool focus, float dt )
 	renderer->clearColor = 0xFF1B2B34;
 	imguiEditbox( "Duration", &easing->duration );
 
-	imguiSameLine( 2 );
-	auto simRect = imguiAddItem( 200, SimHeight );
-	auto wipRect = imguiAddItem( 200, SimHeight );
+	imguiSameLine( 3 );
+	auto simRect      = imguiAddItem( 200, SimHeight );
+	auto wipRect      = imguiAddItem( 200, SimHeight );
+	auto combinedRect = imguiAddItem( 200, SimHeight );
 
 	auto frameDelta = dt * GameConstants::DeltaToFrameTime;
 	easing->t += frameDelta;
@@ -2864,14 +2868,16 @@ void doEasing( AppData* app, GameInputs* inputs, bool focus, float dt )
 	}
 
 	if( easing->t - easing->lastT >= 1.0f ) {
-		easing->velocity.y += GameConstants::Gravity * 2;
+		const float Tightness = 0.055f;
+		const float Damper = 0.14f;
+		easing->acceleration =
+		    -Tightness * ( easing->position - TargetPosition ) - Damper * easing->velocity;
+		easing->velocity += easing->acceleration;
 		easing->lastT = easing->t;
 	}
 	easing->position += easing->velocity * frameDelta;
-	if( easing->position.y >= SimHeight ) {
-		easing->velocity.y = easing->velocity.y * -0.5f;
-		easing->position.y = SimHeight;
-	}
+
+	imguiAddItem( 100, 50 );
 
 	imguiSameLine( 3 );
 	auto visualizer0        = imguiAddItem( 200, 200 );
@@ -2884,23 +2890,7 @@ void doEasing( AppData* app, GameInputs* inputs, bool focus, float dt )
 	easing->yPositions0[tIndex] = ( easing->position.y - InitialPosition.y ) / SimHeight;
 
 	auto easingWip = []( float t ) -> float {
-		if( t <= 0.4f ) {
-			t /= 0.4f;
-			return t * t;
-		} else if( t < 0.8f ) {
-			t -= 0.4f;
-			t /= ( 0.8f - 0.4f );
-			t *= 2;
-			t -= 1;
-			return ( t * t ) * 0.25f + 0.75f;
-		} else {
-			t -= 0.8f;
-			t /= ( 1 - 0.8f );
-			t *= 2;
-			t -= 1;
-			return ( t * t ) * 0.25f * 0.25f + 1 - ( 0.25f * 0.25f );
-		}
-		return 0;
+		return easeOutElastic( t );
 	};
 
 	easing->yPositions1[tIndex] = easingWip( t );
@@ -2919,26 +2909,53 @@ void doEasing( AppData* app, GameInputs* inputs, bool focus, float dt )
 		pushEndLineStripUnchecked( stream );
 	};
 
-	if( isPointInside( visualizer0, inputs->mouse.position ) ) {
-		auto mouse = inputs->mouse.position - visualizer0.leftTop;
-		auto x = mouse.x / width( visualizer0 );
-		auto number = toNumberString( x );
-		renderer->color = Color::White;
-		renderText( renderer, font, number,
-		            RectWH( inputs->mouse.position.x, inputs->mouse.position.y - 16, 0, 0 ) );
-	}
+	auto doVisualizer = [&]( rectfarg visualizer, float ( *easer )( float ) ) {
+		char buffer[100];
+		if( isPointInside( visualizer, inputs->mouse.position ) ) {
+			auto mouse      = inputs->mouse.position - visualizer.leftTop;
+			auto x          = mouse.x / width( visualizer );
+			renderer->color = Color::White;
+
+			int32 len = 0;
+			if( easer ) {
+				len = snprint( buffer, countof( buffer ), "X: {} Y: {}", x, easer( x ) );
+			} else {
+				auto tIndex = ( int32 )( x * countof( easing->yPositions0 ) );
+				tIndex      = clamp( tIndex, 0, countof( easing->yPositions0 ) - 1 );
+				auto y      = easing->yPositions0[tIndex];
+				len         = snprint( buffer, countof( buffer ), "X: {} Y: {}", x, y );
+			}
+			renderText( renderer, font, {buffer, len},
+			            RectWH( inputs->mouse.position.x, inputs->mouse.position.y - 16, 0, 0 ) );
+		}
+		if( easer ) {
+			auto rect = translate( visualizer, 0, height( visualizer ) );
+			auto len =
+			    snprint( buffer, countof( buffer ), "X: 0 Y: {}\nX: 0.9999 Y: {}\nX: 1 Y: {}",
+			             easer( 0 ), easer( 0.9999f ), easer( 1 ) );
+			renderText( renderer, font, {buffer, len}, rect );
+		}
+	};
+	doVisualizer( visualizer0, nullptr );
+	doVisualizer( visualizer1, easingWip );
+	doVisualizer( combinedVisualizer, easingWip );
+
+	auto renderDot = []( MeshStream* stream, rectfarg rect, vec2arg pos ) {
+		vec2 simPos = pos + rect.leftTop;
+		simPos.x += width( rect ) * 0.5f;
+		pushQuad( stream, RectHalfSize( simPos, 4, 4 ) );
+	};
 
 	setTexture( renderer, 0, null );
 	MESH_STREAM_BLOCK( stream, renderer ) {
 		stream->color = Color::Red;
-		vec2 simPos   = easing->position + simRect.leftTop;
-		simPos.x += width( simRect ) * 0.5f;
-		pushQuad( stream, RectHalfSize( simPos, 4, 4 ) );
+		renderDot( stream, simRect, easing->position );
+		renderDot( stream, combinedRect, easing->position );
 
 		stream->color = Color::Blue;
-		vec2 wipPos   = {center( wipRect ).x,
-		               easing->yPositions1[tIndex] * height( wipRect ) + wipRect.top};
-		pushQuad( stream, RectHalfSize( wipPos, 4, 4 ) );
+		vec2 wipPos   = {0, easing->yPositions1[tIndex] * height( wipRect )};
+		renderDot( stream, wipRect, wipPos );
+		renderDot( stream, combinedRect, wipPos );
 	}
 	LINE_MESH_STREAM_BLOCK( stream, renderer ) {
 		stream->color = Color::Red;
@@ -2953,6 +2970,14 @@ void doEasing( AppData* app, GameInputs* inputs, bool focus, float dt )
 			stream->color = Color::Blue;
 			pushLine( stream, {inputs->mouse.position.x, visualizer0.top, 0},
 			          {inputs->mouse.position.x, visualizer0.bottom, 0} );
+		} else if( isPointInside( visualizer1, inputs->mouse.position ) ) {
+			stream->color = Color::Red;
+			pushLine( stream, {inputs->mouse.position.x, visualizer1.top, 0},
+			          {inputs->mouse.position.x, visualizer1.bottom, 0} );
+		} else if( isPointInside( combinedVisualizer, inputs->mouse.position ) ) {
+			stream->color = Color::Red;
+			pushLine( stream, {inputs->mouse.position.x, combinedVisualizer.top, 0},
+			          {inputs->mouse.position.x, combinedVisualizer.bottom, 0} );
 		}
 	}
 

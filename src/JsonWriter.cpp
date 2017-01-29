@@ -4,6 +4,9 @@ struct JsonWriter {
 	bool8 isNotProperty;
 	bool8 minimal;
 	int32 indentLevel;
+
+	char* data() const { return builder.data(); }
+	int32 size() const { return builder.size(); }
 };
 
 JsonWriter makeJsonWriter( char* buffer, int32 len )
@@ -151,6 +154,14 @@ void writeProperty( JsonWriter* writer, StringView name, const T& value )
 	writeValue( writer, value );
 }
 
+void writeValue( JsonWriter* writer, NullableInt32 value )
+{
+	if( value ) {
+		writeValue( writer, value.value );
+	} else {
+		writeNull( writer );
+	}
+}
 void writeValue( JsonWriter* writer, vec2arg v )
 {
 	writeStartObject( writer );
@@ -160,6 +171,28 @@ void writeValue( JsonWriter* writer, vec2arg v )
 	writeProperty( writer, "y", v.y );
 	writeEndObject( writer );
 	writer->minimal = prev;
+}
+void writeValue( JsonWriter* writer, vec3arg v )
+{
+#if 0
+	writeStartObject( writer );
+	auto prev       = writer->minimal;
+	writer->minimal = true;
+	writeProperty( writer, "x", v.x );
+	writeProperty( writer, "y", v.y );
+	writeProperty( writer, "z", v.z );
+	writeEndObject( writer );
+	writer->minimal = prev;
+#else
+	writeStartArray( writer );
+	auto prev       = writer->minimal;
+	writer->minimal = true;
+	writeValue( writer, v.x );
+	writeValue( writer, v.y );
+	writeValue( writer, v.z );
+	writeEndArray( writer );
+	writer->minimal = prev;
+#endif
 }
 
 void writeValue( JsonWriter* writer, rectiarg rect )

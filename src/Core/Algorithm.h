@@ -247,8 +247,8 @@ inline auto find_if_or_null( Container& container, UnaryPredicate pred )
 		return ( condition );                                                             \
 	} )
 
-template < class T >
-inline NullableInt32 find_index( T* first, T* last, const T& val )
+template < class Iterator, class T >
+NullableInt32 find_index( Iterator first, Iterator last, const T& val )
 {
 	auto index = 0;
 	while( first != last ) {
@@ -260,8 +260,15 @@ inline NullableInt32 find_index( T* first, T* last, const T& val )
 	}
 	return NullableInt32::makeNull();
 }
-template< class T, class UnaryPredicate >
-inline NullableInt32 find_index_if( T* first, T* last, UnaryPredicate pred )
+template < class Container, class T >
+NullableInt32 find_index( const Container& container, const T& val )
+{
+	using std::begin;
+	using std::end;
+	return find_index( begin( container ), end( container ), val );
+}
+template< class Iterator, class UnaryPredicate >
+NullableInt32 find_index_if( Iterator first, Iterator last, UnaryPredicate pred )
 {
 	auto index = 0;
 	while( first != last ) {
@@ -272,6 +279,14 @@ inline NullableInt32 find_index_if( T* first, T* last, UnaryPredicate pred )
 		++index;
 	}
 	return NullableInt32::makeNull();
+}
+template< class Container, class UnaryPredicate >
+NullableInt32 find_index_if( const Container& container, UnaryPredicate&& pred )
+{
+	using std::begin;
+	using std::end;
+	return find_index_if( begin( container ), end( container ),
+	                      std::forward< UnaryPredicate >( pred ) );
 }
 
 // appends element into container iff element isn't already in the container

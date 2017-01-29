@@ -111,3 +111,8 @@ bool isHotkeyPressed( GameInputs* inputs, int32 key, int32 modifier )
 {
 	return isKeyPressed( inputs, key ) && isKeyDown( inputs, modifier );
 }
+bool isHotkeyPressed( GameInputs* inputs, int32 key, int32 modifier1, int32 modifier2 )
+{
+	return isKeyPressed( inputs, key ) && isKeyDown( inputs, modifier1 )
+	       && isKeyDown( inputs, modifier2 );
+}

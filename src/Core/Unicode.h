@@ -204,11 +204,11 @@ struct iterator {
 	}
 	bool operator==( const iterator& other ) const
 	{
-		return other.codepoint == codepoint && other.data == data && other.size == size;
+		return other.codepoint == codepoint && other.size == size;
 	}
 	bool operator!=( const iterator& other ) const
 	{
-		return other.codepoint != codepoint || other.data != data || other.size != size;
+		return other.codepoint != codepoint || other.size != size;
 	}
 };
 struct view {

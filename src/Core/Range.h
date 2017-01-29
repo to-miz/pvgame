@@ -85,8 +85,8 @@ bool isInRange( trangearg< T > r, U other )
 struct range_iterator {
 	int32 value;
 
-	inline bool operator!=( range_iterator other ) { return this->value < other.value; }
-	inline bool operator==( range_iterator other ) { return this->value >= other.value; }
+	inline bool operator!=( range_iterator other ) const { return this->value < other.value; }
+	inline bool operator==( range_iterator other ) const { return this->value >= other.value; }
 	inline range_iterator& operator++()
 	{
 		++value;

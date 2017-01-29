@@ -48,14 +48,45 @@ void serialize( const JsonValue& value, vec2& out )
 	out.x     = attr["x"].getFloat();
 	out.y     = attr["y"].getFloat();
 }
+void serialize( const JsonValue& value, vec3& out )
+{
+	auto attr = value.getArray();
+	out.x     = attr[0].getFloat();
+	out.y     = attr[1].getFloat();
+	out.z     = attr[2].getFloat();
+}
 
-void serialize( const JsonValue& value, float& out ) { out = value.getFloat(); }
-void serialize( const JsonValue& value, bool& out ) { out = value.getBool(); }
-void serialize( const JsonValue& value, bool8& out ) { out = value.getBool(); }
-void serialize( const JsonValue& value, char& out ) { out = (char)value.getInt(); }
-void serialize( const JsonValue& value, int8& out ) { out = (int8)value.getInt(); }
-void serialize( const JsonValue& value, uint8& out ) { out = (uint8)value.getUInt(); }
-void serialize( const JsonValue& value, int16& out ) { out = (int16)value.getInt(); }
-void serialize( const JsonValue& value, uint16& out ) { out = (uint16)value.getUInt(); }
-void serialize( const JsonValue& value, int32& out ) { out = (int32)value.getInt(); }
-void serialize( const JsonValue& value, uint32& out ) { out = (uint32)value.getUInt(); }
+void serialize( const JsonValue& value, float& out, float def = {} )
+{
+	out = value.getFloat( def );
+}
+void serialize( const JsonValue& value, bool& out, bool def = {} ) { out = value.getBool( def ); }
+void serialize( const JsonValue& value, bool8& out, bool def = {} ) { out = value.getBool( def ); }
+void serialize( const JsonValue& value, char& out, char def = {} )
+{
+	out = (char)value.getInt( def );
+}
+void serialize( const JsonValue& value, int8& out, int8 def = {} )
+{
+	out = (int8)value.getInt( def );
+}
+void serialize( const JsonValue& value, uint8& out, uint8 def = {} )
+{
+	out = (uint8)value.getUInt( def );
+}
+void serialize( const JsonValue& value, int16& out, int16 def = {} )
+{
+	out = (int16)value.getInt( def );
+}
+void serialize( const JsonValue& value, uint16& out, uint16 def = {} )
+{
+	out = (uint16)value.getUInt( def );
+}
+void serialize( const JsonValue& value, int32& out, int32 def = {} )
+{
+	out = (int32)value.getInt( def );
+}
+void serialize( const JsonValue& value, uint32& out, uint32 def = {} )
+{
+	out = (uint32)value.getUInt( def );
+}

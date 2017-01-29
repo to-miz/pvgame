@@ -456,11 +456,11 @@ ImGuiHandle imguiMakeIndexHandle( void* ptr )
 {
 	ImGuiHandle result = {};
 #ifdef ARCHITECTURE_X64
-	result.base = ( uint32 )( (uintptr)ptr >> 32 );
+	result.base = ( uint32 )( ( (uintptr)ptr >> 32 ) ^ ( ( uintptr )ptr ) );
 #elif ARCHITECTURE_X86
 	result.base = ( uint32 )( (uintptr)ptr );
 #else
-#error unknown architecture
+	#error unknown architecture
 #endif
 	result.container = ImGui->container;
 	result.index = ( ( uint16 )( (uintptr)ptr - (uintptr)ImGui->base ) );
@@ -632,6 +632,10 @@ void imguiShowModal( int32 containerIndex )
 	container->setMinimized( false );
 	ImGui->modalContainer = safe_truncate< int8 >( containerIndex );
 	imguiBringToFront( ImGui->modalContainer );
+
+	// center in screen
+	container->rect = RectCentered( center( ImGui->bounds ), width( container->rect ),
+	                                height( container->rect ) );
 }
 void imguiClose( int32 containerIndex )
 {
@@ -1047,6 +1051,8 @@ bool imguiMenu( bool show )
 }
 bool imguiMenuItem( ImGuiHandle handle, StringView text, int32 containerIndex = -1 )
 {
+	handle.shortIndex = (uint8)containerIndex;
+
 	auto style    = &ImGui->style;
 	auto renderer = ImGui->renderer;
 	auto font     = ImGui->font;
@@ -1076,7 +1082,6 @@ bool imguiMenuItem( ImGuiHandle handle, StringView text, int32 containerIndex = 
 	renderTextVCenteredClipped( renderer, font, text, textRect );
 
 	bool showMenu = false;
-	handle.shortIndex = (uint8)containerIndex;
 	if( hover && imguiHasMyChildFocus( handle ) ) {
 		auto other = ImGui->focus;
 		auto otherContainerIndex = other.shortIndex;
@@ -1098,10 +1103,14 @@ bool imguiMenuItem( ImGuiHandle handle, StringView text, int32 containerIndex = 
 	}
 
 	if( imguiHasFocus( handle ) && !hover && isKeyPressed( inputs, KC_LButton ) ) {
-		imguiFocus( {} );
 		if( containerIndex >= 0 ) {
 			auto container = imguiGetContainer( containerIndex );
-			container->setHidden( true );
+			if( !isPointInside( container->rect, inputs->mouse.position ) ) {
+				container->setHidden( true );
+				imguiFocus( {} );
+			}
+		} else {
+			imguiFocus( {} );
 		}
 	}
 
@@ -1158,7 +1167,7 @@ bool imguiContextMenu( int32 containerIndex )
 }
 bool imguiContextMenuEntry( StringView text )
 {
-	auto handle = imguiMakeStringHandle( text );
+	auto handle    = imguiMakeStringHandle( text );
 	auto container = imguiCurrentContainer();
 
 	auto font     = ImGui->font;
@@ -1174,9 +1183,9 @@ bool imguiContextMenuEntry( StringView text )
 
 	auto hovered = isPointInside( rect, inputs->mouse.position );
 
-	setTexture( renderer, 0, null );
 	if( hovered ) {
 		RENDER_COMMANDS_STATE_BLOCK( renderer ) {
+			setTexture( renderer, 0, null );
 			renderer->color = multiply( renderer->color, style->menuSelectionBg );
 			addRenderCommandSingleQuad( renderer, rect );
 		}
@@ -1410,7 +1419,7 @@ bool imguiEditbox( StringView name, char* data, int32* length, int32 size )
 	return imguiEditbox( name, data, length, size, ImGui->style.editboxWidth,
 	                     ImGui->style.editboxHeight );
 }
-bool imguiEditbox( StringView name, char* data, uint8* length, int32 size )
+bool imguiEditbox( StringView name, char* data, uint16* length, int32 size )
 {
 	int32 length32 = *length;
 	if( imguiEditbox( name, data, &length32, size, ImGui->style.editboxWidth,
@@ -2046,7 +2055,7 @@ bool imguiCombo( ImGuiHandle handle, int32* selectedIndex, const Array< const St
 		return *( (const StringView*)entry );
 	};
 	return imguiCombo( handle, names.data(), sizeof( const StringView ), names.size(),
-	                   selectedIndex, rect, getText, true );
+	                   selectedIndex, rect, getText, hasNoneEntry );
 }
 bool imguiCombo( ImGuiHandle handle, const void* items, int32 entrySize, int32 itemsCount,
                  int32* selectedIndex, ImGuiGetTextFunctionType* getText, bool hasNoneEntry )

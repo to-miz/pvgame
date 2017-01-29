@@ -51,3 +51,40 @@ inline float smootherstep( float t )
 
 // parabola going from 0 to 1 with derivative d at 0
 inline float quadratic( float t, float d = 2 ) { return ( ( ( 1 - d ) ) * t + d ) * t; }
+
+float easeOutBounce( float t )
+{
+	if( t <= 0.36f ) {
+		t /= 0.36f;
+		return t * t;
+	} else if( t < 0.72f ) {
+		t = ( t - 0.36f ) * ( 1.0f / ( ( 0.72f - 0.36f ) * 0.5f ) ) - 1;
+		return ( t * t - 1 ) * 0.25f + 1;
+	} else if( t < 0.9f ) {
+		t = ( t - 0.72f ) * ( 1.0f / ( ( 0.9f - 0.72f ) * 0.5f ) ) - 1;
+		const float a = 0.25f * 0.25f;
+		return ( t * t - 1 ) * a + 1;
+	} else {
+		t = ( t - 0.9f ) * ( 1.0f / ( ( 1.0f - 0.9f ) * 0.5f ) ) - 1;
+		const float a = 0.25f * 0.25f * 0.25f;
+		return ( t * t - 1 ) * a + 1;
+	}
+}
+float easeInBounce( float t )
+{
+	return 1.0f - easeOutBounce( 1.0f - t );
+}
+
+float easeOutElastic( float t )
+{
+	if( t >= 0.95f ) return 1;
+
+	const float a = 6.8f;
+	auto denom = math::exp( t * a );
+	auto nom = math::sin( t * Pi32 * a - HalfPi32 );
+	return nom / denom + 1;
+}
+float easeInElastic( float t )
+{
+	return 1.0f - easeOutElastic( 1.0f - t );
+}

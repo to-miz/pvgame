@@ -14,6 +14,12 @@ typedef void WriteBufferToFileType( StringView filename, void* buffer, size_t bu
 typedef size_t ReadFileToBufferType( StringView filename, void* buffer, size_t bufferSize );
 typedef MeshId UploadMeshType( Mesh mesh );
 
+#ifndef MAX_PATH
+	#define MAX_PATH 260
+#endif
+static const char* DefaultFilter = "All\0*.*\0";
+static const char* JsonFilter = "Json\0*.json\0All\0*.*\0";
+
 typedef int32 GetOpenFilenameType( const char* filter, const char* initialDir, bool multiselect,
                                    char* filenameBuffer, int32 filenameBufferSize );
 typedef int32 GetSaveFilenameType( const char* filter, const char* initialDir, char* filenameBuffer,

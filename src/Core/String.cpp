@@ -1,33 +1,36 @@
 typedef UArray< char > string;
 
-template< uint8 N >
-struct short_string {
-	char ptr[N];
-	uint8 sz;
+template < uint16 N >
+struct short_string : string {
+	char buf[N];
+	static_assert( N <= 512, "short string is too long" );
 
-	char* begin() { return ptr; }
-	char* end() { return ptr + sz; }
-	const char* begin() const { return ptr; }
-	const char* end() const { return ptr + sz; }
-	const char* cbegin() const { return ptr; }
-	const char* cend() const { return ptr + sz; }
-
-	int32 capacity() const { return N; }
-	int32 size() const { return sz; }
-	int32 length() const { return sz; }
-	char* data() { return ptr; }
-	bool empty() { return sz == 0; }
-	int32 remaining() { return N - sz; }
-
-	void resize( int32 newSize )
+	short_string()
 	{
-		assert( newSize <= (int32)N );
-		sz = (uint8)newSize;
+		ptr = buf;
+		sz  = 0;
+		cap = N;
+	}
+	short_string( const short_string& other ) : short_string() { assign( other ); }
+	short_string( StringView other ) : short_string()
+	{
+		assign( other );
+		return *this;
+	}
+	short_string& operator=( const short_string& other )
+	{
+		assert( ptr );
+		assign( other );
+		return *this;
+	}
+	short_string& operator=( StringView other )
+	{
+		assert( ptr );
+		assign( other );
+		return *this;
 	}
 
-	inline void assign( StringView other ) { sz = (uint8)copyToString( other, ptr, N ); }
-
-	inline operator StringView() const { return {ptr, sz}; }
+	inline void assign( StringView other ) { sz = (uint16)copyToString( other, ptr, N ); }
 };
 
 void copyToString( const char* in, string* out )

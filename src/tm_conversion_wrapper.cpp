@@ -94,16 +94,25 @@ tmp_size_t snprint( char* buffer, tmp_size_t len, const PrintFormat& initialForm
 	                  value.min.y, value.min.z, value.max.x, value.max.y, value.max.z );
 }
 
+int32 widen32( char x ) { return x; }
+int32 widen32( int8 x ) { return x; }
+int32 widen32( int16 x ) { return x; }
+int32 widen32( int32 x ) { return x; }
+uint32 widen32( uint8 x ) { return x; }
+uint32 widen32( uint16 x ) { return x; }
+uint32 widen32( uint32 x ) { return x; }
+float widen32( float x ) { return x; }
+
 struct string_builder {
 	char* ptr;
 	int32 sz;
 	int32 cap;
 	PrintFormat format;
 
-	char* data() { return ptr; }
-	int32 size() { return sz; }
-	char* end() { return ptr + sz; }
-	int32 remaining() { return cap - sz; }
+	char* data() const { return ptr; }
+	int32 size() const { return sz; }
+	char* end() const { return ptr + sz; }
+	int32 remaining() const { return cap - sz; }
 	void clear() { sz = 0; }
 
 	string_builder() = default;
@@ -114,7 +123,7 @@ struct string_builder {
 	template < class T >
 	string_builder& operator<<( T value )
 	{
-		sz += ::print( end(), remaining(), &format, value );
+		sz += ::print( end(), remaining(), &format, widen32( value ) );
 		return *this;
 	}
 	string_builder& operator<<( char c )

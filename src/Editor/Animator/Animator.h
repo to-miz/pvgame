@@ -12,8 +12,8 @@ struct AnimatorNode {
 	vec3 scale       = {1, 1, 1};
 	float length     = {};
 
-	int16 parentId       = -1;
 	int16 id             = -1;
+	int16 parentId       = -1;
 	AnimatorNode* parent = nullptr;
 
 	int32 childrenCount = {};
@@ -22,7 +22,6 @@ struct AnimatorNode {
 	bool8 marked   = {};
 	int16 voxel    = -1;
 	int16 frame    = {};
-	GroupId group  = -1;
 
 	mat4 base  = {};
 	mat4 world = {};
@@ -31,7 +30,9 @@ struct AnimatorNode {
 };
 
 struct AnimatorKeyframeData {
-	enum { type_none, type_translation, type_rotation, type_scale, type_frame } type;
+	enum : int8 { type_none, type_translation, type_rotation, type_scale, type_frame } type;
+	enum EaseType : int8 { Lerp, Step, Smoothstep, EaseOutBounce, EaseOutElastic, Curve } easeType;
+
 	union {
 		vec3 translation;
 		vec3 rotation;
@@ -88,6 +89,7 @@ struct AnimatorEditor {
 		Plane          = BITFIELD( 3 ),
 		Animations     = BITFIELD( 4 ),
 		Keying         = BITFIELD( 5 ),
+		Nodes          = BITFIELD( 6 ),
 	};
 	uint32 expandedFlags;
 
@@ -104,6 +106,7 @@ struct AnimatorEditor {
 	int32 contextMenu;
 
 	vec2 rightClickedPos;
+	float nodesListboxScroll;
 };
 
 struct AnimatorVoxelCollection {
@@ -115,12 +118,15 @@ struct AnimatorAnimation {
 	std::vector< AnimatorNode > nodes;
 	std::vector< AnimatorKeyframe > keyframes;
 	short_string< 10 > name;
-	int32 id;
 };
 
 typedef std::vector< std::unique_ptr< AnimatorKeyframe > > AnimatorKeyframes;
 typedef std::unique_ptr< AnimatorNode > UniqueAnimatorNode;
 typedef std::vector< std::unique_ptr< AnimatorNode > > AnimatorNodes;
+typedef std::vector< AnimatorAnimation > AnimatorAnimations;
+
+struct AppData;
+typedef void AnimatorMessageBoxAction( AppData* );
 
 struct AnimatorState {
 	ImmediateModeGui gui;
@@ -136,7 +142,7 @@ struct AnimatorState {
 	std::vector< AnimatorGroupDisplay > visibleGroups;
 	AnimatorNodes baseNodes;
 	AnimatorNodes nodes;
-	std::vector< AnimatorAnimation > animations;
+	AnimatorAnimations animations;
 
 	AnimatorVoxelCollection voxels;
 	AnimatorAnimation* currentAnimation;
@@ -155,6 +161,8 @@ struct AnimatorState {
 		uint32 moveSelection : 1;
 		uint32 moving : 1;
 		uint32 keyframesMoved : 1;
+		uint32 unsavedChanges : 1;
+		uint32 uncommittedChanges : 1;
 	} flags;
 
 	vec2 selectionA;
@@ -167,12 +175,29 @@ struct AnimatorState {
 
 	float scale;
 
-	GroupId ids;
 	int16 nodeIds;
 	AnimatorEditor editor;
 
 	StringPool stringPool;
 	StringView fieldNames[4];
+
+	short_string< MAX_PATH > filename;
+
+	struct MessageBox {
+		int32 container;
+		enum { OkCancel, YesNoCancel } type;
+		short_string< 100 > text;
+		short_string< 50 > title;
+
+		struct {
+			AnimatorMessageBoxAction* onYes;
+			AnimatorMessageBoxAction* onNo;
+
+			struct {
+				AnimatorAnimations::iterator toDelete;
+			} data;
+		} action;
+	} messageBox;
 };
 
 #endif  // _ANIMATOR_H_INCLUDED_

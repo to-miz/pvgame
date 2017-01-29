@@ -10,6 +10,63 @@ static const vec3 AnimatorInitialRotation = {0, -0.2f, 0};
 constexpr const float AnimatorMinScale = 0.1f;
 constexpr const float AnimatorMaxScale = 10.0f;
 
+static const StringView EaseTypeNames[] = {
+	"Lerp",
+	"Step",
+	"Smoothstep",
+	"EaseOutBounce",
+	"EaseOutElastic",
+	"Curve",
+};
+StringView to_string( AnimatorKeyframeData::EaseType type )
+{
+	assert( type >= 0 && type < countof( EaseTypeNames ) );
+	return EaseTypeNames[type];
+}
+void from_string( StringView str, AnimatorKeyframeData::EaseType& value )
+{
+	// accepts gibberish strings too, but that doesn't matter too much
+	// alternately could just loop over EaseTypeNames and compare
+	value = {};
+	if( str.size() ) {
+		switch( str[0] ) {
+			case 'l':
+			case 'L': {
+				value = AnimatorKeyframeData::Lerp;
+				break;
+			}
+			case 's':
+			case 'S': {
+				value = AnimatorKeyframeData::Step;
+				break;
+			}
+			case 'e':
+			case 'E': {
+				if( str.size() >= 8 ) {
+					switch( str[7] ) {
+						case 'b':
+						case 'B': {
+							value = AnimatorKeyframeData::EaseOutBounce;
+							break;
+						}
+						case 'e':
+						case 'E': {
+							value = AnimatorKeyframeData::EaseOutElastic;
+							break;
+						}
+					}
+				}
+				break;
+			}
+			case 'c':
+			case 'C': {
+				// TODO: implement
+				break;
+			}
+		}
+	}
+}
+
 rectf getSelection( AnimatorState* animator )
 {
 	return correct( animator->selectionA, animator->selectionB );
@@ -24,6 +81,12 @@ rectf getAbsSelection( AnimatorState* animator, const ImGuiScrollableRegionResul
 	return selection;
 }
 
+void setUnsavedChanges( AnimatorState* animator )
+{
+	animator->flags.unsavedChanges    = true;
+	animator->flags.uncommittedChanges = true;
+}
+
 bool compareKeyframes( const AnimatorKeyframes::value_type& a,
                        const AnimatorKeyframes::value_type& b )
 {
@@ -36,7 +99,7 @@ void clearSelectedKeyframes( AnimatorState* animator )
 	}
 	animator->selected.clear();
 	animator->flags.selectionRectValid = false;
-	animator->clickedGroup       = -1;
+	animator->clickedGroup             = -1;
 }
 void clearSelectedNodes( AnimatorState* animator )
 {
@@ -46,17 +109,21 @@ void clearSelectedNodes( AnimatorState* animator )
 	animator->editor.clickedNode = nullptr;
 }
 
-int32 makeAnimatorKeyframeId( int16 ownerId, int32 index )
+int32 makeAnimatorGroup( int16 ownerId, int32 index )
 {
 	assert( index >= 0 && index < 256 );
 	return (int32)( (uint32)ownerId << 8 | (uint32)index );
+}
+int16 getAnimatorKeyframeOwner( GroupId id )
+{
+	return (int16)( (uint32)id >> 8 );
 }
 GroupId getAnimatorParentGroup( GroupId id )
 {
 	return (int32)( (uint32)id & 0xFFFFFF00u );
 }
-GroupId addAnimatorGroups( AnimatorState* animator, StringView parentName,
-                           Array< const StringView > childNames, int16 ownerId )
+void addAnimatorGroups( AnimatorState* animator, StringView parentName,
+                        Array< const StringView > childNames, int16 ownerId )
 {
 	Array< AnimatorGroup > groups = {};
 	auto count                    = childNames.size() + 1;
@@ -67,7 +134,7 @@ GroupId addAnimatorGroups( AnimatorState* animator, StringView parentName,
 	for( auto i = 0; i < count; ++i ) {
 		auto entry      = &groups[i];
 		entry->name     = ( i == 0 ) ? parentName : childNames[i - 1];
-		entry->id       = makeAnimatorKeyframeId( ownerId, i );
+		entry->id       = makeAnimatorGroup( ownerId, i );
 		entry->expanded = false;
 	}
 	if( count > 1 ) {
@@ -75,11 +142,9 @@ GroupId addAnimatorGroups( AnimatorState* animator, StringView parentName,
 	} else {
 		groups[0].children = {};
 	}
-	return groups[0].id;
 }
 void clearAnimatorGroups( AnimatorState* animator )
 {
-	animator->ids = 0;
 	animator->visibleGroups.clear();
 	animator->groups.clear();
 }
@@ -98,10 +163,37 @@ void populateVisibleGroups( AnimatorState* animator )
 	}
 }
 
+float animatorKeyframeEase( AnimatorKeyframeData::EaseType type, float t )
+{
+	switch( type ) {
+		case AnimatorKeyframeData::Lerp: {
+			return t;
+		}
+		case AnimatorKeyframeData::Step: {
+			return 0;
+		}
+		case AnimatorKeyframeData::Smoothstep: {
+			return smoothstep( t );
+		}
+		case AnimatorKeyframeData::EaseOutBounce: {
+			return easeOutBounce( t );
+		}
+		case AnimatorKeyframeData::EaseOutElastic: {
+			return easeOutElastic( t );
+		}
+		case AnimatorKeyframeData::Curve: {
+			// TODO: implement
+			return 0;
+		}
+		InvalidDefaultCase;
+	}
+	return 0;
+}
 AnimatorKeyframeData lerp( float t, const AnimatorKeyframeData& a, const AnimatorKeyframeData& b )
 {
 	AnimatorKeyframeData result = {};
 	assert( a.type == b.type );
+	t = animatorKeyframeEase( a.easeType, t );
 	switch( a.type ) {
 		case AnimatorKeyframeData::type_translation: {
 			result.type = AnimatorKeyframeData::type_translation;
@@ -200,12 +292,13 @@ AnimatorNode getCurrentFrameNode( AnimatorState* animator, AnimatorNode* node )
 	auto base   = find_first_where( animator->baseNodes, entry->id == node->id )->get();
 	auto result = *base;
 
-	assert_init( auto group = find_first_where( animator->groups, entry.id == node->group ),
+	auto baseGroup = makeAnimatorGroup( node->id, 0 );
+	assert_init( auto group = find_first_where( animator->groups, entry.id == baseGroup ),
 	             width( group->children ) == 4 );
-	GroupId translationId = node->group + 1;
-	GroupId rotationId    = node->group + 2;
-	GroupId scaleId       = node->group + 3;
-	GroupId frameId       = node->group + 4;
+	GroupId translationId = baseGroup + 1;
+	GroupId rotationId    = baseGroup + 2;
+	GroupId scaleId       = baseGroup + 3;
+	GroupId frameId       = baseGroup + 4;
 
 	auto translationKeyframe =
 	    getInterpolatedKeyframe( animator, animator->currentFrame, translationId );
@@ -221,7 +314,6 @@ AnimatorNode getCurrentFrameNode( AnimatorState* animator, AnimatorNode* node )
 
 	result.parent   = node->parent;
 	result.selected = node->selected;
-	result.group    = node->group;
 	return result;
 }
 AnimatorNode toAbsoluteNode( const AnimatorNode* base, const AnimatorNode* rel )
@@ -232,23 +324,23 @@ AnimatorNode toAbsoluteNode( const AnimatorNode* base, const AnimatorNode* rel )
 	result.scale = multiplyComponents( result.scale, rel->scale );
 	result.frame += rel->frame;
 
-	result.parentId = rel->parentId;
-	result.id       = rel->id;
+	result.parentId = base->parentId;
+	result.id       = base->id;
 	result.parent   = rel->parent;
 	return result;
 }
 AnimatorNode toRelativeNode( const AnimatorNode* base, const AnimatorNode* abs )
 {
-	auto result = *base;
-	result.translation  = abs->translation - base->translation;
-	result.rotation     = abs->rotation - base->rotation;
-	result.scale.x      = safeDivide( abs->scale.x, base->scale.x, 1 );
-	result.scale.y      = safeDivide( abs->scale.y, base->scale.y, 1 );
-	result.scale.z      = safeDivide( abs->scale.z, base->scale.z, 1 );
-	result.frame        = abs->frame - base->frame;
+	auto result        = *base;
+	result.translation = abs->translation - base->translation;
+	result.rotation    = abs->rotation - base->rotation;
+	result.scale.x     = safeDivide( abs->scale.x, base->scale.x, 1 );
+	result.scale.y     = safeDivide( abs->scale.y, base->scale.y, 1 );
+	result.scale.z     = safeDivide( abs->scale.z, base->scale.z, 1 );
+	result.frame       = abs->frame - base->frame;
 
-	result.parentId = abs->parentId;
-	result.id       = abs->id;
+	result.parentId = base->parentId;
+	result.id       = base->id;
 	result.parent   = abs->parent;
 	return result;
 }
@@ -303,19 +395,23 @@ AnimatorKeyframe toRelativeKeyframe( const AnimatorNode* base, const AnimatorKey
 	return result;
 }
 
-void bindParent( AnimatorState* animator, AnimatorNode* node )
+bool bindParent( AnimatorState* animator, AnimatorNode* node )
 {
+	bool result = true;
 	node->parent = nullptr;
 	if( node->parentId >= 0 ) {
 		auto id = node->parentId;
 		if( auto parent = find_first_where( animator->nodes, entry->id == id ) ) {
 			node->parent = parent->get();
-			++node->parent->childrenCount;
+			node->parent->childrenCount += node->childrenCount + 1;
+		} else {
+			result = false;
 		}
 	}
 	if( !node->parent ) {
 		node->parentId = -1;
 	}
+	return result;
 }
 AnimatorNode* addNewNode( AnimatorState* animator, const AnimatorNode& node )
 {
@@ -328,8 +424,8 @@ AnimatorNode* addNewNode( AnimatorState* animator, const AnimatorNode& node )
 		result->name.resize( snprint( result->name.data(), result->name.capacity(), "Unnamed {}",
 		                              StringView{idString} ) );
 	}
-	result->group = addAnimatorGroups( animator, result->name,
-	                                   makeArrayView( animator->fieldNames ), result->id );
+	addAnimatorGroups( animator, result->name, makeArrayView( animator->fieldNames ), result->id );
+	setUnsavedChanges( animator );
 	return result;
 }
 AnimatorNode* addExistingNode( AnimatorState* animator, const AnimatorNode& node )
@@ -338,8 +434,7 @@ AnimatorNode* addExistingNode( AnimatorState* animator, const AnimatorNode& node
 	auto result           = animator->nodes.back().get();
 	result->parent        = nullptr;
 	result->childrenCount = 0;
-	result->group         = addAnimatorGroups( animator, result->name,
-	                                   makeArrayView( animator->fieldNames ), result->id );
+	addAnimatorGroups( animator, result->name, makeArrayView( animator->fieldNames ), result->id );
 	return result;
 }
 
@@ -366,9 +461,10 @@ void addKeyframe( AnimatorState* animator, const AnimatorKeyframe& key )
 		insertion_sort_last_elem( animator->keyframes.begin(), animator->keyframes.end(),
 		                          compareKeyframes );
 	}
+	setUnsavedChanges( animator );
 }
 // delete duplicate keyframes, keeping those that are selected
-// need functor because of equal_range passes in arguments both ways, so we can't use a simple
+// need functor because equal_range passes in arguments both ways, so we can't use a simple
 // lambda if the types of the two arguments don't match
 struct DeleteDuplicateKeyframesFunctor {
 	bool operator()( const AnimatorKeyframes::value_type& a, const AnimatorKeyframe* b ) const
@@ -396,12 +492,21 @@ void deleteDuplicateKeyframes( AnimatorState* animator )
 			          return !key->selected && key->group == group;
 			      } );
 	}
+	setUnsavedChanges( animator );
+}
+void deleteSelectedKeyframes( AnimatorState* animator )
+{
+	erase_if( animator->keyframes,
+	          []( const AnimatorKeyframes::value_type& key ) { return key->selected; } );
+	clearSelectedKeyframes( animator );
+	setUnsavedChanges( animator );
 }
 
 void openAnimation( AnimatorState* animator, AnimatorAnimation* animation )
 {
 	assert( !animator->currentAnimation );
-	animator->currentAnimation = animation;
+	animator->currentAnimation         = animation;
+	animator->flags.uncommittedChanges = false;
 
 	animator->baseNodes = std::move( animator->nodes );
 	animator->nodes.clear();
@@ -443,16 +548,16 @@ void openAnimation( AnimatorState* animator, AnimatorAnimation* animation )
 	animator->keyframes.reserve( animation->keyframes.size() );
 	FOR( keyframe : animation->keyframes ) {
 		auto base = find_first_where( animator->baseNodes,
-		                              entry->group == getAnimatorParentGroup( keyframe.group ) );
+		                              entry->id == getAnimatorKeyframeOwner( keyframe.group ) );
+		assert( base );
 		animator->keyframes.push_back(
 		    std::make_unique< AnimatorKeyframe >( toAbsoluteKeyframe( base->get(), &keyframe ) ) );
 	}
 }
 
-void closeAnimation( AnimatorState* animator )
+void commitAnimation( AnimatorState* animator )
 {
 	assert( animator->currentAnimation );
-
 	auto animation = animator->currentAnimation;
 	animation->nodes.resize( animator->nodes.size() );
 
@@ -466,16 +571,414 @@ void closeAnimation( AnimatorState* animator )
 	animation->keyframes.resize( animator->keyframes.size() );
 	zip_for( animation->keyframes, animator->keyframes ) {
 		auto base = find_first_where(
-		    animator->baseNodes, entry->group == getAnimatorParentGroup( second->get()->group ) );
+		    animator->baseNodes, entry->id == getAnimatorKeyframeOwner( second->get()->group ) );
 		*first = toRelativeKeyframe( base->get(), second->get() );
 	}
-	animator->keyframes.clear();
+}
+void closeAnimation( AnimatorState* animator, bool keep )
+{
+	assert( animator->currentAnimation );
 
+	if( keep ) {
+		commitAnimation( animator );
+	}
+
+	animator->keyframes.clear();
 	clearAnimatorGroups( animator );
 	animator->nodes = std::move( animator->baseNodes );
 	animator->baseNodes.clear();
 	animator->currentAnimation = nullptr;
 	clearSelectedNodes( animator );
+	clearSelectedKeyframes( animator );
+}
+
+void animatorMessageBox( AnimatorState* animator, StringView text, StringView title,
+                         AnimatorMessageBoxAction* onYes, AnimatorMessageBoxAction* onNo = nullptr )
+{
+	animator->messageBox.text         = text;
+	animator->messageBox.title        = title;
+	animator->messageBox.action.onYes = onYes;
+	animator->messageBox.action.onNo  = onNo;
+	animator->messageBox.type = ( onYes && onNo ) ? ( AnimatorState::MessageBox::YesNoCancel )
+	                                              : ( AnimatorState::MessageBox::OkCancel );
+	imguiShowModal( animator->messageBox.container );
+}
+
+void animatorClear( AnimatorState* animator )
+{
+	animator->keyframes.clear();
+	animator->selected.clear();
+	animator->groups.clear();
+	animator->visibleGroups.clear();
+	animator->baseNodes.clear();
+	animator->nodes.clear();
+	animator->animations.clear();
+	animator->filename.clear();
+	animator->currentAnimation         = nullptr;
+	animator->duration                 = 0;
+	animator->currentFrame             = 0;
+	animator->flags.unsavedChanges     = false;
+	animator->flags.uncommittedChanges = false;
+	animator->nodeIds                  = 0;
+	animator->messageBox.action        = {};
+
+	clearSelectedKeyframes( animator );
+	clearSelectedNodes( animator );
+	clearAnimatorGroups( animator );
+}
+void animatorSave( StackAllocator* allocator, AnimatorState* animator, StringView filename )
+{
+	auto writeNode = []( JsonWriter* writer, AnimatorNode* node ) {
+		writeStartObject( writer );
+			writeProperty( writer, "translation", node->translation );
+			writeProperty( writer, "rotation", node->rotation );
+			writeProperty( writer, "scale", node->scale );
+			writeProperty( writer, "length", node->length );
+			writeProperty( writer, "id", node->id );
+			writeProperty( writer, "parentId", NullableInt32{node->parentId} );
+			writeProperty( writer, "voxel", NullableInt32{node->voxel} );
+			writeProperty( writer, "frame", node->frame );
+			writeProperty( writer, "name", StringView{node->name} );
+		writeEndObject( writer );
+	};
+
+	auto writeNodeKeyableProperties = []( JsonWriter* writer, AnimatorNode* node ) {
+		writeProperty( writer, "translation", node->translation );
+		writeProperty( writer, "rotation", node->rotation );
+		writeProperty( writer, "scale", node->scale );
+		writeProperty( writer, "id", node->id );
+		writeProperty( writer, "frame", node->frame );
+	};
+
+	auto writeKeyframes = []( JsonWriter* writer, Array< AnimatorKeyframe > keyframes,
+	                          StringView name, GroupId id ) {
+		writePropertyName( writer, name );
+		writeStartArray( writer );
+			FOR( keyframe : keyframes ) {
+				if( keyframe.group == id ) {
+					writeStartObject( writer );
+						writeProperty( writer, "t", keyframe.t );
+				        writeProperty( writer, "easeType", to_string( keyframe.data.easeType ) );
+				        switch( keyframe.data.type ) {
+				        	case AnimatorKeyframeData::type_translation: {
+				        		writeProperty( writer, "value", keyframe.data.translation );
+				        		break;
+				        	}
+				        	case AnimatorKeyframeData::type_rotation: {
+				        		writeProperty( writer, "value", keyframe.data.rotation );
+				        		break;
+				        	}
+				        	case AnimatorKeyframeData::type_scale: {
+				        		writeProperty( writer, "value", keyframe.data.scale );
+				        		break;
+				        	}
+				        	case AnimatorKeyframeData::type_frame: {
+				        		writeProperty( writer, "value", keyframe.data.frame );
+				        		break;
+				        	}
+				        	InvalidDefaultCase;
+				        }
+			        writeEndObject( writer );
+				}
+			}
+		writeEndArray( writer );
+	};
+
+	AnimatorAnimation* current = animator->currentAnimation;
+	if( animator->currentAnimation ) {
+		closeAnimation( animator, true );
+	}
+
+	TEMPORARY_MEMORY_BLOCK( allocator ) {
+		auto bufferSize = (int32)getCapacityFor< char >( allocator );
+		auto buffer     = allocateArray( allocator, char, bufferSize );
+		auto writerObj  = makeJsonWriter( buffer, bufferSize );
+		auto writer     = &writerObj;
+
+		auto nodes = ( animator->currentAnimation ) ? &animator->baseNodes : &animator->nodes;
+
+		writeStartObject( writer );
+			writePropertyName( writer, "nodes" );
+			writeStartArray( writer );
+			FOR( node : *nodes ) {
+				writeNode( writer, node.get() );
+			}
+			writeEndArray( writer );
+
+			writePropertyName( writer, "animations" );
+			writeStartArray( writer );
+			FOR( animation : animator->animations ) {
+				auto keyframes = makeArrayView( animation.keyframes );
+				writeStartObject( writer );
+					writePropertyName( writer, "nodes" );
+					writeStartArray( writer );
+					FOR( node : animation.nodes ) {
+						writeStartObject( writer );
+							writeNodeKeyableProperties( writer, &node );
+							auto group = makeAnimatorGroup( node.id, 0 );
+							writePropertyName( writer, "keyframes" );
+							writeStartObject( writer );
+						        writeKeyframes( writer, keyframes, "translation", group + 1 );
+						        writeKeyframes( writer, keyframes, "rotation", group + 2 );
+						        writeKeyframes( writer, keyframes, "scale", group + 3 );
+						        writeKeyframes( writer, keyframes, "frame", group + 4 );
+							writeEndObject( writer );
+						writeEndObject( writer );
+			        }
+					writeEndArray( writer );
+
+					writeProperty( writer, "name", StringView{animation.name} );
+				writeEndObject( writer );
+			}
+			writeEndArray( writer );
+		writeEndObject( writer );
+
+		GlobalPlatformServices->writeBufferToFile( filename, writer->data(), writer->size() );
+		animator->flags.unsavedChanges     = false;
+		animator->flags.uncommittedChanges = false;
+	}
+
+	if( current ) {
+		openAnimation( animator, current );
+	}
+}
+
+struct translation_tag {};
+struct rotation_tag {};
+struct scale_tag {};
+struct frame_tag {};
+
+vec3& getValue( AnimatorKeyframeData& data, translation_tag )
+{
+	data.type = AnimatorKeyframeData::type_translation;
+	return data.translation;
+}
+vec3& getValue( AnimatorKeyframeData& data, rotation_tag )
+{
+	data.type = AnimatorKeyframeData::type_rotation;
+	return data.rotation;
+}
+vec3& getValue( AnimatorKeyframeData& data, scale_tag )
+{
+	data.type = AnimatorKeyframeData::type_scale;
+	return data.scale;
+}
+int16& getValue( AnimatorKeyframeData& data, frame_tag )
+{
+	data.type = AnimatorKeyframeData::type_frame;
+	return data.frame;
+}
+
+template < class Tag >
+void loadKeyframes( JsonObjectArray array, GroupId group, Tag tag,
+                    std::vector< AnimatorKeyframe >* out )
+{
+	FOR( keyframe : array ) {
+		out->emplace_back( AnimatorKeyframe{} );
+		auto added   = &out->back();
+		added->group = group;
+		serialize( keyframe["t"], added->t );
+		auto easeType = keyframe["easeType"];
+		if( jsonIsString( easeType ) ) {
+			from_string( easeType.getString(), added->data.easeType );
+		} else {
+			added->data.easeType = (AnimatorKeyframeData::EaseType)clamp(
+			    easeType.getInt(), AnimatorKeyframeData::Lerp, AnimatorKeyframeData::Curve );
+		}
+		serialize( keyframe["value"], getValue( added->data, tag ) );
+	}
+}
+
+bool animatorOpen( StackAllocator* allocator, AnimatorState* animator, StringView filename )
+{
+	TEMPORARY_MEMORY_BLOCK( allocator ) {
+		auto bufferSize = (int32)getCapacityFor< char >( allocator ) / 2;
+		auto buffer     = allocateArray( allocator, char, bufferSize );
+		auto fileSize =
+		    (int32)GlobalPlatformServices->readFileToBuffer( filename, buffer, bufferSize );
+		if( !fileSize ) {
+			LOG( ERROR, "Unable to open file {}", filename );
+			return false;
+		}
+
+		auto jsonDocSize                       = remaining( allocator );
+		JsonStackAllocatorStruct jsonAllocator = {allocateArray( allocator, char, jsonDocSize ), 0,
+		                                          jsonDocSize};
+		auto doc = jsonMakeDocument( &jsonAllocator, buffer, fileSize, JSON_READER_REASONABLE );
+		if( !doc || !doc.root.getObject() ) {
+			if( !doc ) {
+				LOG( ERROR, "{}: Json error {}", filename, jsonGetErrorString( doc.errorType ) );
+			} else {
+				LOG( ERROR, "{}: Json root not object", filename );
+			}
+			return false;
+		}
+
+		animatorClear( animator );
+		auto root = doc.root.getObject();
+
+		FOR( node : root["nodes"].getObjectArray() ) {
+			auto addedContainer = std::make_unique< AnimatorNode >();
+			auto added          = addedContainer.get();
+			serialize( node["translation"], added->translation );
+			serialize( node["rotation"], added->rotation );
+			serialize( node["scale"], added->scale );
+			serialize( node["length"], added->length );
+			serialize( node["id"], added->id );
+			serialize( node["parentId"], added->parentId, -1 );
+			serialize( node["voxel"], added->voxel, -1 );
+			serialize( node["frame"], added->frame );
+			added->name = node["name"].getString();
+			animator->nodes.push_back( std::move( addedContainer ) );
+		}
+		FOR( node : animator->nodes ) {
+			auto parentId = node->parentId;
+			if( !bindParent( animator, node.get() ) ) {
+				LOG( ERROR, "{}: parent {} not found", parentId );
+				return false;
+			}
+		}
+		sortNodes( animator );
+
+		FOR( animation : root["animations"].getObjectArray() ) {
+			animator->animations.emplace_back();
+			auto added = &animator->animations.back();
+			added->name = animation["name"].getString();
+			auto nodes = animation["nodes"].getObjectArray();
+			added->nodes.reserve( nodes.size() );
+			FOR( node : nodes ) {
+				added->nodes.emplace_back();
+				auto addedNode = &added->nodes.back();
+				serialize( node["id"], addedNode->id );
+				serialize( node["translation"], addedNode->translation );
+				serialize( node["rotation"], addedNode->rotation );
+				serialize( node["scale"], addedNode->scale );
+				serialize( node["frame"], addedNode->frame );
+
+				auto keyframes = node["keyframes"].getObject();
+				auto group = makeAnimatorGroup( addedNode->id, 0 );
+				loadKeyframes( keyframes["translation"].getObjectArray(), group + 1,
+				               translation_tag{}, &added->keyframes );
+				loadKeyframes( keyframes["rotation"].getObjectArray(), group + 2, rotation_tag{},
+				               &added->keyframes );
+				loadKeyframes( keyframes["scale"].getObjectArray(), group + 3, scale_tag{},
+				               &added->keyframes );
+				loadKeyframes( keyframes["frame"].getObjectArray(), group + 4, frame_tag{},
+				               &added->keyframes );
+			}
+		}
+	}
+
+	// TODO: validate, ie check that ids are unique
+	TEMPORARY_MEMORY_BLOCK( allocator ) {
+		// check whether ids are unique
+		int16 maxId = 0;
+		auto cap = (int32)getCapacityFor< int16 >( allocator ) / 2;
+		auto baseIds = makeUArray( allocator, int16, cap );
+		FOR( entry : animator->nodes ) {
+			auto node = entry.get();
+			if( node->id < 0 ) {
+				LOG( ERROR, "{}: Invalid id -1", filename );
+				return false;
+			}
+			if( !append_unique( baseIds, node->id ) ) {
+				LOG( ERROR, "{}: Id {} not unique", filename, node->id );
+				return false;
+			}
+		}
+		animator->nodeIds = maxId;
+
+		auto ids = makeUArray( allocator, int16, cap );
+		FOR( animation : animator->animations ) {
+			ids.clear();
+			FOR( entry : animation.nodes ) {
+				auto node = &entry;
+				if( node->id < 0 ) {
+					LOG( ERROR, "{}: Invalid id -1", filename );
+					return false;
+				}
+				if( !append_unique( ids, node->id ) ) {
+					LOG( ERROR, "{}: Id {} not unique", filename, node->id );
+					return false;
+				}
+				if( !find_first_where( baseIds, entry == node->id ) ) {
+					LOG( ERROR, "{}: id {} not found as base", node->id );
+					return false;
+				}
+				if( maxId < node->id ) {
+					maxId = node->id;
+				}
+			}
+			// we don't need to check keyframe ids, since they are derived from node ids
+			// if node ids are valid, so are keyframe ids
+
+#if GAME_DEBUG
+			// check whether all keyframes point to valid nodes
+			FOR( keyframe : animation.keyframes ) {
+				auto id = getAnimatorKeyframeOwner( keyframe.group );
+				if( !find_first_where( ids, entry == id ) ) {
+					LOG( ERROR, "{}: Invalid keyframe, no parent", filename );
+					return false;
+				}
+			}
+#endif
+		}
+	}
+	animator->filename = filename;
+	return true;
+}
+
+bool animatorMenuSave( AppData* app )
+{
+	auto animator = &app->animatorState;
+	if( !animator->filename.size() ) {
+		animator->filename.resize( GlobalPlatformServices->getSaveFilename(
+		    JsonFilter, nullptr, animator->filename.data(), animator->filename.capacity() ) );
+	}
+	if( animator->filename.size() ) {
+		animatorSave( &app->stackAllocator, animator, animator->filename );
+	}
+	return animator->filename.size() != 0;
+}
+bool animatorMenuSaveAs( AppData* app )
+{
+	auto animator = &app->animatorState;
+	short_string< MAX_PATH > filename;
+	filename.resize( GlobalPlatformServices->getSaveFilename( JsonFilter, nullptr, filename.data(),
+	                                                          filename.capacity() ) );
+	if( filename.size() ) {
+		animator->filename.assign( filename );
+		animatorSave( &app->stackAllocator, animator, animator->filename );
+	}
+	return filename.size() != 0;
+}
+void animatorMenuOpen( AppData* app )
+{
+	auto animator = &app->animatorState;
+
+	auto saveAndOpen = []( AppData* app ) {
+		if( animatorMenuSave( app ) ) {
+			animatorMenuOpen( app );
+		}
+	};
+	auto open = []( AppData* app ) {
+		auto animator = &app->animatorState;
+		animator->flags.unsavedChanges = false;
+		animatorMenuOpen( app );
+	};
+
+	if( animator->flags.unsavedChanges ) {
+		animatorMessageBox( animator, "Save changes?", "Unsaved changes", saveAndOpen, open );
+	} else {
+		short_string< MAX_PATH > filename;
+		filename.resize( GlobalPlatformServices->getOpenFilename(
+		    JsonFilter, nullptr, false, filename.data(), filename.capacity() ) );
+		if( filename.size() ) {
+			if( !animatorOpen( &app->stackAllocator, animator, filename ) ) {
+				animatorClear( animator );
+			}
+		}
+	}
 }
 
 void doKeyframesNames( AppData* app, GameInputs* inputs, float width, float height )
@@ -632,6 +1135,7 @@ void settleSelected( AnimatorState* animator, bool altDown )
 		}
 	}
 	deleteDuplicateKeyframes( animator );
+	setUnsavedChanges( animator );
 }
 
 void doKeyframesSelection( ImGuiHandle handle, AppData* app, GameInputs* inputs,
@@ -969,10 +1473,11 @@ void doKeyframesControl( AppData* app, GameInputs* inputs )
 
 	doKeyframesNames( app, inputs, NamesWidth, regionHeight );
 
-	const auto regionWidth = app->width - NamesWidth;
-	imguiNextColumn( &layout, regionWidth );
+	const float curveControlWidth = regionHeight;
+	const auto regionWidth        = app->width - NamesWidth - curveControlWidth;
 
-	auto width                     = animator->duration + regionWidth;
+	auto width = animator->duration + regionWidth;
+	imguiNextColumn( &layout, regionWidth );
 	animator->scrollableRegion.dim = {width, regionHeight};
 
 	auto handle = imguiMakeHandle( &animator->duration, ImGuiControlType::Custom );
@@ -1001,10 +1506,20 @@ void doKeyframesControl( AppData* app, GameInputs* inputs )
 
 	if( imguiHasMyChildFocus( handle ) && isKeyPressed( inputs, KC_Delete ) ) {
 		// delete selected keyframes
-		erase_if( animator->keyframes, [animator]( const AnimatorKeyframes::value_type& key ) {
-			return key->selected;
-		} );
-		clearSelectedKeyframes( animator );
+		deleteSelectedKeyframes( animator );
+	}
+
+	imguiNextColumn( &layout, curveControlWidth );
+
+	if( animator->selected.size() ) {
+		auto first = animator->selected[0];
+		auto comboHandle = imguiMakeHandle( &first->data.easeType );
+		int32 index = (int32)first->data.easeType;
+		if( imguiCombo( comboHandle, &index, makeArrayView( EaseTypeNames ), false ) ) {
+			FOR( entry : animator->selected ) {
+				entry->data.easeType = (AnimatorKeyframeData::EaseType)index;
+			}
+		}
 	}
 }
 
@@ -1018,15 +1533,17 @@ void doAnimatorMenu( AppData* app, GameInputs* inputs, rectfarg rect )
 	renderer->color = 0xFF29373B;
 	addRenderCommandSingleQuad( renderer, rect );
 
-	auto doRotation = []( StringView text, float* val ) {
+	auto doRotation = [&]( StringView text, float* val ) {
 		imguiSameLine( 2 );
 		auto handle = imguiMakeHandle( val, ImGuiControlType::None );
 		float adjusted = radiansToDegrees( *val );
 		if( imguiEditbox( handle, text, &adjusted ) ) {
 			*val = degreesToRadians( adjusted );
+			setUnsavedChanges( animator );
 		}
 		if( imguiSlider( handle, &adjusted, -180, 180 ) ) {
 			*val = degreesToRadians( adjusted );
+			setUnsavedChanges( animator );
 		}
 	};
 
@@ -1037,6 +1554,32 @@ void doAnimatorMenu( AppData* app, GameInputs* inputs, rectfarg rect )
 			editor->translation = {};
 			editor->rotation    = AnimatorInitialRotation;
 			editor->scale       = 1;
+		}
+		imguiEndDropGroup();
+	}
+	if( imguiBeginDropGroup( "Nodes", &editor->expandedFlags, AnimatorEditor::Nodes ) ) {
+		auto handle = imguiMakeHandle( &editor->nodesListboxScroll );
+		int32 index = -1;
+		if( auto clicked = editor->clickedNode ) {
+			index = find_index_if( animator->nodes, [clicked]( const UniqueAnimatorNode& entry ) {
+				        return entry.get() == clicked;
+				    } ).value;
+		}
+		auto listRect = imguiAddItem( 200, 200 );
+		if( imguiListboxSingleSelect(
+		        handle, &editor->nodesListboxScroll, (const void*)animator->nodes.data(),
+		        (int32)sizeof( UniqueAnimatorNode* ), ::size( animator->nodes ), &index, listRect,
+		        []( const void* entry ) -> StringView {
+			        assert_alignment( entry, alignof( UniqueAnimatorNode* ) );
+			        auto node = (UniqueAnimatorNode*)entry;
+			        return node->get()->name;
+			    },
+		        true ) ) {
+			if( index < 0 || index > ::size( animator->nodes ) ) {
+				editor->clickedNode = nullptr;
+			} else {
+				editor->clickedNode = animator->nodes[index].get();
+			}
 		}
 		imguiEndDropGroup();
 	}
@@ -1063,39 +1606,58 @@ void doAnimatorMenu( AppData* app, GameInputs* inputs, rectfarg rect )
 				}
 			}
 			if( imguiEditbox( "Name", node.name.data(), &node.name.sz, node.name.capacity() ) ) {
-				if( auto group = find_first_where( animator->groups, entry.id == node.group ) ) {
+				if( auto group = find_first_where( animator->groups,
+				                                   entry.id == makeAnimatorGroup( node.id, 0 ) ) ) {
 					group->name = node.name;
 				}
 			}
-			imguiEditbox( "Length", &node.length );
-			imguiEditbox( "Translation X", &node.translation.x );
-			imguiEditbox( "Translation Y", &node.translation.y );
-			imguiEditbox( "Translation Z", &node.translation.z );
+			if( imguiEditbox( "Length", &node.length ) ) {
+				setUnsavedChanges( animator );
+			}
+			if( imguiEditbox( "Translation X", &node.translation.x ) ) {
+				setUnsavedChanges( animator );
+			}
+			if( imguiEditbox( "Translation Y", &node.translation.y ) ) {
+				setUnsavedChanges( animator );
+			}
+			if( imguiEditbox( "Translation Z", &node.translation.z ) ) {
+				setUnsavedChanges( animator );
+			}
 			doRotation( "Rotation X", &node.rotation.x );
 			doRotation( "Rotation Y", &node.rotation.y );
 			doRotation( "Rotation Z", &node.rotation.z );
-			imguiEditbox( "Scale X", &node.scale.x );
-			imguiEditbox( "Scale Y", &node.scale.y );
-			imguiEditbox( "Scale Z", &node.scale.z );
+			if( imguiEditbox( "Scale X", &node.scale.x ) ) {
+				setUnsavedChanges( animator );
+			}
+			if( imguiEditbox( "Scale Y", &node.scale.y ) ) {
+				setUnsavedChanges( animator );
+			}
+			if( imguiEditbox( "Scale Z", &node.scale.z ) ) {
+				setUnsavedChanges( animator );
+			}
 			{
 				imguiSameLine( 2 );
 				imguiText( "Voxel" );
 				auto comboHandle = imguiMakeHandle( &node.voxel );
 				int32 index      = node.voxel;
-				if( imguiCombo( comboHandle, &index, animator->voxels.names ) ) {
+				if( imguiCombo( comboHandle, &index, animator->voxels.names, true ) ) {
 					node.voxel = safe_truncate< int16 >( index );
+					setUnsavedChanges( animator );
 				}
 
 				if( node.voxel >= 0 ) {
 					imguiSameLine( 2 );
 				}
-				imguiEditbox( "Frame", &node.frame );
+				if( imguiEditbox( "Frame", &node.frame ) ) {
+					setUnsavedChanges( animator );
+				}
 				if( node.voxel >= 0 ) {
 					auto frames = animator->voxels.voxels.animations[node.voxel].range;
 					float val = (float)( node.frame );
 					if( imguiSlider( imguiMakeHandle( &node.frame ), &val, 0,
 					                 (float)width( frames ) - 1 ) ) {
 						node.frame = (uint16)val;
+						setUnsavedChanges( animator );
 					}
 				}
 			}
@@ -1120,6 +1682,7 @@ void doAnimatorMenu( AppData* app, GameInputs* inputs, rectfarg rect )
 					        return node->get()->name;
 					    },
 				        true ) ) {
+					setUnsavedChanges( animator );
 					if( index >= 0 ) {
 						auto newParent = animator->nodes[index].get();
 						auto isMyChild = []( AnimatorNode* parent, AnimatorNode* potentialChild ) {
@@ -1225,7 +1788,6 @@ void doAnimatorMenu( AppData* app, GameInputs* inputs, rectfarg rect )
 				animator->animations.emplace_back();
 				auto added = &animator->animations.back();
 				added->name.assign( "Unnamed" );
-				added->id = -1;
 			}
 			auto end      = animator->animations.end();
 			auto selected = end;
@@ -1244,8 +1806,12 @@ void doAnimatorMenu( AppData* app, GameInputs* inputs, rectfarg rect )
 				openAnimation( animator, &*selected );
 			}
 			if( deleted != end ) {
-				// TODO: ask user whether to really delete
-				animator->animations.erase( deleted );
+				animator->messageBox.action.data.toDelete = deleted;
+				animatorMessageBox(
+				    animator, "Animation will be deleted", "Delete Animation", []( AppData* app ) {
+				    	auto animator = &app->animatorState;
+					    animator->animations.erase( animator->messageBox.action.data.toDelete );
+					} );
 			}
 			imguiEndDropGroup();
 		}
@@ -1254,10 +1820,18 @@ void doAnimatorMenu( AppData* app, GameInputs* inputs, rectfarg rect )
 		                         AnimatorEditor::Animations ) ) {
 			auto name = &animator->currentAnimation->name;
 			imguiEditbox( "Name", name->data(), &name->sz, name->capacity() );
-			imguiButton( "Commit" );
+			if( imguiButton( "Commit" ) ) {
+				commitAnimation( animator );
+			}
 			if( imguiButton( "Close" ) ) {
-				// TODO: ask user whether to keep changes
-				closeAnimation( animator );
+				if( animator->flags.uncommittedChanges ) {
+					animatorMessageBox(
+					    animator, "Keep changes?", "Uncommitted Changes",
+					    []( AppData* app ) { closeAnimation( &app->animatorState, true ); },
+					    []( AppData* app ) { closeAnimation( &app->animatorState, false ); } );
+				} else {
+					closeAnimation( animator, false );
+				}
 			}
 			imguiEndDropGroup();
 		}
@@ -1291,28 +1865,28 @@ void doAnimatorMenu( AppData* app, GameInputs* inputs, rectfarg rect )
 		if( imguiButton( translation ) ) {
 			AnimatorKeyframe key = {};
 			key.t                = animator->currentFrame;
-			key.group            = node->group + 1;
+			key.group            = makeAnimatorGroup( node->id, 1 );
 			set_variant( key.data, translation ) = node->translation;
 			addKeyframe( animator, key );
 		}
 		if( imguiButton( rotation ) ) {
 			AnimatorKeyframe key = {};
 			key.t                = animator->currentFrame;
-			key.group            = node->group + 2;
+			key.group            = makeAnimatorGroup( node->id, 2 );
 			set_variant( key.data, rotation ) = node->rotation;
 			addKeyframe( animator, key );
 		}
 		if( imguiButton( scale ) ) {
 			AnimatorKeyframe key = {};
 			key.t                = animator->currentFrame;
-			key.group            = node->group + 3;
+			key.group            = makeAnimatorGroup( node->id, 3 );
 			set_variant( key.data, scale ) = node->scale;
 			addKeyframe( animator, key );
 		}
 		if( imguiButton( frame ) ) {
 			AnimatorKeyframe key = {};
 			key.t                = animator->currentFrame;
-			key.group            = node->group + 4;
+			key.group            = makeAnimatorGroup( node->id, 4 );
 			set_variant( key.data, frame ) = node->frame;
 			addKeyframe( animator, key );
 		}
@@ -1371,6 +1945,7 @@ void deleteDeep( AnimatorState* animator, AnimatorNodes::iterator node )
 }
 void deleteDeep( AnimatorState* animator, AnimatorNode* node )
 {
+	setUnsavedChanges( animator );
 	auto it = find_if( animator->nodes, [node]( const UniqueAnimatorNode& entry ) {
 		return entry.get() == node;
 	} );
@@ -1901,7 +2476,7 @@ void doAnimator( AppData* app, GameInputs* inputs, bool focus, float dt )
 		return;
 	}
 
-	inputs->disableEscapeForQuickExit = false;
+	inputs->disableEscapeForQuickExit = true;
 	imguiBind( gui );
 	if( !animator->initialized ) {
 		*gui = defaultImmediateModeGui();
@@ -1909,8 +2484,9 @@ void doAnimator( AppData* app, GameInputs* inputs, bool focus, float dt )
 
 		animator->controlIcons = app->platform.loadTexture( "Data/Images/animator_controls.png" );
 
-		animator->editor.contextMenu = imguiGenerateContainer( gui, {}, true );
-		animator->fileMenu           = imguiGenerateContainer( gui, {}, true );
+		animator->editor.contextMenu   = imguiGenerateContainer( gui, {}, true );
+		animator->fileMenu             = imguiGenerateContainer( gui, {}, true );
+		animator->messageBox.container = imguiGenerateContainer( gui, {0, 0, 300, 10}, true );
 
 		auto allocator           = &app->stackAllocator;
 		const auto MaxNodes      = 10;
@@ -2008,12 +2584,91 @@ void doAnimator( AppData* app, GameInputs* inputs, bool focus, float dt )
 		doKeyframesControl( app, inputs );
 	}
 
+	if( isHotkeyPressed( inputs, KC_Key_O, KC_Control ) ) {
+		animatorMenuOpen( app );
+	}
+	if( isHotkeyPressed( inputs, KC_Key_S, KC_Control ) ) {
+		animatorMenuSave( app );
+	}
+	if( isHotkeyPressed( inputs, KC_Key_S, KC_Control, KC_Shift ) ) {
+		animatorMenuSaveAs( app );
+	}
+
 	if( imguiContextMenu( animator->fileMenu ) ) {
-		imguiContextMenuEntry( "New" );
-		imguiContextMenuEntry( "Open" );
-		imguiContextMenuEntry( "Save" );
-		imguiContextMenuEntry( "Save As" );
+		if( imguiContextMenuEntry( "New" ) ) {
+			auto saveAndClear = []( AppData* app ) {
+				if( animatorMenuSave( app ) ) {
+					animatorClear( &app->animatorState );
+				}
+			};
+			auto clear = []( AppData* app ) { animatorClear( &app->animatorState ); };
+			if( animator->flags.unsavedChanges ) {
+				animatorMessageBox( animator, "Save changes?", "Unsaved changes", saveAndClear,
+				                    clear );
+			} else {
+				clear( app );
+			}
+		}
+		if( imguiContextMenuEntry( "Open" ) ) {
+			animatorMenuOpen( app );
+		}
+
+		if( imguiContextMenuEntry( "Save" ) ) {
+			animatorMenuSave( app );
+		}
+		if( imguiContextMenuEntry( "Save As" ) ) {
+			animatorMenuSaveAs( app );
+		}
 		imguiEndContainer();
+	}
+
+	if( imguiDialog( animator->messageBox.title, animator->messageBox.container ) ) {
+		auto messageBox = &animator->messageBox;
+
+		if( isKeyPressed( inputs, KC_Return ) ) {
+			if( messageBox->action.onYes ) {
+				messageBox->action.onYes( app );
+			}
+			imguiClose( messageBox->container );
+		} else if( isKeyPressed( inputs, KC_Escape ) ) {
+			imguiClose( messageBox->container );
+		} else {
+			imguiText( messageBox->text );
+			switch( messageBox->type ) {
+				case AnimatorState::MessageBox::OkCancel: {
+					imguiSameLine( 2 );
+					if( imguiButton( "Ok" ) ) {
+						if( messageBox->action.onYes ) {
+							messageBox->action.onYes( app );
+						}
+						imguiClose( messageBox->container );
+					}
+					if( imguiButton( "Cancel" ) ) {
+						imguiClose( messageBox->container );
+					}
+					break;
+				}
+				case AnimatorState::MessageBox::YesNoCancel: {
+					imguiSameLine( 3 );
+					if( imguiButton( "Yes" ) ) {
+						if( messageBox->action.onYes ) {
+							messageBox->action.onYes( app );
+						}
+						imguiClose( messageBox->container );
+					}
+					if( imguiButton( "No" ) ) {
+						if( messageBox->action.onNo ) {
+							messageBox->action.onNo( app );
+						}
+						imguiClose( messageBox->container );
+					}
+					if( imguiButton( "Cancel" ) ) {
+						imguiClose( messageBox->container );
+					}
+					break;
+				}
+			}
+		}
 	}
 
 	imguiUpdate( dt );
