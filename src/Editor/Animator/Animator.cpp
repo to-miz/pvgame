@@ -23,21 +23,22 @@ StringView to_string( AnimatorKeyframeData::EaseType type )
 	assert( type >= 0 && type < countof( EaseTypeNames ) );
 	return EaseTypeNames[type];
 }
-void from_string( StringView str, AnimatorKeyframeData::EaseType& value )
+void from_string( StringView str, AnimatorKeyframeData::EaseType* value )
 {
+	assert( value );
 	// accepts gibberish strings too, but that doesn't matter too much
-	// alternately could just loop over EaseTypeNames and compare
-	value = {};
+	// alternatively could just loop over EaseTypeNames and compare
+	*value = {};
 	if( str.size() ) {
 		switch( str[0] ) {
 			case 'l':
 			case 'L': {
-				value = AnimatorKeyframeData::Lerp;
+				*value = AnimatorKeyframeData::Lerp;
 				break;
 			}
 			case 's':
 			case 'S': {
-				value = AnimatorKeyframeData::Step;
+				*value = AnimatorKeyframeData::Step;
 				break;
 			}
 			case 'e':
@@ -46,12 +47,12 @@ void from_string( StringView str, AnimatorKeyframeData::EaseType& value )
 					switch( str[7] ) {
 						case 'b':
 						case 'B': {
-							value = AnimatorKeyframeData::EaseOutBounce;
+							*value = AnimatorKeyframeData::EaseOutBounce;
 							break;
 						}
 						case 'e':
 						case 'E': {
-							value = AnimatorKeyframeData::EaseOutElastic;
+							*value = AnimatorKeyframeData::EaseOutElastic;
 							break;
 						}
 					}
@@ -163,7 +164,8 @@ void populateVisibleGroups( AnimatorState* animator )
 	}
 }
 
-float animatorKeyframeEase( AnimatorKeyframeData::EaseType type, float t )
+float animatorKeyframeEase( Array< AnimatorCurveData > curves, AnimatorKeyframeData::EaseType type,
+                            int16 curveIndex, float t )
 {
 	switch( type ) {
 		case AnimatorKeyframeData::Lerp: {
@@ -182,18 +184,21 @@ float animatorKeyframeEase( AnimatorKeyframeData::EaseType type, float t )
 			return easeOutElastic( t );
 		}
 		case AnimatorKeyframeData::Curve: {
-			// TODO: implement
-			return 0;
+			assert( curveIndex >= 0 );
+			auto curve = &curves[curveIndex];
+			assert( curve->used );
+			return evaluateBezierForwardDifferencerFromX( &curve->differencer, t );
 		}
 		InvalidDefaultCase;
 	}
 	return 0;
 }
-AnimatorKeyframeData lerp( float t, const AnimatorKeyframeData& a, const AnimatorKeyframeData& b )
+AnimatorKeyframeData lerp( Array< AnimatorCurveData > curves, float t,
+                           const AnimatorKeyframeData& a, const AnimatorKeyframeData& b )
 {
 	AnimatorKeyframeData result = {};
 	assert( a.type == b.type );
-	t = animatorKeyframeEase( a.easeType, t );
+	t = animatorKeyframeEase( curves, a.easeType, a.curveIndex, t );
 	switch( a.type ) {
 		case AnimatorKeyframeData::type_translation: {
 			result.type = AnimatorKeyframeData::type_translation;
@@ -277,7 +282,7 @@ AnimatorKeyframeData getInterpolatedKeyframe( AnimatorState* animator, float t, 
 				auto duration = b->t - a->t;
 				if( duration > 0 ) {
 					auto adjustedT = ( t - a->t ) / duration;
-					result         = lerp( adjustedT, a->data, b->data );
+					result = lerp( makeArrayView( animator->curves ), adjustedT, a->data, b->data );
 				} else {
 					result = b->data;
 				}
@@ -450,6 +455,39 @@ void sortKeyframes( AnimatorState* animator )
 	sort( animator->keyframes.begin(), animator->keyframes.end(), compareKeyframes );
 }
 
+void freeCurveData( AnimatorState* animator, AnimatorKeyframe* keyframe )
+{
+	if( keyframe->data.curveIndex == ::size( animator->curves ) - 1 ) {
+		animator->curves.pop_back();
+	} else {
+		auto curve  = &animator->curves[keyframe->data.curveIndex];
+		curve->used = false;
+	}
+	keyframe->data.curveIndex = -1;
+}
+void setKeyframeEaseType( AnimatorState* animator, AnimatorKeyframe* keyframe,
+                          AnimatorKeyframeData::EaseType type )
+{
+	if( keyframe->data.easeType != type ) {
+		if( keyframe->data.easeType == AnimatorKeyframeData::Curve ) {
+			freeCurveData( animator, keyframe );
+		} else if( type == AnimatorKeyframeData::Curve ) {
+			auto index = find_index_if(
+			    animator->curves, []( const AnimatorCurveData& entry ) { return !entry.used; } );
+			if( !index ) {
+				index = ::size( animator->curves );
+				animator->curves.emplace_back();
+			}
+			auto curve = &animator->curves[index.get()];
+			curve->used = true;
+			curve->curve0 = {1, 0};
+			curve->curve1 = {0, 1};
+			curve->differencer = makeEasingCurve( curve->curve0, curve->curve1 );
+			keyframe->data.curveIndex = safe_truncate< int16 >( index.get() );
+		}
+		keyframe->data.easeType = type;
+	}
+}
 void addKeyframe( AnimatorState* animator, const AnimatorKeyframe& key )
 {
 	auto existing = find_first_where( animator->keyframes,
@@ -477,6 +515,12 @@ struct DeleteDuplicateKeyframesFunctor {
 	}
 };
 
+void onDeleteKeyframe( AnimatorState* animator, AnimatorKeyframe* keyframe )
+{
+	if( keyframe->data.easeType == AnimatorKeyframeData::Curve ) {
+		freeCurveData( animator, keyframe );
+	}
+}
 void deleteDuplicateKeyframes( AnimatorState* animator )
 {
 	if( !animator->currentAnimation ) {
@@ -489,15 +533,24 @@ void deleteDuplicateKeyframes( AnimatorState* animator )
 		auto group = selected->group;
 		erase_if( animator->keyframes, range.first, range.second,
 		          [animator, group]( const AnimatorKeyframes::value_type& key ) {
-			          return !key->selected && key->group == group;
+			          if( !key->selected && key->group == group ) {
+				          onDeleteKeyframe( animator, key.get() );
+				          return true;
+			          }
+			          return false;
 			      } );
 	}
 	setUnsavedChanges( animator );
 }
 void deleteSelectedKeyframes( AnimatorState* animator )
 {
-	erase_if( animator->keyframes,
-	          []( const AnimatorKeyframes::value_type& key ) { return key->selected; } );
+	erase_if( animator->keyframes, [animator]( const AnimatorKeyframes::value_type& key ) {
+		if( key->selected ) {
+			onDeleteKeyframe( animator, key.get() );
+			return true;
+		}
+		return false;
+	} );
 	clearSelectedKeyframes( animator );
 	setUnsavedChanges( animator );
 }
@@ -657,6 +710,7 @@ void animatorSave( StackAllocator* allocator, AnimatorState* animator, StringVie
 			FOR( keyframe : keyframes ) {
 				if( keyframe.group == id ) {
 					writeStartObject( writer );
+					writer->minimal = true;
 						writeProperty( writer, "t", keyframe.t );
 				        writeProperty( writer, "easeType", to_string( keyframe.data.easeType ) );
 				        switch( keyframe.data.type ) {
@@ -679,6 +733,7 @@ void animatorSave( StackAllocator* allocator, AnimatorState* animator, StringVie
 				        	InvalidDefaultCase;
 				        }
 			        writeEndObject( writer );
+					writer->minimal = false;
 				}
 			}
 		writeEndArray( writer );
@@ -780,7 +835,7 @@ void loadKeyframes( JsonObjectArray array, GroupId group, Tag tag,
 		serialize( keyframe["t"], added->t );
 		auto easeType = keyframe["easeType"];
 		if( jsonIsString( easeType ) ) {
-			from_string( easeType.getString(), added->data.easeType );
+			from_string( easeType.getString(), &added->data.easeType );
 		} else {
 			added->data.easeType = (AnimatorKeyframeData::EaseType)clamp(
 			    easeType.getInt(), AnimatorKeyframeData::Lerp, AnimatorKeyframeData::Curve );
@@ -1413,7 +1468,7 @@ void changeModelSpace( AnimatorNode* node, mat4arg model )
 	}
 }
 
-void doKeyframesControl( AppData* app, GameInputs* inputs )
+void doKeyframesControl( AppData* app, GameInputs* inputs, float dt )
 {
 	auto animator = &app->animatorState;
 	animator->flags.keyframesMoved = false;
@@ -1509,6 +1564,7 @@ void doKeyframesControl( AppData* app, GameInputs* inputs )
 		deleteSelectedKeyframes( animator );
 	}
 
+	// curve control
 	imguiNextColumn( &layout, curveControlWidth );
 
 	if( animator->selected.size() ) {
@@ -1517,7 +1573,123 @@ void doKeyframesControl( AppData* app, GameInputs* inputs )
 		int32 index = (int32)first->data.easeType;
 		if( imguiCombo( comboHandle, &index, makeArrayView( EaseTypeNames ), false ) ) {
 			FOR( entry : animator->selected ) {
-				entry->data.easeType = (AnimatorKeyframeData::EaseType)index;
+				setKeyframeEaseType( animator, entry, (AnimatorKeyframeData::EaseType)index );
+			}
+		}
+
+		auto container = imguiCurrentContainer();
+		auto curveControlHeight = app->height - container->rect.bottom - 10;
+		if( first->data.easeType == AnimatorKeyframeData::Curve ) {
+			curveControlHeight -= 24;
+		}
+		auto curveControlRect = imguiAddItem( curveControlWidth - 10, curveControlHeight );
+		curveControlRect = imguiInnerRect( curveControlRect );
+		setTexture( renderer, 0, null );
+		if( first->data.easeType == AnimatorKeyframeData::Step ) {
+			LINE_MESH_STREAM_BLOCK( stream, renderer ) {
+				stream->color = Color::White;
+				const auto count = 3;
+				if( !hasCapacity( stream, count, count + 1 ) ) {
+					break;
+				}
+				pushLineStripVertexUnchecked( stream, curveControlRect.left,
+				                              curveControlRect.bottom );
+				pushLineStripVertexUnchecked( stream, curveControlRect.right,
+				                              curveControlRect.bottom );
+				pushLineStripVertexUnchecked( stream, curveControlRect.right,
+				                              curveControlRect.top );
+				pushEndLineStripUnchecked( stream );
+			}
+		} else {
+			dt *= GameConstants::DeltaToFrameTime;
+			rectf curveRect   = curveControlRect;
+			rectf curveDomain = {0, 1.1f, 1, -0.1f};
+			if( first->data.easeType == AnimatorKeyframeData::Curve ) {
+				auto curve         = &animator->curves[first->data.curveIndex];
+				curveDomain.top    = max( curve->curve0.y, curve->curve1.y, 1.0f ) + 0.1f;
+				curveDomain.bottom = min( curve->curve0.y, curve->curve1.y, 0.0f ) - 0.1f;
+				auto h             = height( curveControlRect ) / -::height( curveDomain );
+				curveRect.top    = curveControlRect.bottom + h * ( curveDomain.bottom - 1 );
+				curveRect.bottom = curveControlRect.bottom + h * curveDomain.bottom;
+			} else if( first->data.easeType == AnimatorKeyframeData::EaseOutElastic ) {
+				curveRect.top += ::height( curveRect ) * 0.25f;
+			}
+			LINE_MESH_STREAM_BLOCK( stream, renderer ) {
+				stream->color                = Color::White;
+				pushQuadOutline( stream, curveRect );
+
+				static const int32 Counts[6] = {2, 0, 20, 40, 40, 20};
+				assert( first->data.easeType >= 0 && first->data.easeType < 6 );
+				const auto count = Counts[first->data.easeType];
+				if( !hasCapacity( stream, count, count + 1 ) ) {
+					break;
+				}
+				auto curves = makeArrayView( animator->curves );
+				auto w      = ::width( curveRect );
+				auto h      = ::height( curveRect );
+				for( auto i = 0; i < count; ++i ) {
+					auto t = i * ( 1.0f / ( count - 1 ) );
+					auto d = animatorKeyframeEase( curves, first->data.easeType,
+					                               first->data.curveIndex, t );
+
+					auto x = t * w + curveRect.left;
+					auto y = ( 1 - d ) * h + curveRect.top;
+					pushLineStripVertexUnchecked( stream, x, y );
+				}
+				pushEndLineStripUnchecked( stream );
+
+				if( first->data.easeType == AnimatorKeyframeData::Curve ) {
+					auto curve = &animator->curves[first->data.curveIndex];
+					auto c0    = curve->curve0;
+					c0.x       = c0.x * w + curveRect.left;
+					c0.y       = ( 1 - c0.y ) * h + curveRect.top;
+					auto c1    = curve->curve1;
+					c1.x       = c1.x * w + curveRect.left;
+					c1.y       = ( 1 - c1.y ) * h + curveRect.top;
+					pushLine2( stream, {curveRect.left, curveRect.bottom}, c0 );
+					pushLine2( stream, {curveRect.right, curveRect.top}, c1 );
+				}
+			}
+			if( first->data.easeType == AnimatorKeyframeData::Curve ) {
+				auto curve   = &animator->curves[first->data.curveIndex];
+				auto changed = false;
+				auto c0              = curve->curve0.y;
+				auto c1              = curve->curve1.y;
+				const float maxDelta = 0.01f * dt;
+				if( imguiPoint( &curve->curve0, curveDomain, curveControlRect ) ) {
+					if( curve->curve0.y < curveDomain.bottom + 0.1f && curve->curve0.y < c0
+					    && curve->curve0.y - c0 < maxDelta ) {
+						curve->curve0.y = c0 - maxDelta;
+					} else if( curve->curve0.y > curveDomain.top - 0.1f && curve->curve0.y > c0
+					           && curve->curve0.y - c0 > maxDelta ) {
+						curve->curve0.y = c0 + maxDelta;
+					}
+					changed = true;
+				}
+				if( imguiPoint( &curve->curve1, curveDomain, curveControlRect ) ) {
+					if( curve->curve1.y < curveDomain.bottom + 0.1f && curve->curve1.y < c1
+					    && curve->curve1.y - c1 < maxDelta ) {
+						curve->curve1.y = c1 - maxDelta;
+					} else if( curve->curve1.y > curveDomain.top - 0.1f && curve->curve1.y > c1
+					           && curve->curve1.y - c1 > maxDelta ) {
+						curve->curve1.y = c1 + maxDelta;
+					}
+					changed = true;
+				}
+				imguiSameLine( 2 );
+				auto format = defaultPrintFormat();
+				format.precision = 3;
+				if( imguiEditbox( &curve->curve0, format ) ) {
+					curve->curve0.x = clamp( curve->curve0.x );
+					changed = true;
+				}
+				if( imguiEditbox( &curve->curve1, format ) ) {
+					curve->curve1.x = clamp( curve->curve1.x );
+					changed = true;
+				}
+				if( changed ) {
+					curve->differencer = makeEasingCurve( curve->curve0, curve->curve1 );
+				}
 			}
 		}
 	}
@@ -2423,7 +2595,8 @@ void doEditor( AppData* app, GameInputs* inputs, rectfarg rect )
 							node->rotation -=
 							    dot( plane.rotationNormal, node->rotation ) * plane.rotationNormal;
 							node->rotation -= plane.rotationNormal * rotation;
-							node->rotation += dot( plane.rotationNormal, editor->clickedRotation ) * plane.rotationNormal;
+							node->rotation += dot( plane.rotationNormal, editor->clickedRotation )
+							                  * plane.rotationNormal;
 							FOR( element : node->rotation.elements ) {
 								element = simplifyAngle( element );
 							}
@@ -2581,7 +2754,7 @@ void doAnimator( AppData* app, GameInputs* inputs, bool focus, float dt )
 	imguiEndColumn( &layout );
 
 	if( animator->currentAnimation ) {
-		doKeyframesControl( app, inputs );
+		doKeyframesControl( app, inputs, dt );
 	}
 
 	if( isHotkeyPressed( inputs, KC_Key_O, KC_Control ) ) {

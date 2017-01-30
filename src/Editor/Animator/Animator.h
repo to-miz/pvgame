@@ -29,10 +29,16 @@ struct AnimatorNode {
 	short_string< 10 > name = {};
 };
 
+struct AnimatorCurveData {
+	bool used = false;
+	vec2 curve0;
+	vec2 curve1;
+	BezierForwardDifferencerData differencer;
+};
 struct AnimatorKeyframeData {
 	enum : int8 { type_none, type_translation, type_rotation, type_scale, type_frame } type;
 	enum EaseType : int8 { Lerp, Step, Smoothstep, EaseOutBounce, EaseOutElastic, Curve } easeType;
-
+	int16 curveIndex; // index to curve data or -1
 	union {
 		vec3 translation;
 		vec3 rotation;
@@ -140,6 +146,7 @@ struct AnimatorState {
 	std::vector< AnimatorKeyframe* > selected;
 	std::vector< AnimatorGroup > groups;
 	std::vector< AnimatorGroupDisplay > visibleGroups;
+	std::vector< AnimatorCurveData > curves;
 	AnimatorNodes baseNodes;
 	AnimatorNodes nodes;
 	AnimatorAnimations animations;

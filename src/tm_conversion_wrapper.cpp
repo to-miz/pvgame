@@ -69,17 +69,18 @@ tmp_size_t snprint( char* buffer, tmp_size_t len, const PrintFormat& initialForm
 tmp_size_t snprint( char* buffer, tmp_size_t len, const PrintFormat& initialFormatting,
                     const vec2& value )
 {
-	return ::snprint( buffer, len, "{{{}, {}}", value.x, value.y );
+	return ::snprint( buffer, len, "{{{}, {}}", initialFormatting, value.x, value.y );
 }
 tmp_size_t snprint( char* buffer, tmp_size_t len, const PrintFormat& initialFormatting,
                     const vec3& value )
 {
-	return ::snprint( buffer, len, "{{{}, {}, {}}", value.x, value.y, value.z );
+	return ::snprint( buffer, len, "{{{}, {}, {}}", initialFormatting, value.x, value.y, value.z );
 }
 tmp_size_t snprint( char* buffer, tmp_size_t len, const PrintFormat& initialFormatting,
                     const vec4& value )
 {
-	return ::snprint( buffer, len, "{{{}, {}, {}, {}}", value.x, value.y, value.z, value.w );
+	return ::snprint( buffer, len, "{{{}, {}, {}, {}}", initialFormatting, value.x, value.y,
+	                  value.z, value.w );
 }
 tmp_size_t snprint( char* buffer, tmp_size_t len, const PrintFormat& initialFormatting,
                     const rectf& value )
@@ -205,7 +206,7 @@ int32 scan_values( StringView str, Array< T > values )
 	FOR( entry : values ) {
 		str = trimLeftNonNumeric( str );
 		entry = {};
-		str.advance( scan( str, &entry ) );
+		str.pop_front( scan( str, &entry ) );
 	}
 	return distance( first, str.begin() );
 }
@@ -270,4 +271,23 @@ template <> uint16 convert_to< uint16 >( StringView str, uint16 def )
 	uint32 result = def;
 	scan_u32_n( str.data(), str.size(), 10, &result );
 	return (uint16)result;
+}
+
+template <> vec2 convert_to< vec2 >( StringView str, vec2 def )
+{
+	auto result = def;
+	scan_values( str, makeArrayView( result.elements ) );
+	return result;
+}
+template <> vec3 convert_to< vec3 >( StringView str, vec3 def )
+{
+	auto result = def;
+	scan_values( str, makeArrayView( result.elements ) );
+	return result;
+}
+template <> rectf convert_to< rectf >( StringView str, rectf def )
+{
+	auto result = def;
+	scan_values( str, makeArrayView( result.elements ) );
+	return result;
 }

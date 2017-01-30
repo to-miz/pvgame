@@ -604,6 +604,18 @@ void pushLine( LineMeshStream* stream, vec3arg start, vec3arg end )
 	pushLineStripVertexUnchecked( stream, end.x, end.y, end.z );
 	pushEndLineStripUnchecked( stream );
 }
+void pushLine2( LineMeshStream* stream, vec2arg start, vec2arg end )
+{
+	PROFILE_FUNCTION();
+
+	if( !hasCapacity( stream, 2, 3 ) ) {
+		OutOfMemory();
+		return;
+	}
+	pushLineStripVertexUnchecked( stream, start.x, start.y, 0 );
+	pushLineStripVertexUnchecked( stream, end.x, end.y, 0 );
+	pushEndLineStripUnchecked( stream );
+}
 void pushAabbOutline( LineMeshStream* stream, aabbarg box )
 {
 	PROFILE_FUNCTION();

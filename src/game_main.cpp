@@ -100,6 +100,7 @@ global_var string_builder* GlobalDebugPrinter = nullptr;
 
 #include "Core/Hash.cpp"
 #include "Core/FixedSizeAllocator.cpp"
+#include "tm_bezier_wrapper.cpp"
 
 namespace GameConstants
 {

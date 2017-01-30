@@ -1205,24 +1205,16 @@ void imguiShowContextMenu( int32 containerIndex, vec2arg position )
 	imguiShowContainerAt( containerIndex, position );
 }
 
-bool imguiEditbox( ImGuiHandle handle, StringView name, char* data, int32* length, int32 size,
-                   float width, float height )
+bool imguiEditbox( ImGuiHandle handle, char* data, int32* length, int32 size, rectfarg editboxRect )
 {
-
 	assert( length );
 	assert( *length <= size );
 
 	auto renderer = ImGui->renderer;
 	auto font     = ImGui->font;
 	auto inputs   = ImGui->inputs;
-	auto style    = &ImGui->style;
 
 	reset( font );
-	auto nameWidth   = stringWidth( font, name );
-	auto rect        = imguiAddItem( width + nameWidth + style->innerPadding, height );
-	auto editboxRect = rect;
-	editboxRect.left += nameWidth + style->innerPadding;
-	editboxRect.right = editboxRect.left + width;
 	auto textRect     = imguiInnerRect( editboxRect );
 	// auto nameRect = imguiInnerRect( rect );
 
@@ -1393,9 +1385,6 @@ bool imguiEditbox( ImGuiHandle handle, StringView name, char* data, int32* lengt
 			}
 		}
 
-		renderer->color = multiply( color, ImGui->style.name );
-		renderTextClipped( renderer, font, name, rect );
-
 		renderer->color = multiply( color, ImGui->style.editboxText );
 		if( state ) {
 			renderTextClippedOffset( renderer, font, text, textRect, state->textOffset );
@@ -1406,6 +1395,31 @@ bool imguiEditbox( ImGuiHandle handle, StringView name, char* data, int32* lengt
 
 	*length = text.size();
 	return changed;
+}
+bool imguiEditbox( ImGuiHandle handle, StringView name, char* data, int32* length, int32 size,
+                   float width, float height )
+{
+	auto renderer = ImGui->renderer;
+	auto font     = ImGui->font;
+	auto style    = &ImGui->style;
+
+	auto nameWidth   = stringWidth( font, name );
+	auto rect        = imguiAddItem( width + nameWidth + style->innerPadding, height );
+	auto editboxRect = rect;
+	editboxRect.left += nameWidth + style->innerPadding;
+	editboxRect.right = editboxRect.left + width;
+
+	RENDER_COMMANDS_STATE_BLOCK( renderer ) {
+		renderer->color = multiply( renderer->color, style->name );
+		renderTextClipped( renderer, font, name, rect );
+	}
+
+	return imguiEditbox( handle, data, length, size, editboxRect );
+}
+bool imguiEditbox( ImGuiHandle handle, char* data, int32* length, int32 size,
+                   float width, float height )
+{
+	return imguiEditbox( handle, data, length, size, imguiAddItem( width, height ) );
 }
 bool imguiEditbox( StringView name, char* data, int32* length, int32 size, float width,
                    float height )
@@ -1445,12 +1459,40 @@ bool imguiEditbox( ImGuiHandle handle, StringView name, T* value )
 		}
 		return false;
 	} else {
-		auto str    = toNumberString( *value );
-		auto result = imguiEditbox( handle, name, str.data, &str.count, str.count,
+		char buffer[100];
+		auto len = snprint( buffer, countof( buffer ), "{}", *value );
+		auto result = imguiEditbox( handle, name, buffer, &len, countof( buffer ),
 		                            ImGui->style.editboxWidth, ImGui->style.editboxHeight );
 		if( imguiHasFocus( handle ) ) {
-			memcpy( ImGui->editboxStatic, str.data, str.count );
-			ImGui->editboxStaticCount = str.count;
+			memcpy( ImGui->editboxStatic, buffer, len );
+			ImGui->editboxStaticCount = len;
+		}
+		return result;
+	}
+}
+template < class T >
+bool imguiEditbox( ImGuiHandle handle, T* value,
+                   const PrintFormat& initialFormatting = defaultPrintFormat() )
+{
+	assert( value );
+	handle.type = ImGuiControlType::Editbox;
+	if( imguiHasFocus( handle ) ) {
+		if( imguiEditbox( handle, ImGui->editboxStatic, &ImGui->editboxStaticCount,
+		                  countof( ImGui->editboxStatic ), ImGui->style.editboxWidth,
+		                  ImGui->style.editboxHeight ) ) {
+			StringView view = {ImGui->editboxStatic, ImGui->editboxStaticCount};
+			*value          = convert_to< T >( view );
+			return true;
+		}
+		return false;
+	} else {
+		char buffer[100];
+		auto len = snprint( buffer, countof( buffer ), "{}", initialFormatting, *value );
+		auto result = imguiEditbox( handle, buffer, &len, countof( buffer ),
+		                            ImGui->style.editboxWidth, ImGui->style.editboxHeight );
+		if( imguiHasFocus( handle ) ) {
+			memcpy( ImGui->editboxStatic, buffer, len );
+			ImGui->editboxStaticCount = len;
 		}
 		return result;
 	}
@@ -1460,6 +1502,12 @@ bool imguiEditbox( StringView name, T* value )
 {
 	auto handle = imguiMakeHandle( value, ImGuiControlType::Editbox );
 	return imguiEditbox( handle, name, value );
+}
+template < class T >
+bool imguiEditbox( T* value, const PrintFormat& initialFormatting = defaultPrintFormat() )
+{
+	auto handle = imguiMakeHandle( value, ImGuiControlType::Editbox );
+	return imguiEditbox( handle, value, initialFormatting );
 }
 
 void imguiUpdate( float dt )

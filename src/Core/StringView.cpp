@@ -97,8 +97,8 @@ struct StringView {
 	char back() const
 	{
 		assert( ptr );
-		assert( sz );
-		return ptr[unsignedof( sz ) - 1];
+		assert( sz > 0 );
+		return ptr[sz - 1];
 	}
 
 	char front() const
@@ -320,17 +320,17 @@ StringView trimLeftNonNumeric( StringView str )
 {
 	const StringView numericSign = "0123456789-+";
 
-	int32 pos;
+	StringViewPos pos;
 	auto len = str.size();
 	for( ;; ) {
 		pos = findFirstOf( str, numericSign );
 		if( pos ) {
 			if( str[pos] == '-' || str[pos] == '+' ) {
 				if( pos + 1 >= len ) {
-					++pos;
+					++pos.pos;
 					break;
 				}
-				auto c = str[pos + 1];
+				auto c = str[pos.pos + 1];
 				if( c < '0' || c > '9' ) {
 					str = substr( str, pos + 1 );
 					continue;
