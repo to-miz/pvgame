@@ -242,8 +242,26 @@ struct StackAllocatorPartition {
 	void commit()
 	{
 		assert( end( &prim ) <= back( allocator ) );
-		allocator->size = back( &prim ) - begin( allocator );
+		allocator->size                = back( &prim ) - begin( allocator );
 		allocator->lastPoppedAlignment = prim.lastPoppedAlignment;
-		allocator       = nullptr;
+		allocator                      = nullptr;
 	}
+};
+
+struct StackAllocatorGuard {
+	StackAllocator* allocator = nullptr;
+	StackAllocator state      = {};
+
+	StackAllocatorGuard() = delete;
+	StackAllocatorGuard( StackAllocator* allocator ) : allocator( allocator ), state( *allocator )
+	{
+	}
+	~StackAllocatorGuard()
+	{
+		if( allocator ) {
+			*allocator = state;
+		}
+	}
+
+	void commit() { allocator = nullptr; }
 };

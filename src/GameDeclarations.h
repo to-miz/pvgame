@@ -55,10 +55,12 @@ struct PlatformServices {
 
 	MallocType* malloc;
 	ReallocType* realloc;
+	ReallocType* reallocInPlace;
 	MfreeType* mfree;
 
 	AllocateType* allocate;
 	ReallocateType* reallocate;
+	ReallocateType* reallocateInPlace;
 	FreeType* free;
 };
 

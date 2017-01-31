@@ -61,7 +61,7 @@ void from_string( StringView str, AnimatorKeyframeData::EaseType* value )
 			}
 			case 'c':
 			case 'C': {
-				// TODO: implement
+				*value = AnimatorKeyframeData::Curve;
 				break;
 			}
 		}
@@ -309,13 +309,15 @@ AnimatorNode getCurrentFrameNode( AnimatorState* animator, AnimatorNode* node )
 	    getInterpolatedKeyframe( animator, animator->currentFrame, translationId );
 	auto rotationKeyframe = getInterpolatedKeyframe( animator, animator->currentFrame, rotationId );
 	auto scaleKeyframe    = getInterpolatedKeyframe( animator, animator->currentFrame, scaleId );
-	auto frameKeyframe    = getInterpolatedKeyframe( animator, animator->currentFrame, frameId );
 
 	result.translation =
 	    get_variant_or_default( translationKeyframe, translation, base->translation );
 	result.rotation = get_variant_or_default( rotationKeyframe, rotation, base->rotation );
 	result.scale    = get_variant_or_default( scaleKeyframe, scale, base->scale );
-	result.frame    = get_variant_or_default( frameKeyframe, frame, base->frame );
+	if( base->assetType == AnimatorAsset::type_collection ) {
+		auto frameKeyframe = getInterpolatedKeyframe( animator, animator->currentFrame, frameId );
+		result.voxel.frame = get_variant_or_default( frameKeyframe, frame, base->voxel.frame );
+	}
 
 	result.parent   = node->parent;
 	result.selected = node->selected;
@@ -327,10 +329,10 @@ AnimatorNode toAbsoluteNode( const AnimatorNode* base, const AnimatorNode* rel )
 	result.translation += rel->translation;
 	result.rotation += rel->rotation;
 	result.scale = multiplyComponents( result.scale, rel->scale );
-	result.frame += rel->frame;
+	if( base->assetType == AnimatorAsset::type_collection ) {
+		result.voxel.frame += rel->voxel.frame;
+	}
 
-	result.parentId = base->parentId;
-	result.id       = base->id;
 	result.parent   = rel->parent;
 	return result;
 }
@@ -342,10 +344,10 @@ AnimatorNode toRelativeNode( const AnimatorNode* base, const AnimatorNode* abs )
 	result.scale.x     = safeDivide( abs->scale.x, base->scale.x, 1 );
 	result.scale.y     = safeDivide( abs->scale.y, base->scale.y, 1 );
 	result.scale.z     = safeDivide( abs->scale.z, base->scale.z, 1 );
-	result.frame       = abs->frame - base->frame;
+	if( base->assetType == AnimatorAsset::type_collection ) {
+		result.voxel.frame = abs->voxel.frame - base->voxel.frame;
+	}
 
-	result.parentId = base->parentId;
-	result.id       = base->id;
 	result.parent   = abs->parent;
 	return result;
 }
@@ -366,7 +368,7 @@ AnimatorKeyframe toAbsoluteKeyframe( const AnimatorNode* base, const AnimatorKey
 			break;
 		}
 		case AnimatorKeyframeData::type_frame: {
-			result.data.frame += base->frame;
+			result.data.frame += base->voxel.frame;
 			break;
 		}
 		InvalidDefaultCase;
@@ -392,7 +394,7 @@ AnimatorKeyframe toRelativeKeyframe( const AnimatorNode* base, const AnimatorKey
 			break;
 		}
 		case AnimatorKeyframeData::type_frame: {
-			result.data.frame -= base->frame;
+			result.data.frame -= base->voxel.frame;
 			break;
 		}
 		InvalidDefaultCase;
@@ -441,6 +443,22 @@ AnimatorNode* addExistingNode( AnimatorState* animator, const AnimatorNode& node
 	result->childrenCount = 0;
 	addAnimatorGroups( animator, result->name, makeArrayView( animator->fieldNames ), result->id );
 	return result;
+}
+
+void addNewAsset( AnimatorState* animator, StringView filename, AnimatorAsset::Type type )
+{
+	switch( type ) {
+		case AnimatorAsset::type_collection: {
+			auto asset = std::make_unique< AnimatorAsset >(
+			    animatorLoadVoxelCollectionAsset( filename, animator->assetIds + 1 ) );
+			if( asset ) {
+				animator->assets.emplace_back( std::move( asset ) );
+				++animator->assetIds;
+			}
+			break;
+		}
+		InvalidDefaultCase;
+	}
 }
 
 void sortNodes( AnimatorState* animator )
@@ -552,6 +570,34 @@ void deleteSelectedKeyframes( AnimatorState* animator )
 		return false;
 	} );
 	clearSelectedKeyframes( animator );
+	setUnsavedChanges( animator );
+}
+void deleteSelectedAssets( AnimatorState* animator )
+{
+	erase_if( animator->assets, [animator]( const UniqueAnimatorAsset& entry ) {
+		auto asset = entry.get();
+		if( asset->item.selected ) {
+			FOR( it : animator->nodes ) {
+				auto node = it.get();
+				if( node->asset == asset ) {
+					node->assetId   = -1;
+					node->assetType = AnimatorAsset::type_none;
+					node->asset     = nullptr;
+					// TODO: delete keyframes
+				}
+			}
+			FOR( it : animator->baseNodes ) {
+				auto node = it.get();
+				if( node->asset == asset ) {
+					node->assetId   = -1;
+					node->assetType = AnimatorAsset::type_none;
+					node->asset   = nullptr;
+				}
+			}
+			return true;
+		}
+		return false;
+	} );
 	setUnsavedChanges( animator );
 }
 
@@ -689,8 +735,21 @@ void animatorSave( StackAllocator* allocator, AnimatorState* animator, StringVie
 			writeProperty( writer, "length", node->length );
 			writeProperty( writer, "id", node->id );
 			writeProperty( writer, "parentId", NullableInt32{node->parentId} );
-			writeProperty( writer, "voxel", NullableInt32{node->voxel} );
-			writeProperty( writer, "frame", node->frame );
+			writeProperty( writer, "assetId", NullableInt32{node->assetId} );
+			switch( node->assetType ) {
+				case AnimatorAsset::type_none: {
+					break;
+				}
+				case AnimatorAsset::type_collection: {
+					writePropertyName( writer, "voxel" );
+					writeStartObject( writer );
+						writeProperty( writer, "animation", NullableInt32{node->voxel.animation} );
+						writeProperty( writer, "frame", node->voxel.frame );
+					writeEndObject( writer );
+					break;
+				}
+				InvalidDefaultCase;
+			}
 			writeProperty( writer, "name", StringView{node->name} );
 		writeEndObject( writer );
 	};
@@ -700,7 +759,16 @@ void animatorSave( StackAllocator* allocator, AnimatorState* animator, StringVie
 		writeProperty( writer, "rotation", node->rotation );
 		writeProperty( writer, "scale", node->scale );
 		writeProperty( writer, "id", node->id );
-		writeProperty( writer, "frame", node->frame );
+		switch( node->assetType ) {
+			case AnimatorAsset::type_none: {
+				break;
+			}
+			case AnimatorAsset::type_collection: {
+				writeProperty( writer, "frame", node->voxel.frame );
+				break;
+			}
+			InvalidDefaultCase;
+		}
 	};
 
 	auto writeKeyframes = []( JsonWriter* writer, Array< AnimatorKeyframe > keyframes,
@@ -776,7 +844,16 @@ void animatorSave( StackAllocator* allocator, AnimatorState* animator, StringVie
 						        writeKeyframes( writer, keyframes, "translation", group + 1 );
 						        writeKeyframes( writer, keyframes, "rotation", group + 2 );
 						        writeKeyframes( writer, keyframes, "scale", group + 3 );
-						        writeKeyframes( writer, keyframes, "frame", group + 4 );
+						        switch( node.assetType ) {
+						        	case AnimatorAsset::type_none: {
+						        		break;
+						        	}
+						        	case AnimatorAsset::type_collection: {
+								        writeKeyframes( writer, keyframes, "frame", group + 4 );
+						        		break;
+						        	}
+						        	InvalidDefaultCase;
+						        }
 							writeEndObject( writer );
 						writeEndObject( writer );
 			        }
@@ -881,8 +958,10 @@ bool animatorOpen( StackAllocator* allocator, AnimatorState* animator, StringVie
 			serialize( node["length"], added->length );
 			serialize( node["id"], added->id );
 			serialize( node["parentId"], added->parentId, -1 );
-			serialize( node["voxel"], added->voxel, -1 );
-			serialize( node["frame"], added->frame );
+			serialize( node["assetId"], added->assetId, -1 );
+			auto voxel = node["voxel"].getObject();
+			serialize( voxel["animation"], added->voxel.animation, -1 );
+			serialize( voxel["frame"], added->voxel.frame );
 			added->name = node["name"].getString();
 			animator->nodes.push_back( std::move( addedContainer ) );
 		}
@@ -908,7 +987,7 @@ bool animatorOpen( StackAllocator* allocator, AnimatorState* animator, StringVie
 				serialize( node["translation"], addedNode->translation );
 				serialize( node["rotation"], addedNode->rotation );
 				serialize( node["scale"], addedNode->scale );
-				serialize( node["frame"], addedNode->frame );
+				serialize( node["frame"], addedNode->voxel.frame );
 
 				auto keyframes = node["keyframes"].getObject();
 				auto group = makeAnimatorGroup( addedNode->id, 0 );
@@ -1729,6 +1808,32 @@ void doAnimatorMenu( AppData* app, GameInputs* inputs, rectfarg rect )
 		}
 		imguiEndDropGroup();
 	}
+	if( imguiBeginDropGroup( "Assets", &editor->expandedFlags, AnimatorEditor::Assets ) ) {
+		imguiListboxIntrusive( &editor->assetsScrollPos, animator->assets.data(),
+		                       sizeof( AnimatorAsset ), ::size( animator->assets ), 200, 200 );
+		auto firstIt = find_first_where( animator->assets, entry->item.selected );
+		auto first = ( firstIt ) ? ( firstIt->get() ) : ( nullptr );
+		if( first ) {
+			if( imguiEditbox( "Name", first->name, &first->nameLength, countof( first->name ) ) ) {
+				first->setName( {first->name, first->nameLength} );
+			}
+		}
+		imguiSameLine( 1 );
+		if( imguiButton( "Add Voxel Collection", imguiRelative() ) ) {
+
+		}
+		if( imguiButton( "Add Texture Map", imguiRelative() ) ) {
+
+		}
+		if( imguiButton( "Remove Selected", imguiRelative() ) ) {
+			if( first ) {
+				animatorMessageBox(
+				    animator, "Selected assets will be deleted.", "Delete Assets",
+				    []( AppData* app ) { deleteSelectedAssets( &app->animatorState ); } );
+			}
+		}
+		imguiEndDropGroup();
+	}
 	if( imguiBeginDropGroup( "Nodes", &editor->expandedFlags, AnimatorEditor::Nodes ) ) {
 		auto handle = imguiMakeHandle( &editor->nodesListboxScroll );
 		int32 index = -1;
@@ -1809,34 +1914,8 @@ void doAnimatorMenu( AppData* app, GameInputs* inputs, rectfarg rect )
 			}
 			{
 				imguiSameLine( 2 );
-				imguiText( "Voxel" );
-				auto comboHandle = imguiMakeHandle( &node.voxel );
-				int32 index      = node.voxel;
-				if( imguiCombo( comboHandle, &index, animator->voxels.names, true ) ) {
-					node.voxel = safe_truncate< int16 >( index );
-					setUnsavedChanges( animator );
-				}
-
-				if( node.voxel >= 0 ) {
-					imguiSameLine( 2 );
-				}
-				if( imguiEditbox( "Frame", &node.frame ) ) {
-					setUnsavedChanges( animator );
-				}
-				if( node.voxel >= 0 ) {
-					auto frames = animator->voxels.voxels.animations[node.voxel].range;
-					float val = (float)( node.frame );
-					if( imguiSlider( imguiMakeHandle( &node.frame ), &val, 0,
-					                 (float)width( frames ) - 1 ) ) {
-						node.frame = (uint16)val;
-						setUnsavedChanges( animator );
-					}
-				}
-			}
-			{
-				imguiSameLine( 2 );
 				imguiText( "Parent" );
-				auto comboHandle = imguiMakeHandle( &node.parentId );
+				auto comboHandle = imguiMakeHandle( &selected->parentId );
 				int32 index      = -1;
 				if( node.parent ) {
 					auto pos = find_if( animator->nodes,
@@ -1883,6 +1962,69 @@ void doAnimatorMenu( AppData* app, GameInputs* inputs, rectfarg rect )
 					}
 				}
 			}
+			{
+				imguiSameLine( 2 );
+				imguiText( "Asset" );
+				auto comboHandle = imguiMakeHandle( &selected->assetType );
+				int32 index      = -1;
+				if( node.asset ) {
+					index =
+					    find_index_if( animator->assets, [node](
+					                                         const UniqueAnimatorAsset& entry ) {
+						    return entry.get() == node.asset;
+						} ).value;
+				}
+				if( imguiCombo(
+				        comboHandle, (const void*)animator->assets.data(),
+				        (int32)sizeof( UniqueAnimatorAsset* ), ::size( animator->assets ), &index,
+				        []( const void* entry ) -> StringView {
+					        assert_alignment( entry, alignof( UniqueAnimatorAsset* ) );
+					        auto asset = ( (UniqueAnimatorAsset*)entry )->get();
+					        return {asset->name, asset->nameLength};
+					    },
+				        true ) ) {
+					setUnsavedChanges( animator );
+					if( index >= 0 ) {
+						auto asset           = animator->assets[index].get();
+						node.asset           = asset;
+						node.assetType       = asset->type;
+						node.voxel.animation = -1;
+						node.voxel.frame     = 0;
+					} else {
+						node.asset     = nullptr;
+						node.assetType = {};
+					}
+				}
+			}
+			if( node.assetType == AnimatorAsset::type_collection ) {
+				auto collection = get_variant( *node.asset, collection );
+				imguiSameLine( 2 );
+				imguiText( "Voxel" );
+				auto comboHandle = imguiMakeHandle( &node.voxel );
+				int32 index      = node.voxel.animation;
+				if( imguiCombo( comboHandle, &index, collection->names, true ) ) {
+					node.voxel.animation = safe_truncate< int16 >( index );
+					setUnsavedChanges( animator );
+				}
+
+				if( node.voxel.animation >= 0 ) {
+					imguiSameLine( 2 );
+				}
+				if( imguiEditbox( "Frame", &node.voxel.frame ) ) {
+					setUnsavedChanges( animator );
+				}
+				if( node.assetType == AnimatorAsset::type_collection
+				    && node.voxel.animation >= 0 ) {
+
+					auto frames = collection->voxels.animations[node.voxel.animation].range;
+					float val = (float)( node.voxel.frame );
+					if( imguiSlider( imguiMakeHandle( &node.voxel.frame ), &val, 0,
+					                 (float)width( frames ) - 1 ) ) {
+						node.voxel.frame = (uint16)val;
+						setUnsavedChanges( animator );
+					}
+				}
+			}
 
 			if( animator->currentAnimation && animator->flags.showRelativeProperties ) {
 				assert( base );
@@ -1895,11 +2037,12 @@ void doAnimatorMenu( AppData* app, GameInputs* inputs, rectfarg rect )
 	}
 
 	{
+		imguiSameLine( 1 );
 		auto pushHandle = imguiMakeHandle( editor );
 		auto pushButton = []( ImGuiHandle handle, uint8 index, StringView name,
 		                      AnimatorMouseMode mode, AnimatorEditor* editor ) {
 			handle.shortIndex = index;
-			if( imguiPushButton( handle, name, editor->mouseMode == mode ) ) {
+			if( imguiPushButton( handle, name, editor->mouseMode == mode, imguiRelative() ) ) {
 				editor->mouseMode = mode;
 			}
 		};
@@ -1909,11 +2052,12 @@ void doAnimatorMenu( AppData* app, GameInputs* inputs, rectfarg rect )
 	}
 
 	if( imguiBeginDropGroup( "Plane", &editor->expandedFlags, AnimatorEditor::Plane ) ) {
+		imguiSameLine( 1 );
 		auto pushHandle = imguiMakeHandle( editor );
 		auto pushButton = []( ImGuiHandle handle, uint8 index, StringView name,
 		                      AnimatorMousePlane mode, AnimatorEditor* editor ) {
 			handle.shortIndex = index;
-			if( imguiPushButton( handle, name, editor->mousePlane == mode ) ) {
+			if( imguiPushButton( handle, name, editor->mousePlane == mode, imguiRelative() ) ) {
 				editor->mousePlane = mode;
 			}
 		};
@@ -2031,7 +2175,7 @@ void doAnimatorMenu( AppData* app, GameInputs* inputs, rectfarg rect )
 		if( compareVector( current.scale, node->scale ) ) {
 			scale.pop_back();
 		}
-		if( current.frame == node->frame ) {
+		if( current.voxel.frame == node->voxel.frame ) {
 			frame.pop_back();
 		}
 		if( imguiButton( translation ) ) {
@@ -2059,7 +2203,7 @@ void doAnimatorMenu( AppData* app, GameInputs* inputs, rectfarg rect )
 			AnimatorKeyframe key = {};
 			key.t                = animator->currentFrame;
 			key.group            = makeAnimatorGroup( node->id, 4 );
-			set_variant( key.data, frame ) = node->frame;
+			set_variant( key.data, frame ) = node->voxel.frame;
 			addKeyframe( animator, key );
 		}
 
@@ -2357,15 +2501,17 @@ void doEditor( AppData* app, GameInputs* inputs, rectfarg rect )
 
 	// render voxels
 	setRenderState( renderer, RenderStateType::DepthTest, true );
-	setTexture( renderer, 0, animator->voxels.voxels.texture );
 	auto stack = renderer->matrixStack;
 	pushMatrix( stack );
-	FOR( node : animator->nodes ) {
-		if( node->voxel >= 0 ) {
-			auto voxels = &animator->voxels.voxels;
-			auto range  = voxels->animations[node->voxel].range;
+	FOR( entry : animator->nodes ) {
+		auto node = entry.get();
+		if( node->assetType == AnimatorAsset::type_collection && node->voxel.animation >= 0 ) {
+			auto collection = get_variant( *node->asset, collection );
+			setTexture( renderer, 0, collection->voxels.texture );
+			auto voxels = &collection->voxels;
+			auto range  = voxels->animations[node->voxel.animation].range;
 			if( range ) {
-				auto entry = &voxels->frames[range.min + ( node->frame % width( range ) )];
+				auto entry = &voxels->frames[range.min + ( node->voxel.frame % width( range ) )];
 				currentMatrix( stack ) =
 				    matrixTranslation( Vec3( -entry->offset.x, entry->offset.y, 0 ) ) * node->world;
 				addRenderCommandMesh( renderer, entry->mesh );
@@ -2443,12 +2589,16 @@ void doEditor( AppData* app, GameInputs* inputs, rectfarg rect )
 
 				FOR( entry : animator->nodes ) {
 					auto node = entry.get();
-					if( node->voxel >= 0 ) {
-						auto animation  = &animator->voxels.voxels.animations[node->voxel];
+					if( node->assetType == AnimatorAsset::type_collection
+					    && node->voxel.animation >= 0 ) {
+
+						auto collection = get_variant( *node->asset, collection );
+						auto animation =
+						    &collection->voxels.animations[node->voxel.animation];
 						auto range      = animation->range;
-						auto frameIndex = range.min /* + ( node->frame % width( range ) )*/;
-						auto info       = &animator->voxels.voxels.frameInfos[frameIndex];
-						auto frame      = &animator->voxels.voxels.frames[frameIndex];
+						auto frameIndex = range.min + ( node->voxel.frame % width( range ) );
+						auto info       = &collection->voxels.frameInfos[frameIndex];
+						auto frame      = &collection->voxels.frames[frameIndex];
 						auto mat = matrixTranslation( Vec3( -frame->offset.x, frame->offset.y, 0 ) )
 						           * node->world;
 
@@ -2626,7 +2776,7 @@ void doEditor( AppData* app, GameInputs* inputs, rectfarg rect )
 			} else {
 				node.parentId = -1;
 			}
-			node.voxel = -1;
+			node.voxel.animation = -1;
 			/*auto ray = pointToWorldSpaceRay( invViewProj.matrix, inputs->mouse.position,
 			                                 app->width, app->height );
 			auto position = rayIntersectionWithPlane( ray, {}, {0, 0, 1} );*/
@@ -2686,14 +2836,7 @@ void doAnimator( AppData* app, GameInputs* inputs, bool focus, float dt )
 		addNewNode( animator, node );
 		populateVisibleGroups( animator );
 
-		if( loadVoxelCollection( allocator, "Data/voxels/hero.json", &animator->voxels.voxels ) ) {
-			animator->voxels.names =
-			    makeArray( allocator, StringView, animator->voxels.voxels.animations.size() );
-			zip_for( animator->voxels.names, animator->voxels.voxels.animations ) {
-				*first = second->name;
-			}
-		}
-
+		addNewAsset( animator, "Data/voxels/hero.json", AnimatorAsset::type_collection );
 #endif
 
 		animator->initialized = true;
@@ -2757,13 +2900,13 @@ void doAnimator( AppData* app, GameInputs* inputs, bool focus, float dt )
 		doKeyframesControl( app, inputs, dt );
 	}
 
-	if( isHotkeyPressed( inputs, KC_Key_O, KC_Control ) ) {
+	if( isHotkeyPressed( inputs, KC_O, KC_Control ) ) {
 		animatorMenuOpen( app );
 	}
-	if( isHotkeyPressed( inputs, KC_Key_S, KC_Control ) ) {
+	if( isHotkeyPressed( inputs, KC_S, KC_Control ) ) {
 		animatorMenuSave( app );
 	}
-	if( isHotkeyPressed( inputs, KC_Key_S, KC_Control, KC_Shift ) ) {
+	if( isHotkeyPressed( inputs, KC_S, KC_Control, KC_Shift ) ) {
 		animatorMenuSaveAs( app );
 	}
 
@@ -2851,4 +2994,211 @@ void doAnimator( AppData* app, GameInputs* inputs, bool focus, float dt )
 	// debug
 	debugPrintln( "AnimatorKeyframes Count: {}", animator->keyframes.size() );
 #endif
+}
+
+// AnimatorVoxelCollection
+
+AnimatorVoxelCollection animatorLoadVoxelCollection( StringView filename )
+{
+	AnimatorVoxelCollection result;
+	result.memorySize = kilobytes( 20 );
+	result.memory     = GlobalPlatformServices->allocate( result.memorySize, 1 );
+	auto allocator    = makeStackAllocator( result.memory, result.memorySize );
+	if( loadVoxelCollection( &allocator, filename, &result.voxels ) ) {
+		result.names = makeArray( &allocator, StringView, result.voxels.animations.size() );
+		zip_for( result.names, result.voxels.animations ) {
+			*first = second->name;
+		}
+		auto inplace = GlobalPlatformServices->reallocateInPlace( result.memory, allocator.size,
+		                                                          result.memorySize, 1 );
+		assert( inplace == result.memory );
+		if( inplace ) {
+			result.memorySize = allocator.size;
+		}
+	} else {
+		GlobalPlatformServices->free( result.memory, result.memorySize, 1 );
+		result.memory     = nullptr;
+		result.memorySize = 0;
+	}
+	return result;
+}
+AnimatorVoxelCollection::~AnimatorVoxelCollection() { destroy(); }
+AnimatorVoxelCollection::AnimatorVoxelCollection( const AnimatorVoxelCollection& other )
+{
+	assign( other );
+}
+AnimatorVoxelCollection::AnimatorVoxelCollection( AnimatorVoxelCollection&& other )
+{
+	assign( std::move( other ) );
+}
+AnimatorVoxelCollection& AnimatorVoxelCollection::operator=( const AnimatorVoxelCollection& other )
+{
+	if( this != &other ) {
+		destroy();
+		assign( other );
+	}
+	return *this;
+}
+AnimatorVoxelCollection& AnimatorVoxelCollection::operator=( AnimatorVoxelCollection&& other )
+{
+	if( this != &other ) {
+		destroy();
+		assign( std::move( other ) );
+	}
+	return *this;
+}
+void AnimatorVoxelCollection::assign( const AnimatorVoxelCollection& other )
+{
+	assert( this != &other );
+	assert( !memory );
+	assert( !memorySize );
+
+	if( other.memory && other.memorySize ) {
+		constexpr const auto AlignmentPadding = 8;
+		memorySize                            = other.memorySize + AlignmentPadding;
+		memory                                = GlobalPlatformServices->allocate( memorySize, 1 );
+		auto allocator                        = makeStackAllocator( memory, memorySize );
+
+		voxels.texture = other.voxels.texture;
+		voxels.frames = makeArray( &allocator, VoxelCollection::Frame, other.voxels.frames.size() );
+		voxels.frameInfos =
+		    makeArray( &allocator, VoxelCollection::FrameInfo, other.voxels.frameInfos.size() );
+		voxels.animations =
+		    makeArray( &allocator, VoxelCollection::Animation, other.voxels.animations.size() );
+		voxels.voxelsFilename = makeString( &allocator, other.voxels.voxelsFilename );
+		names                 = makeArray( &allocator, StringView, other.names.size() );
+
+		voxels.frames.assign( other.voxels.frames );
+		voxels.frameInfos.assign( other.voxels.frameInfos );
+		voxels.animations.assign( other.voxels.animations );
+		auto index = 0;
+		FOR( animation : voxels.animations ) {
+			animation.name = makeString( &allocator, animation.name );
+			names[index++] = animation.name;
+		}
+
+		if( GlobalPlatformServices->reallocateInPlace( memory, allocator.size, memorySize, 1 ) ) {
+			memorySize = allocator.size;
+		}
+	}
+}
+void AnimatorVoxelCollection::assign( AnimatorVoxelCollection&& other )
+{
+	assert( this != &other );
+	assert( !memory );
+	assert( !memorySize );
+
+	voxels     = other.voxels;
+	names      = other.names;
+	memory     = exchange( other.memory, nullptr );
+	memorySize = exchange( other.memorySize, 0 );
+}
+void AnimatorVoxelCollection::destroy()
+{
+	assert( !memory || memorySize );
+	if( memory && memorySize ) {
+		GlobalPlatformServices->free( memory, memorySize, 1 );
+
+		memory = nullptr;
+		memorySize = 0;
+	}
+}
+
+// AnimatorAsset
+AnimatorAsset animatorLoadVoxelCollectionAsset( StringView filename, int16 id )
+{
+	AnimatorAsset result;
+	result.type            = AnimatorAsset::type_collection;
+	result.collection = new AnimatorVoxelCollection( animatorLoadVoxelCollection( filename ) );
+	if( !result.collection || !result.collection->memory ) {
+		if( result.collection ) {
+			delete result.collection;
+			result.collection = nullptr;
+		}
+		result.type = AnimatorAsset::type_none;
+	} else {
+		result.id = id;
+		result.setName( getFilenameWithoutExtension( filename ) );
+	}
+	return result;
+}
+
+void AnimatorAsset::setName( StringView str )
+{
+	nameLength = copyToString( str, name, countof( name ) );
+	item.text = {name, nameLength};
+}
+
+AnimatorAsset::~AnimatorAsset() { destroy(); }
+AnimatorAsset::AnimatorAsset( const AnimatorAsset& other )
+{
+	assign( other );
+}
+AnimatorAsset::AnimatorAsset( AnimatorAsset&& other ) {
+	assign( std::move( other ) );
+}
+AnimatorAsset& AnimatorAsset::operator=( const AnimatorAsset& other )
+{
+	if( this != &other ) {
+		destroy();
+		assign( other );
+	}
+	return *this;
+}
+AnimatorAsset& AnimatorAsset::operator=( AnimatorAsset&& other )
+{
+	if( this != &other ) {
+		destroy();
+		assign( std::move( other ) );
+	}
+	return *this;
+}
+void AnimatorAsset::assign( const AnimatorAsset& other )
+{
+	assert( type == type_none );
+	switch( other.type ) {
+		case type_none: {
+			break;
+		}
+		case type_collection: {
+			type       = type_collection;
+			collection = new AnimatorVoxelCollection( *other.collection );
+			break;
+		}
+		InvalidDefaultCase;
+	}
+	setName( {other.name, other.nameLength} );
+	id = other.id;
+}
+void AnimatorAsset::assign( AnimatorAsset&& other )
+{
+	assert( type == type_none );
+	switch( exchange( other.type, type_none ) ) {
+		case type_none: {
+			break;
+		}
+		case type_collection: {
+			type       = type_collection;
+			collection = exchange( other.collection, nullptr );
+			break;
+		}
+		InvalidDefaultCase;
+	}
+	setName( {other.name, other.nameLength} );
+	id = exchange( other.id, -1 );
+}
+void AnimatorAsset::destroy()
+{
+	switch( type ) {
+		case type_none: {
+			break;
+		}
+		case type_collection: {
+			delete collection;
+			collection = nullptr;
+			break;
+		}
+		InvalidDefaultCase;
+	}
+	type = type_none;
 }

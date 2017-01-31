@@ -278,6 +278,10 @@ StringViewPos findLast( StringView str, StringView findStr, int32 start = String
 
 	return {StringView::npos};
 }
+StringViewPos findLast( StringView str, char c, int32 start = StringView::npos )
+{
+	return findLast( str, {&c, 1}, start );
+}
 
 StringViewPos findFirstNotOf( StringView str, StringView findStr, int32 start = 0 )
 {
@@ -345,6 +349,31 @@ StringView trimLeftNonNumeric( StringView str )
 		}
 	}
 	return substr( str, pos );
+}
+
+// these filename functions are platform agnostic, because the platform layer converts this format
+// into a native format
+StringView getFilenameWithoutExtension( StringView file )
+{
+	auto start = findLast( file, '/' );
+	if( !start ) {
+		start = {};
+	} else {
+		++start.pos;
+	}
+	file = substr( file, start );
+	auto end = findLast( file, '.' );
+	return substr( file, 0, end );
+}
+// includes '.'
+StringView getFilenameExtension( StringView file )
+{
+	return substr( file, findLast( file, '.' ) );
+}
+// includes '/'
+StringView getFilenamePath( StringView file )
+{
+	return substr( file, 0, findLast( file, '/' ) + 1 );
 }
 
 /*StringView trim( StringView str, StringView whitespace )

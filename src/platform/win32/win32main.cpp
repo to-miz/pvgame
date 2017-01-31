@@ -454,15 +454,26 @@ int CALLBACK WinMain( HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdL
 
 	win32PopulateKeyboardKeyNames();
 
-	PlatformServices platformServices = {&win32LoadTexture,        &win32LoadTextureFromMemory,
-	                                     &win32DeleteTexture,      &loadImageToMemory,
-	                                     &freeImageData,           &win32LoadFont,
-	                                     &win32WriteBufferToFile,  &win32ReadFileToBuffer,
-	                                     &win32UploadMeshToGpu,    &win32GetOpenFilename,
-	                                     &win32GetSaveFilename,    &win32GetKeyboardKeyName,
-	                                     &win32DlmallocMalloc,     &win32DlmallocRealloc,
-	                                     &win32DlmallocMfree,      &win32DlmallocAllocate,
-	                                     &win32DlmallocReallocate, win32DlmallocFree};
+	PlatformServices platformServices = {&win32LoadTexture,
+	                                     &win32LoadTextureFromMemory,
+	                                     &win32DeleteTexture,
+	                                     &loadImageToMemory,
+	                                     &freeImageData,
+	                                     &win32LoadFont,
+	                                     &win32WriteBufferToFile,
+	                                     &win32ReadFileToBuffer,
+	                                     &win32UploadMeshToGpu,
+	                                     &win32GetOpenFilename,
+	                                     &win32GetSaveFilename,
+	                                     &win32GetKeyboardKeyName,
+	                                     &win32DlmallocMalloc,
+	                                     &win32DlmallocRealloc,
+	                                     &win32DlmallocReallocInPlace,
+	                                     &win32DlmallocMfree,
+	                                     &win32DlmallocAllocate,
+	                                     &win32DlmallocReallocate,
+	                                     &win32DlmallocReallocateInPlace,
+	                                     win32DlmallocFree};
 	PlatformInfo info     = {};
 	Win32AppContext.info  = &info;
 	auto initializeResult = initializeApp( gameMemory, gameMemorySize, platformServices, &info );
@@ -619,11 +630,11 @@ int CALLBACK WinMain( HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdL
 		if( isKeyDown( &platformInputs, KC_Escape ) && !inputs.disableEscapeForQuickExit ) {
 			running = false;
 		}
-		if( isHotkeyPressed( &platformInputs, KC_Key_X, KC_Control ) ) {
+		if( isHotkeyPressed( &platformInputs, KC_X, KC_Control ) ) {
 			replayStepped = false;
 			replayStep = false;
 		}
-		if( isHotkeyPressed( &platformInputs, KC_Key_C, KC_Control ) ) {
+		if( isHotkeyPressed( &platformInputs, KC_C, KC_Control ) ) {
 			if( !replayStepped ) {
 				replayStepped = true;
 			} else {
@@ -638,7 +649,7 @@ int CALLBACK WinMain( HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdL
 			clampedElapsedTime = maxElapsedTime;
 		}
 
-		if( isHotkeyPressed( &platformInputs, KC_Key_P, KC_Control ) ) {
+		if( isHotkeyPressed( &platformInputs, KC_P, KC_Control ) ) {
 			recordingInputs = !recordingInputs;
 			if( recordingInputs ) {
 				// we just started recording, initialize
@@ -655,7 +666,7 @@ int CALLBACK WinMain( HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdL
 			info.recordingFrame = recording->count;
 		}
 
-		if( isHotkeyPressed( &platformInputs, KC_Key_O, KC_Control ) && recording->count ) {
+		if( isHotkeyPressed( &platformInputs, KC_O, KC_Control ) && recording->count ) {
 			replayingInputs = !replayingInputs;
 			if( replayingInputs ) {
 				memcpy( memory, recording->memory, memorySize );

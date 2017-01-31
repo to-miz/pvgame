@@ -6,6 +6,38 @@
 typedef int32 GroupId;
 typedef trange< GroupId > GroupChildren;
 
+struct AnimatorVoxelCollection;
+struct AnimatorAsset {
+	ImGuiListboxItem item = {};
+
+	enum Type { type_none, type_collection } type = type_none;
+	union {
+		AnimatorVoxelCollection* collection = nullptr;
+	};
+	int16 id = -1;
+	char name[10];
+	int32 nameLength;
+
+	void setName( StringView str );
+
+	AnimatorAsset() = default;
+	~AnimatorAsset();
+	AnimatorAsset( const AnimatorAsset& other );
+	AnimatorAsset( AnimatorAsset&& other );
+	AnimatorAsset& operator=( const AnimatorAsset& other );
+	AnimatorAsset& operator=( AnimatorAsset&& other );
+
+	void assign( const AnimatorAsset& other );
+	void assign( AnimatorAsset&& other );
+	void destroy();
+
+	explicit operator bool() const { return type != type_none; }
+};
+static_assert( std::is_standard_layout< AnimatorAsset >::value,
+               "AnimatorAsset must be standard layout for imguiListboxIntrusive" );
+
+AnimatorAsset animatorLoadVoxelCollectionAsset( StringView filename, int16 id );
+
 struct AnimatorNode {
 	vec3 translation = {};
 	vec3 rotation    = {};
@@ -18,10 +50,15 @@ struct AnimatorNode {
 
 	int32 childrenCount = {};
 
-	bool8 selected = {};
-	bool8 marked   = {};
-	int16 voxel    = -1;
-	int16 frame    = {};
+	bool8 selected                = {};
+	bool8 marked                  = {};
+	int16 assetId                 = -1;
+	AnimatorAsset::Type assetType = {};
+	AnimatorAsset* asset          = nullptr;
+	struct {
+		int16 animation;
+		int16 frame;
+	} voxel = {-1, 0};
 
 	mat4 base  = {};
 	mat4 world = {};
@@ -96,6 +133,7 @@ struct AnimatorEditor {
 		Animations     = BITFIELD( 4 ),
 		Keying         = BITFIELD( 5 ),
 		Nodes          = BITFIELD( 6 ),
+		Assets         = BITFIELD( 7 ),
 	};
 	uint32 expandedFlags;
 
@@ -113,12 +151,27 @@ struct AnimatorEditor {
 
 	vec2 rightClickedPos;
 	float nodesListboxScroll;
+	float assetsScrollPos;
 };
 
 struct AnimatorVoxelCollection {
+	AnimatorVoxelCollection() = default;
+	~AnimatorVoxelCollection();
+	AnimatorVoxelCollection( const AnimatorVoxelCollection& other );
+	AnimatorVoxelCollection( AnimatorVoxelCollection&& other );
+	AnimatorVoxelCollection& operator=( const AnimatorVoxelCollection& other );
+	AnimatorVoxelCollection& operator=( AnimatorVoxelCollection&& other );
+
+	void assign( const AnimatorVoxelCollection& other );
+	void assign( AnimatorVoxelCollection&& other );
+	void destroy();
+
 	VoxelCollection voxels;
 	Array< StringView > names;
+	void* memory      = nullptr;
+	size_t memorySize = 0;
 };
+AnimatorVoxelCollection animatorLoadVoxelCollection( StringView filename );
 
 struct AnimatorAnimation {
 	std::vector< AnimatorNode > nodes;
@@ -128,6 +181,7 @@ struct AnimatorAnimation {
 
 typedef std::vector< std::unique_ptr< AnimatorKeyframe > > AnimatorKeyframes;
 typedef std::unique_ptr< AnimatorNode > UniqueAnimatorNode;
+typedef std::unique_ptr< AnimatorAsset > UniqueAnimatorAsset;
 typedef std::vector< std::unique_ptr< AnimatorNode > > AnimatorNodes;
 typedef std::vector< AnimatorAnimation > AnimatorAnimations;
 
@@ -147,11 +201,11 @@ struct AnimatorState {
 	std::vector< AnimatorGroup > groups;
 	std::vector< AnimatorGroupDisplay > visibleGroups;
 	std::vector< AnimatorCurveData > curves;
+	std::vector< UniqueAnimatorAsset > assets;
 	AnimatorNodes baseNodes;
 	AnimatorNodes nodes;
 	AnimatorAnimations animations;
 
-	AnimatorVoxelCollection voxels;
 	AnimatorAnimation* currentAnimation;
 
 	float duration;
@@ -183,6 +237,7 @@ struct AnimatorState {
 	float scale;
 
 	int16 nodeIds;
+	int16 assetIds;
 	AnimatorEditor editor;
 
 	StringPool stringPool;

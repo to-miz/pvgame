@@ -131,6 +131,10 @@ global_var IngameLog* GlobalIngameLog               = nullptr;
 global_var ImmediateModeGui* ImGui                  = nullptr;
 global_var ProfilingTable* GlobalProfilingTable     = nullptr;
 
+// TODO: GlobalScrapSize can be 1 megabyte once VoxelGrids are dense
+constexpr const size_t GlobalScrapSize = megabytes( 3 );
+global_var StackAllocator* GlobalScrap = nullptr;
+
 global_var MeshStream* debug_MeshStream = nullptr;
 global_var bool debug_FillMeshStream    = true;
 global_var DebugValues* debug_Values    = nullptr;
@@ -206,8 +210,6 @@ void operator delete[]( void* ptr ) /*throw()*/
 #include <vector>
 #include <new>
 #include <memory>
-
-// #include "Core/DArray.h"
 
 void debug_Clear()
 {
@@ -1189,6 +1191,7 @@ struct AppData {
 	mat4 orthogonal;
 
 	StackAllocator stackAllocator;
+	StackAllocator scrapAllocator;
 	MatrixStack matrixStack;
 	RenderCommands renderer;
 	GameSettings settings;
@@ -1307,6 +1310,7 @@ INITIALIZE_APP( initializeApp )
 	app->debugMeshStream = makeMeshStream( allocator, 4000, 12000, nullptr );
 	app->textureMap      = {makeUArray( allocator, TextureMapEntry, 100 )};
 	app->debugPrinter    = string_builder( allocateArray( allocator, char, 2048 ), 2048 );
+	app->scrapAllocator  = makeStackAllocator( &app->stackAllocator, GlobalScrapSize );
 	auto result          = reloadApp( memory, size );
 
 	auto aspect      = app->width / app->height;
@@ -1342,6 +1346,7 @@ RELOAD_APP( reloadApp )
 	GlobalPlatformServices         = &app->platform;
 	GlobalIngameLog                = &app->log;
 	GlobalTextureMap               = &app->textureMap;
+	GlobalScrap                    = &app->scrapAllocator;
 	GlobalDebugPrinter             = &app->debugPrinter;
 	GlobalProfilingTable           = &app->profilingTable;
 	debug_Values                   = &app->debugValues;
@@ -1358,83 +1363,84 @@ bool loadVoxelCollectionTextureMapping( StackAllocator* allocator, StringView fi
                                         VoxelCollection* out )
 {
 	assert( out );
-	auto partition = StackAllocatorPartition::ratio( allocator, 1 );
 
-	auto primary = partition.primary();
-	auto scrap   = partition.scrap();
+	auto guard = StackAllocatorGuard( allocator );
+	auto primary = allocator;
+	auto scrap = GlobalScrap;
+	TEMPORARY_MEMORY_BLOCK( scrap ) {
+		auto jsonDataMaxSize = kilobytes( 200 );
+		auto jsonData        = allocateArray( scrap, char, jsonDataMaxSize );
+		auto jsonDataSize =
+		    GlobalPlatformServices->readFileToBuffer( filename, jsonData, jsonDataMaxSize );
 
-	auto jsonDataMaxSize = kilobytes( 200 );
-	auto jsonData        = allocateArray( scrap, char, jsonDataMaxSize );
-	auto jsonDataSize =
-	    GlobalPlatformServices->readFileToBuffer( filename, jsonData, jsonDataMaxSize );
+		size_t jsonDocSize                     = kilobytes( 200 );
+		JsonStackAllocatorStruct jsonAllocator = {allocateArray( scrap, char, jsonDocSize ), 0,
+		                                          jsonDocSize};
+		auto doc =
+		    jsonMakeDocument( &jsonAllocator, jsonData, (int32)jsonDataSize, JSON_READER_STRICT );
+		if( !doc || !doc.root.getObject() ) {
+			return false;
+		}
+		auto root = doc.root.getObject();
 
-	size_t jsonDocSize                     = kilobytes( 200 );
-	JsonStackAllocatorStruct jsonAllocator = {allocateArray( scrap, char, jsonDocSize ), 0,
-	                                          jsonDocSize};
-	auto doc =
-	    jsonMakeDocument( &jsonAllocator, jsonData, (int32)jsonDataSize, JSON_READER_STRICT );
-	if( !doc || !doc.root.getObject() ) {
-		return false;
-	}
-	auto root = doc.root.getObject();
+		*out         = {};
+		out->texture = GlobalPlatformServices->loadTexture( root["texture"].getString() );
+		if( !out->texture ) {
+			return false;
+		}
+		auto textureInfo = getTextureInfo( out->texture );
+		auto itw         = 1.0f / textureInfo->width;
+		auto ith         = 1.0f / textureInfo->height;
 
-	*out         = {};
-	out->texture = GlobalPlatformServices->loadTexture( root["texture"].getString() );
-	if( !out->texture ) {
-		return false;
-	}
-	auto textureInfo = getTextureInfo( out->texture );
-	auto itw         = 1.0f / textureInfo->width;
-	auto ith         = 1.0f / textureInfo->height;
-
-	auto mapping      = root["mapping"].getArray();
-	int32 framesCount = 0;
-	FOR( animationVal : mapping ) {
-		auto animation = animationVal.getObject();
-		framesCount += animation["frames"].getArray().size();
-	}
-
-	out->frames     = makeArray( primary, VoxelCollection::Frame, framesCount );
-	out->frameInfos = makeArray( primary, VoxelCollection::FrameInfo, framesCount );
-	out->animations = makeArray( primary, VoxelCollection::Animation, mapping.size() );
-
-	int32 currentFrame = 0;
-	for( int32 i = 0, count = mapping.size(); i < count; ++i ) {
-		auto animation  = mapping[i].getObject();
-		auto dest       = &out->animations[i];
-		dest->name      = makeString( primary, animation["name"].getString() );
-		dest->range.min = safe_truncate< uint16 >( currentFrame );
-
-		FOR( frameVal : animation["frames"].getArray() ) {
-			auto frame     = frameVal.getObject();
-			auto destFrame = &out->frames[currentFrame];
-			auto destInfo  = &out->frameInfos[currentFrame];
-			++currentFrame;
-
-			*destFrame                    = {};
-			*destInfo                     = {};
-			destInfo->frictionCoefficient = 1;
-
-			for( auto face = 0; face < VF_Count; ++face ) {
-				auto faceObject = frame[VoxelFaceStrings[face]].getObject();
-
-				destInfo->textureMap.texture = out->texture;
-				serialize( faceObject["rect"], destInfo->textureRegion[face] );
-				serialize( faceObject["texCoords"], destInfo->textureMap.entries[face].texCoords );
-				destInfo->frictionCoefficient = faceObject["frictionCoefficient"].getFloat( 1 );
-				FOR( vert : destInfo->textureMap.entries[face].texCoords.elements ) {
-					vert.x *= itw;
-					vert.y *= ith;
-				}
-			}
-			serialize( frame["offset"], destFrame->offset );
+		auto mapping      = root["mapping"].getArray();
+		int32 framesCount = 0;
+		FOR( animationVal : mapping ) {
+			auto animation = animationVal.getObject();
+			framesCount += animation["frames"].getArray().size();
 		}
 
-		dest->range.max = safe_truncate< uint16 >( currentFrame );
-	}
-	out->voxelsFilename = makeString( primary, root["voxels"].getString() );
+		out->frames     = makeArray( primary, VoxelCollection::Frame, framesCount );
+		out->frameInfos = makeArray( primary, VoxelCollection::FrameInfo, framesCount );
+		out->animations = makeArray( primary, VoxelCollection::Animation, mapping.size() );
 
-	partition.commit();
+		int32 currentFrame = 0;
+		for( int32 i = 0, count = mapping.size(); i < count; ++i ) {
+			auto animation  = mapping[i].getObject();
+			auto dest       = &out->animations[i];
+			dest->name      = makeString( primary, animation["name"].getString() );
+			dest->range.min = safe_truncate< uint16 >( currentFrame );
+
+			FOR( frameVal : animation["frames"].getArray() ) {
+				auto frame     = frameVal.getObject();
+				auto destFrame = &out->frames[currentFrame];
+				auto destInfo  = &out->frameInfos[currentFrame];
+				++currentFrame;
+
+				*destFrame                    = {};
+				*destInfo                     = {};
+				destInfo->frictionCoefficient = 1;
+
+				for( auto face = 0; face < VF_Count; ++face ) {
+					auto faceObject = frame[VoxelFaceStrings[face]].getObject();
+
+					destInfo->textureMap.texture = out->texture;
+					serialize( faceObject["rect"], destInfo->textureRegion[face] );
+					serialize( faceObject["texCoords"],
+					           destInfo->textureMap.entries[face].texCoords );
+					destInfo->frictionCoefficient = faceObject["frictionCoefficient"].getFloat( 1 );
+					FOR( vert : destInfo->textureMap.entries[face].texCoords.elements ) {
+						vert.x *= itw;
+						vert.y *= ith;
+					}
+				}
+				serialize( frame["offset"], destFrame->offset );
+			}
+
+			dest->range.max = safe_truncate< uint16 >( currentFrame );
+		}
+		out->voxelsFilename = makeString( primary, root["voxels"].getString() );
+	}
+	guard.commit();
 	return true;
 }
 bool loadVoxelGridsFromFile( PlatformServices* platform, StringView filename,
@@ -1482,8 +1488,8 @@ bool loadVoxelCollection( StackAllocator* allocator, StringView filename, VoxelC
 	if( !loadVoxelCollectionTextureMapping( allocator, filename, out ) ) {
 		return false;
 	}
-	TEMPORARY_MEMORY_BLOCK( allocator ) {
-		auto grids = makeArray( allocator, VoxelGrid, out->frames.size() );
+	TEMPORARY_MEMORY_BLOCK( GlobalScrap ) {
+		auto grids = makeArray( GlobalScrap, VoxelGrid, out->frames.size() );
 		if( !loadVoxelGridsFromFile( GlobalPlatformServices, out->voxelsFilename, grids ) ) {
 			return false;
 		}
@@ -1491,10 +1497,10 @@ bool loadVoxelCollection( StackAllocator* allocator, StringView filename, VoxelC
 			auto grid  = &grids[i];
 			auto frame = &out->frames[i];
 			auto info  = &out->frameInfos[i];
-			TEMPORARY_MEMORY_BLOCK( allocator ) {
-				int32 vertices = (int32)getCapacityFor< Vertex >( allocator ) / 2;
+			TEMPORARY_MEMORY_BLOCK( GlobalScrap ) {
+				int32 vertices = (int32)getCapacityFor< Vertex >( GlobalScrap ) / 2;
 				int32 indices  = ( vertices * sizeof( Vertex ) ) / sizeof( uint16 );
-				auto stream    = makeMeshStream( allocator, vertices, indices, nullptr );
+				auto stream    = makeMeshStream( GlobalScrap, vertices, indices, nullptr );
 				generateMeshFromVoxelGrid( &stream, grid, &info->textureMap, VoxelCellSize );
 				frame->mesh = GlobalPlatformServices->uploadMesh( toMesh( &stream ) );
 				assert( frame->mesh );
@@ -1542,19 +1548,19 @@ bool loadTileSet( StackAllocator* allocator, StringView filename, TileSet* out )
 static void processCamera( GameInputs* inputs, GameSettings* settings, Camera* camera, float dt )
 {
 	auto speed = 20.0f * dt;
-	if( isKeyDown( inputs, KC_Key_W ) ) {
+	if( isKeyDown( inputs, KC_W ) ) {
 		auto dir = camera->look;
 		camera->position += dir * speed;
 	}
-	if( isKeyDown( inputs, KC_Key_S ) ) {
+	if( isKeyDown( inputs, KC_S ) ) {
 		auto dir = camera->look;
 		camera->position += -dir * speed;
 	}
-	if( isKeyDown( inputs, KC_Key_D ) ) {
+	if( isKeyDown( inputs, KC_D ) ) {
 		auto dir = camera->right;
 		camera->position += dir * speed;
 	}
-	if( isKeyDown( inputs, KC_Key_A ) ) {
+	if( isKeyDown( inputs, KC_A ) ) {
 		auto dir = camera->right;
 		camera->position += -dir * speed;
 	}
@@ -2573,16 +2579,16 @@ static void doGame( AppData* app, GameInputs* inputs, bool focus, float dt, bool
 	}
 
 	if( !frameBoundary ) {
-		if( isKeyPressed( inputs, KC_Key_H ) ) {
+		if( isKeyPressed( inputs, KC_H ) ) {
 			game->paused = !game->paused;
 		}
-		if( isKeyPressed( inputs, KC_Key_0 ) ) {
+		if( isKeyPressed( inputs, KC_0 ) ) {
 			game->useGameCamera = !game->useGameCamera;
 		}
 	}
 
 	// mouse lock
-	if( isKeyPressed( inputs, KC_Key_L ) ) {
+	if( isKeyPressed( inputs, KC_L ) ) {
 		app->mouseLocked = !app->mouseLocked;
 	}
 	if( app->focus == AppFocus::Game ) {
@@ -3024,10 +3030,10 @@ UPDATE_AND_RENDER( updateAndRender )
 	debug_Clear();
 
 	// options
-	if( isHotkeyPressed( inputs, KC_Key_Z, KC_Control ) ) {
+	if( isHotkeyPressed( inputs, KC_Z, KC_Control ) ) {
 		debug_FillMeshStream = !debug_FillMeshStream;
 	}
-	if( isHotkeyPressed( inputs, KC_Key_I, KC_Control ) ) {
+	if( isHotkeyPressed( inputs, KC_I, KC_Control ) ) {
 		renderer->wireframe = !renderer->wireframe;
 	}
 
@@ -3046,7 +3052,7 @@ UPDATE_AND_RENDER( updateAndRender )
 	if( isKeyPressed( inputs, KC_F8 ) ) {
 		app->focus = AppFocus::Easing;
 	}
-	if( isHotkeyPressed( inputs, KC_Key_R, KC_Control ) ) {
+	if( isHotkeyPressed( inputs, KC_R, KC_Control ) ) {
 		renderer->lightPosition = app->voxelState.camera.position;
 	}
 

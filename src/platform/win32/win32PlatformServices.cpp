@@ -223,6 +223,19 @@ void* win32DlmallocRealloc( void* ptr, size_t size )
 		return mspace_realloc( allocator, ptr, size );
 	}
 }
+void* win32DlmallocReallocInPlace( void* ptr, size_t size )
+{
+	auto allocator = Win32AppContext.dlmallocator;
+	assert( allocator );
+	if( !size ) {
+		if( ptr ) {
+			mspace_free( allocator, ptr );
+		}
+		return nullptr;
+	} else {
+		return mspace_realloc_in_place( allocator, ptr, size );
+	}
+}
 void win32DlmallocMfree( void* ptr )
 {
 	auto allocator = Win32AppContext.dlmallocator;
@@ -260,6 +273,19 @@ void* win32DlmallocReallocate( void* ptr, size_t newSize, size_t oldSize, uint32
 		}
 		return result;
 	}
+}
+void* win32DlmallocReallocateInPlace( void* ptr, size_t newSize, size_t oldSize, uint32 alignment )
+{
+	assert_alignment( ptr, alignment );
+	auto allocator = Win32AppContext.dlmallocator;
+	assert( allocator );
+	if( !newSize ) {
+		if( ptr && oldSize ) {
+			mspace_free( allocator, ptr );
+		}
+		return nullptr;
+	}
+	return mspace_realloc_in_place( allocator, ptr, newSize );
 }
 void win32DlmallocFree( void* ptr, size_t size, uint32 alignment )
 {

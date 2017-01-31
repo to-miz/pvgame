@@ -1,7 +1,8 @@
 /*
 TODO:
-    - when fading out, the gui still accepts input, needs a way to toggle input processing
     - when dragging a container, the titlebar lags behind
+	- make specifying widths/heights more unified and allow for percentage based widths/heights
+		see imguiButton and ImGuiSize
 */
 
 static const constexpr int8 ImGuiMaxValidZ = 120;
@@ -157,7 +158,8 @@ enum Values : uint16 {
 struct ImGuiContainerState {
 	rectf rect;
 	vec2 addPosition;
-	int32 horizontalCount; // how many controls to place horizontally instead of vertically
+	int32 horizontalCount;     // how many controls to place horizontally instead of vertically
+	int32 maxHorizontalCount;  // how many controls are to be placed horizontally in total
 	rectf lastRect;
 	float xMax;
 	int8 z;
@@ -210,6 +212,32 @@ struct ImGuiComboboxState {
 	float scrollPos;
 };
 
+struct ImGuiSize {
+	float width;
+	float height;
+};
+ImGuiContainerState* imguiCurrentContainer();
+ImGuiSize imguiRelative( float x, float y )
+{
+	auto container = imguiCurrentContainer();
+	return {width( container->rect ) * x, height( container->rect ) * y};
+}
+ImGuiSize imguiRelative()
+{
+	auto container = imguiCurrentContainer();
+	return {width( container->rect ) * safeDivide( 1.0f, (float)container->maxHorizontalCount ), 0};
+}
+ImGuiSize imguiMakeSize( ImGuiSize size, float w, float h )
+{
+	if( size.width == 0 ) {
+		size.width = w;
+	}
+	if( size.height == 0 ) {
+		size.height = h;
+	}
+	return size;
+}
+
 ImGuiContainerState defaultImGuiContainerSate( rectfarg rect );
 #define ImGuiMaxContainers 8
 
@@ -259,7 +287,7 @@ ImmediateModeGui defaultImmediateModeGui()
 {
 	ImmediateModeGui result = {};
 	result.style            = defaultImGuiStyle();
-	result.caretBlinkTime   = 15;
+	result.caretBlinkTime   = 400;
 	result.containersCount  = 1;
 	result.modalContainer   = -1;
 	return result;
@@ -833,8 +861,9 @@ rectf imguiAddItemSameLine( float width, float height )
 
 void imguiSameLine( int32 count )
 {
-	auto container             = imguiCurrentContainer();
-	container->horizontalCount = count;
+	auto container                = imguiCurrentContainer();
+	container->horizontalCount    = count;
+	container->maxHorizontalCount = count;
 }
 float imguiClientWidth( ImGuiContainerState* container )
 {
@@ -898,11 +927,11 @@ bool imguiButton( ImGuiHandle handle, StringView name, float width, float height
 	return imguiButton( handle, rect );
 }
 
-bool imguiButton( StringView name )
+bool imguiButton( StringView name, ImGuiSize size = {} )
 {
+	size              = imguiMakeSize( size, ImGui->style.buttonWidth, ImGui->style.buttonHeight );
 	auto stringHandle = imguiMakeStringHandle( name );
-	return imguiButton( stringHandle.handle, stringHandle.string, ImGui->style.buttonWidth,
-	                    ImGui->style.buttonHeight );
+	return imguiButton( stringHandle.handle, stringHandle.string, size.width, size.height );
 }
 bool imguiButton( StringView name, float width, float height )
 {
@@ -961,10 +990,10 @@ bool imguiPushButton( ImGuiHandle handle, StringView name, bool* pushed, float w
 
 	return changed;
 }
-bool imguiPushButton( ImGuiHandle handle, StringView name, bool pushed )
+bool imguiPushButton( ImGuiHandle handle, StringView name, bool pushed, ImGuiSize size = {} )
 {
-	return imguiPushButton( handle, name, &pushed, ImGui->style.buttonWidth,
-	                        ImGui->style.buttonHeight );
+	size = imguiMakeSize( size, ImGui->style.buttonWidth, ImGui->style.buttonHeight );
+	return imguiPushButton( handle, name, &pushed, size.width, size.height );
 }
 bool imguiPushButton( StringView name, bool* pushed )
 {

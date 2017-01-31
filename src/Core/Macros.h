@@ -28,7 +28,7 @@
 	#if GAME_OUT_OF_MEMORY_ASSERTION
 		#define OutOfMemory() assert( 0 && "Out Of Memory" )
 	#else
-		#define OutOfMemory() ( (void)0 )
+		#define OutOfMemory() ( LOG( ERROR, "Out Of Memory: {} {}", __FILE__, __LINE__ ) )
 	#endif // GAME_OUT_OF_MEMORY_ASSERTION
 
 	#define InvalidCodePath() assert( 0 && "InvalidCodePath" );

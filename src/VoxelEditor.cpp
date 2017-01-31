@@ -247,7 +247,7 @@ static void processSelectMode( AppData* app, GameInputs* inputs, bool focus, flo
 		}
 	}
 
-	if( isKeyPressed( inputs, KC_Key_J ) ) {
+	if( isKeyPressed( inputs, KC_J ) ) {
 		swap( voxel->selection.min.x, voxel->selection.max.x );
 		swap( voxel->selection.min.y, voxel->selection.max.y );
 		swap( voxel->selection.min.z, voxel->selection.max.z );
@@ -576,7 +576,7 @@ static void doVoxelGui( AppData* app, GameInputs* inputs, bool focus, float dt )
 
 		gui->initialized = true;
 	}
-	if( isKeyPressed( inputs, KC_Key_K ) ) {
+	if( isKeyPressed( inputs, KC_K ) ) {
 		imguiGetContainer( gui->editMode )->setHidden( false );
 		imguiGetContainer( gui->rendering )->setHidden( false );
 		imguiGetContainer( gui->textureIndex )->setHidden( false );
@@ -868,7 +868,7 @@ static void doVoxel( AppData* app, GameInputs* inputs, bool focus, float dt )
 	}
 
 	// mouse lock
-	if( isKeyPressed( inputs, KC_Key_L ) ) {
+	if( isKeyPressed( inputs, KC_L ) ) {
 		app->mouseLocked = !app->mouseLocked;
 	}
 	if( voxel->focus == VoxelFocus::Voxel ) {
@@ -887,7 +887,7 @@ static void doVoxel( AppData* app, GameInputs* inputs, bool focus, float dt )
 
 	setTexture( renderer, 0, null );
 
-	if( isHotkeyPressed( inputs, KC_Key_U, KC_Control ) ) {
+	if( isHotkeyPressed( inputs, KC_U, KC_Control ) ) {
 		clear( &voxel->meshStream );
 		generateMeshFromVoxelGridNaive( &voxel->meshStream, &voxel->voxels, EditorVoxelCellSize );
 	}
