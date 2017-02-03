@@ -7,8 +7,7 @@ constexpr const float RegionHeight          = 200;
 constexpr const float MenuHeight            = 18;
 
 static const vec3 AnimatorInitialRotation = {0, -0.2f, 0};
-constexpr const float AnimatorMinScale = 0.1f;
-constexpr const float AnimatorMaxScale = 10.0f;
+
 
 static const StringView EaseTypeNames[] = {
 	"Lerp",
@@ -18,27 +17,36 @@ static const StringView EaseTypeNames[] = {
 	"EaseOutElastic",
 	"Curve",
 };
+static const StringView AnimatorAssetTypeNames[] = {
+	"None",
+	"VoxelCollection",
+};
 StringView to_string( AnimatorKeyframeData::EaseType type )
 {
 	assert( type >= 0 && type < countof( EaseTypeNames ) );
 	return EaseTypeNames[type];
 }
-void from_string( StringView str, AnimatorKeyframeData::EaseType* value )
+StringView to_string( AnimatorAsset::Type type )
 {
-	assert( value );
+	assert( type >= 0 && type < countof( AnimatorAssetTypeNames ) );
+	return AnimatorAssetTypeNames[type];
+}
+void from_string( StringView str, AnimatorKeyframeData::EaseType* out )
+{
+	assert( out );
 	// accepts gibberish strings too, but that doesn't matter too much
 	// alternatively could just loop over EaseTypeNames and compare
-	*value = {};
+	*out = {};
 	if( str.size() ) {
 		switch( str[0] ) {
 			case 'l':
 			case 'L': {
-				*value = AnimatorKeyframeData::Lerp;
+				*out = AnimatorKeyframeData::Lerp;
 				break;
 			}
 			case 's':
 			case 'S': {
-				*value = AnimatorKeyframeData::Step;
+				*out = AnimatorKeyframeData::Step;
 				break;
 			}
 			case 'e':
@@ -47,12 +55,12 @@ void from_string( StringView str, AnimatorKeyframeData::EaseType* value )
 					switch( str[7] ) {
 						case 'b':
 						case 'B': {
-							*value = AnimatorKeyframeData::EaseOutBounce;
+							*out = AnimatorKeyframeData::EaseOutBounce;
 							break;
 						}
 						case 'e':
 						case 'E': {
-							*value = AnimatorKeyframeData::EaseOutElastic;
+							*out = AnimatorKeyframeData::EaseOutElastic;
 							break;
 						}
 					}
@@ -61,11 +69,27 @@ void from_string( StringView str, AnimatorKeyframeData::EaseType* value )
 			}
 			case 'c':
 			case 'C': {
-				*value = AnimatorKeyframeData::Curve;
+				*out = AnimatorKeyframeData::Curve;
 				break;
 			}
 		}
 	}
+}
+template <>
+AnimatorAsset::Type convert_to< AnimatorAsset::Type >( StringView str,
+                                                       AnimatorAsset::Type def )
+{
+	AnimatorAsset::Type result = def;
+	if( str.size() ) {
+		switch( str[0] ) {
+			case 'v':
+			case 'V': {
+				result = AnimatorAsset::type_collection;
+				break;
+			}
+		}
+	}
+	return result;
 }
 
 rectf getSelection( AnimatorState* animator )
@@ -445,20 +469,22 @@ AnimatorNode* addExistingNode( AnimatorState* animator, const AnimatorNode& node
 	return result;
 }
 
-void addNewAsset( AnimatorState* animator, StringView filename, AnimatorAsset::Type type )
+AnimatorAsset* addNewAsset( AnimatorState* animator, StringView filename, AnimatorAsset::Type type )
 {
+	AnimatorAsset* result = nullptr;
 	switch( type ) {
 		case AnimatorAsset::type_collection: {
 			auto asset = std::make_unique< AnimatorAsset >(
-			    animatorLoadVoxelCollectionAsset( filename, animator->assetIds + 1 ) );
+			    animatorLoadVoxelCollectionAsset( filename, animator->assetIds ) );
 			if( asset ) {
 				animator->assets.emplace_back( std::move( asset ) );
 				++animator->assetIds;
+				result = animator->assets.back().get();
 			}
 			break;
 		}
-		InvalidDefaultCase;
 	}
+	return result;
 }
 
 void sortNodes( AnimatorState* animator )
@@ -705,6 +731,7 @@ void animatorMessageBox( AnimatorState* animator, StringView text, StringView ti
 
 void animatorClear( AnimatorState* animator )
 {
+	animator->assets.clear();
 	animator->keyframes.clear();
 	animator->selected.clear();
 	animator->groups.clear();
@@ -719,6 +746,7 @@ void animatorClear( AnimatorState* animator )
 	animator->flags.unsavedChanges     = false;
 	animator->flags.uncommittedChanges = false;
 	animator->nodeIds                  = 0;
+	animator->assetIds                 = 0;
 	animator->messageBox.action        = {};
 
 	clearSelectedKeyframes( animator );
@@ -780,31 +808,47 @@ void animatorSave( StackAllocator* allocator, AnimatorState* animator, StringVie
 					writeStartObject( writer );
 					writer->minimal = true;
 						writeProperty( writer, "t", keyframe.t );
-				        writeProperty( writer, "easeType", to_string( keyframe.data.easeType ) );
-				        switch( keyframe.data.type ) {
-				        	case AnimatorKeyframeData::type_translation: {
-				        		writeProperty( writer, "value", keyframe.data.translation );
-				        		break;
-				        	}
-				        	case AnimatorKeyframeData::type_rotation: {
-				        		writeProperty( writer, "value", keyframe.data.rotation );
-				        		break;
-				        	}
-				        	case AnimatorKeyframeData::type_scale: {
-				        		writeProperty( writer, "value", keyframe.data.scale );
-				        		break;
-				        	}
-				        	case AnimatorKeyframeData::type_frame: {
-				        		writeProperty( writer, "value", keyframe.data.frame );
-				        		break;
-				        	}
-				        	InvalidDefaultCase;
-				        }
-			        writeEndObject( writer );
+						writeProperty( writer, "easeType", to_string( keyframe.data.easeType ) );
+						switch( keyframe.data.type ) {
+							case AnimatorKeyframeData::type_translation: {
+								writeProperty( writer, "value", keyframe.data.translation );
+								break;
+							}
+							case AnimatorKeyframeData::type_rotation: {
+								writeProperty( writer, "value", keyframe.data.rotation );
+								break;
+							}
+							case AnimatorKeyframeData::type_scale: {
+								writeProperty( writer, "value", keyframe.data.scale );
+								break;
+							}
+							case AnimatorKeyframeData::type_frame: {
+								writeProperty( writer, "value", keyframe.data.frame );
+								break;
+							}
+							InvalidDefaultCase;
+						}
+					writeEndObject( writer );
 					writer->minimal = false;
 				}
 			}
 		writeEndArray( writer );
+	};
+
+	auto writeAsset = []( JsonWriter* writer, const AnimatorAsset* asset ) {
+		writeStartObject( writer );
+			writeProperty( writer, "type", to_string( asset->type ) );
+			switch( asset->type ) {
+				case AnimatorAsset::type_collection: {
+					assert( asset->collection );
+					writeProperty( writer, "filename", asset->collection->voxels.filename );
+					break;
+				}
+				InvalidDefaultCase;
+			}
+			writeProperty( writer, "id", asset->id );
+			writeProperty( writer, "name", StringView{asset->name, asset->nameLength} );
+		writeEndObject( writer );
 	};
 
 	AnimatorAnimation* current = animator->currentAnimation;
@@ -821,6 +865,13 @@ void animatorSave( StackAllocator* allocator, AnimatorState* animator, StringVie
 		auto nodes = ( animator->currentAnimation ) ? &animator->baseNodes : &animator->nodes;
 
 		writeStartObject( writer );
+			writePropertyName( writer, "assets" );
+			writeStartArray( writer );
+				FOR( asset : animator->assets ) {
+					writeAsset( writer, asset.get() );
+				}
+			writeEndArray( writer );
+
 			writePropertyName( writer, "nodes" );
 			writeStartArray( writer );
 			FOR( node : *nodes ) {
@@ -841,22 +892,22 @@ void animatorSave( StackAllocator* allocator, AnimatorState* animator, StringVie
 							auto group = makeAnimatorGroup( node.id, 0 );
 							writePropertyName( writer, "keyframes" );
 							writeStartObject( writer );
-						        writeKeyframes( writer, keyframes, "translation", group + 1 );
-						        writeKeyframes( writer, keyframes, "rotation", group + 2 );
-						        writeKeyframes( writer, keyframes, "scale", group + 3 );
-						        switch( node.assetType ) {
-						        	case AnimatorAsset::type_none: {
-						        		break;
-						        	}
-						        	case AnimatorAsset::type_collection: {
-								        writeKeyframes( writer, keyframes, "frame", group + 4 );
-						        		break;
-						        	}
-						        	InvalidDefaultCase;
-						        }
+								writeKeyframes( writer, keyframes, "translation", group + 1 );
+								writeKeyframes( writer, keyframes, "rotation", group + 2 );
+								writeKeyframes( writer, keyframes, "scale", group + 3 );
+								switch( node.assetType ) {
+									case AnimatorAsset::type_none: {
+										break;
+									}
+									case AnimatorAsset::type_collection: {
+										writeKeyframes( writer, keyframes, "frame", group + 4 );
+										break;
+									}
+									InvalidDefaultCase;
+								}
 							writeEndObject( writer );
 						writeEndObject( writer );
-			        }
+					}
 					writeEndArray( writer );
 
 					writeProperty( writer, "name", StringView{animation.name} );
@@ -949,6 +1000,14 @@ bool animatorOpen( StackAllocator* allocator, AnimatorState* animator, StringVie
 		animatorClear( animator );
 		auto root = doc.root.getObject();
 
+		FOR( asset : root["assets"].getObjectArray() ) {
+			auto type = convert_to< AnimatorAsset::Type >( asset["type"].getString() );
+			if( auto added = addNewAsset( animator, asset["filename"].getString(), type ) ) {
+				serialize( asset["id"], added->id, -1 );
+				added->setName( asset["name"].getString() );
+			}
+		}
+
 		FOR( node : root["nodes"].getObjectArray() ) {
 			auto addedContainer = std::make_unique< AnimatorNode >();
 			auto added          = addedContainer.get();
@@ -956,7 +1015,7 @@ bool animatorOpen( StackAllocator* allocator, AnimatorState* animator, StringVie
 			serialize( node["rotation"], added->rotation );
 			serialize( node["scale"], added->scale );
 			serialize( node["length"], added->length );
-			serialize( node["id"], added->id );
+			serialize( node["id"], added->id, -1 );
 			serialize( node["parentId"], added->parentId, -1 );
 			serialize( node["assetId"], added->assetId, -1 );
 			auto voxel = node["voxel"].getObject();
@@ -983,7 +1042,7 @@ bool animatorOpen( StackAllocator* allocator, AnimatorState* animator, StringVie
 			FOR( node : nodes ) {
 				added->nodes.emplace_back();
 				auto addedNode = &added->nodes.back();
-				serialize( node["id"], addedNode->id );
+				serialize( node["id"], addedNode->id, -1 );
 				serialize( node["translation"], addedNode->translation );
 				serialize( node["rotation"], addedNode->rotation );
 				serialize( node["scale"], addedNode->scale );
@@ -1003,21 +1062,42 @@ bool animatorOpen( StackAllocator* allocator, AnimatorState* animator, StringVie
 		}
 	}
 
-	// TODO: validate, ie check that ids are unique
 	TEMPORARY_MEMORY_BLOCK( allocator ) {
 		// check whether ids are unique
 		int16 maxId = 0;
-		auto cap = (int32)getCapacityFor< int16 >( allocator ) / 2;
+		auto cap = (int32)getCapacityFor< int16 >( allocator ) / 3;
+		auto assetIds = makeUArray( allocator, int16, cap );
+		FOR( entry : animator->assets ) {
+			auto asset = entry.get();
+			if( asset->id < 0 ) {
+				LOG( ERROR, "{}: Invalid id {}", filename, asset->id );
+				return false;
+			}
+			if( !append_unique( assetIds, asset->id ) ) {
+				LOG( ERROR, "{}: Asset id {} not unique", filename, asset->id );
+				return false;
+			}
+		}
+
 		auto baseIds = makeUArray( allocator, int16, cap );
 		FOR( entry : animator->nodes ) {
 			auto node = entry.get();
 			if( node->id < 0 ) {
-				LOG( ERROR, "{}: Invalid id -1", filename );
+				LOG( ERROR, "{}: Invalid id {}", filename, node->id );
 				return false;
 			}
 			if( !append_unique( baseIds, node->id ) ) {
-				LOG( ERROR, "{}: Id {} not unique", filename, node->id );
+				LOG( ERROR, "{}: Node id {} not unique", filename, node->id );
 				return false;
+			}
+			if( node->assetId >= 0 ) {
+				auto index = find_index( assetIds, node->assetId );
+				if( !index ) {
+					LOG( ERROR, "{}: asset {} not found", filename, node->assetId );
+					return false;
+				}
+				node->asset     = animator->assets[index.get()].get();
+				node->assetType = node->asset->type;
 			}
 		}
 		animator->nodeIds = maxId;
@@ -1028,11 +1108,11 @@ bool animatorOpen( StackAllocator* allocator, AnimatorState* animator, StringVie
 			FOR( entry : animation.nodes ) {
 				auto node = &entry;
 				if( node->id < 0 ) {
-					LOG( ERROR, "{}: Invalid id -1", filename );
+					LOG( ERROR, "{}: Invalid id {}", filename, node->id );
 					return false;
 				}
 				if( !append_unique( ids, node->id ) ) {
-					LOG( ERROR, "{}: Id {} not unique", filename, node->id );
+					LOG( ERROR, "{}: Node id {} not unique", filename, node->id );
 					return false;
 				}
 				if( !find_first_where( baseIds, entry == node->id ) ) {
@@ -1062,12 +1142,20 @@ bool animatorOpen( StackAllocator* allocator, AnimatorState* animator, StringVie
 	return true;
 }
 
+FilenameString animatorGetSaveFilename()
+{
+	auto result = getSaveFilename( JsonFilter, nullptr );
+	if( result.size() && !equalsIgnoreCase( getFilenameExtension( result ), ".json" ) ) {
+		result.append( ".json" );
+	}
+	return result;
+}
+
 bool animatorMenuSave( AppData* app )
 {
 	auto animator = &app->animatorState;
 	if( !animator->filename.size() ) {
-		animator->filename.resize( GlobalPlatformServices->getSaveFilename(
-		    JsonFilter, nullptr, animator->filename.data(), animator->filename.capacity() ) );
+		animator->filename = animatorGetSaveFilename();
 	}
 	if( animator->filename.size() ) {
 		animatorSave( &app->stackAllocator, animator, animator->filename );
@@ -1077,9 +1165,7 @@ bool animatorMenuSave( AppData* app )
 bool animatorMenuSaveAs( AppData* app )
 {
 	auto animator = &app->animatorState;
-	short_string< MAX_PATH > filename;
-	filename.resize( GlobalPlatformServices->getSaveFilename( JsonFilter, nullptr, filename.data(),
-	                                                          filename.capacity() ) );
+	auto filename = animatorGetSaveFilename();
 	if( filename.size() ) {
 		animator->filename.assign( filename );
 		animatorSave( &app->stackAllocator, animator, animator->filename );
@@ -1104,9 +1190,7 @@ void animatorMenuOpen( AppData* app )
 	if( animator->flags.unsavedChanges ) {
 		animatorMessageBox( animator, "Save changes?", "Unsaved changes", saveAndOpen, open );
 	} else {
-		short_string< MAX_PATH > filename;
-		filename.resize( GlobalPlatformServices->getOpenFilename(
-		    JsonFilter, nullptr, false, filename.data(), filename.capacity() ) );
+		auto filename = getOpenFilename( JsonFilter, nullptr, false );
 		if( filename.size() ) {
 			if( !animatorOpen( &app->stackAllocator, animator, filename ) ) {
 				animatorClear( animator );
@@ -1800,19 +1884,20 @@ void doAnimatorMenu( AppData* app, GameInputs* inputs, rectfarg rect )
 
 	renderer->color = Color::White;
 	if( imguiBeginDropGroup( "Editor", &editor->expandedFlags, AnimatorEditor::EditorSettings ) ) {
-		imguiSlider( "Scale", &editor->scale, AnimatorMinScale, AnimatorMaxScale );
+		imguiSlider( "Scale", &editor->view.scale, EditorViewMinScale, EditorViewMaxScale );
 		if( imguiButton( "Reset View" ) ) {
-			editor->translation = {};
-			editor->rotation    = AnimatorInitialRotation;
-			editor->scale       = 1;
+			editor->view.translation = {};
+			editor->view.rotation    = AnimatorInitialRotation;
+			editor->view.scale       = 1;
 		}
 		imguiEndDropGroup();
 	}
 	if( imguiBeginDropGroup( "Assets", &editor->expandedFlags, AnimatorEditor::Assets ) ) {
-		imguiListboxIntrusive( &editor->assetsScrollPos, animator->assets.data(),
-		                       sizeof( AnimatorAsset ), ::size( animator->assets ), 200, 200 );
+		auto assets = makeArrayView( animator->assets );
+		auto getter = []( UniqueAnimatorAsset& asset ) -> ImGuiListboxItem& { return asset->item; };
+		imguiListboxIntrusive( &editor->assetsScrollPos, {assets, getter}, 200, 200 );
 		auto firstIt = find_first_where( animator->assets, entry->item.selected );
-		auto first = ( firstIt ) ? ( firstIt->get() ) : ( nullptr );
+		auto first   = ( firstIt ) ? ( firstIt->get() ) : ( nullptr );
 		if( first ) {
 			if( imguiEditbox( "Name", first->name, &first->nameLength, countof( first->name ) ) ) {
 				first->setName( {first->name, first->nameLength} );
@@ -1820,7 +1905,10 @@ void doAnimatorMenu( AppData* app, GameInputs* inputs, rectfarg rect )
 		}
 		imguiSameLine( 1 );
 		if( imguiButton( "Add Voxel Collection", imguiRelative() ) ) {
-
+			auto filename = getOpenFilename( JsonFilter, nullptr, false );
+			if( filename.size() ) {
+				addNewAsset( animator, filename, AnimatorAsset::type_collection );
+			}
 		}
 		if( imguiButton( "Add Texture Map", imguiRelative() ) ) {
 
@@ -2426,47 +2514,11 @@ void doEditor( AppData* app, GameInputs* inputs, rectfarg rect )
 	setRenderState( renderer, RenderStateType::Scissor, true );
 	setScissorRect( renderer, Rect< int32 >( rect ) );
 
-	auto mat = matrixRotationY( editor->rotation.x ) * matrixRotationX( editor->rotation.y )
-	           * matrixTranslation( editor->translation )
-	           * matrixScale( editor->scale, editor->scale, 1 ) * matrixTranslation( 0, 0, 200 );
+	auto mat = processEditorViewGui( &editor->view, inputs, rect );
 	if( animator->flags.mirror ) {
 		mat = matrixScale( -1, 1, 1 ) * mat;
 	}
 	renderer->view = mat;
-
-	auto handleMouse = [&]( uint8 button, uint8 modifier,
-	                        void ( *proc )( AnimatorEditor * editor, GameInputs * inputs ) ) {
-		auto pressed      = isKeyPressed( inputs, button );
-		auto modifierDown = ( modifier != 0 ) ? isKeyDown( inputs, modifier ) : ( true );
-		if( ( isPointInside( rect, inputs->mouse.position ) && pressed && modifierDown )
-		    || imguiHasCapture( handle ) ) {
-
-			if( pressed ) {
-				imguiFocus( handle );
-				imguiCapture( handle, button );
-			}
-			if( imguiIsHover( handle ) && isKeyDown( inputs, button ) ) {
-				proc( editor, inputs );
-			}
-		}
-	};
-
-	handleMouse( KC_LButton, KC_Space, []( AnimatorEditor* editor, GameInputs* inputs ) {
-		auto delta = inputs->mouse.delta * 0.01f;
-		editor->rotation.x -= delta.x;
-		editor->rotation.y -= delta.y;
-	} );
-	handleMouse( KC_MButton, 0, []( AnimatorEditor* editor, GameInputs* inputs ) {
-		auto delta = inputs->mouse.delta * 0.5f / editor->scale;
-		editor->translation.x += delta.x;
-		editor->translation.y -= delta.y;
-	} );
-	if( ( isPointInside( rect, inputs->mouse.position ) || imguiHasFocus( handle ) )
-	    && !floatEqZero( inputs->mouse.wheel ) ) {
-
-		editor->scale =
-		    clamp( editor->scale + inputs->mouse.wheel * 0.1f, AnimatorMinScale, AnimatorMaxScale );
-	}
 
 	// render grid
 	setTexture( renderer, 0, null );
@@ -2654,7 +2706,7 @@ void doEditor( AppData* app, GameInputs* inputs, rectfarg rect )
 				pushLine( stream, plane.origin - plane.normal * size,
 				          plane.origin + plane.normal * size );
 			}
-			setRenderState( renderer, RenderStateType::BackCulling, false );
+			setRenderState( renderer, RenderStateType::BackFaceCulling, false );
 
 			auto mat      = matrixFromNormal( plane.normal );
 			vec3 verts[4] = {plane.origin + transformVector3( mat, {-size, size, 0} ),
@@ -2665,7 +2717,7 @@ void doEditor( AppData* app, GameInputs* inputs, rectfarg rect )
 			setTexture( renderer, 0, null );
 			addRenderCommandSingleQuad( renderer, verts );
 
-			setRenderState( renderer, RenderStateType::BackCulling, true );
+			setRenderState( renderer, RenderStateType::BackFaceCulling, true );
 			setProjection( renderer, ProjectionType::Orthogonal );
 		}
 
@@ -2822,8 +2874,9 @@ void doAnimator( AppData* app, GameInputs* inputs, bool focus, float dt )
 		animator->fieldNames[2] = pushString( &animator->stringPool, "Scale" );
 		animator->fieldNames[3] = pushString( &animator->stringPool, "Frame" );
 
-		animator->editor.rotation = AnimatorInitialRotation;
-		animator->editor.scale    = 1;
+		animator->editor.view.rotation = AnimatorInitialRotation;
+		animator->editor.view.scale    = 1;
+		animator->editor.view.z        = 200;
 		animator->editor.expandedFlags |= AnimatorEditor::Properties;
 		animator->flags.timelineRootExpanded = true;
 
@@ -2996,120 +3049,12 @@ void doAnimator( AppData* app, GameInputs* inputs, bool focus, float dt )
 #endif
 }
 
-// AnimatorVoxelCollection
-
-AnimatorVoxelCollection animatorLoadVoxelCollection( StringView filename )
-{
-	AnimatorVoxelCollection result;
-	result.memorySize = kilobytes( 20 );
-	result.memory     = GlobalPlatformServices->allocate( result.memorySize, 1 );
-	auto allocator    = makeStackAllocator( result.memory, result.memorySize );
-	if( loadVoxelCollection( &allocator, filename, &result.voxels ) ) {
-		result.names = makeArray( &allocator, StringView, result.voxels.animations.size() );
-		zip_for( result.names, result.voxels.animations ) {
-			*first = second->name;
-		}
-		auto inplace = GlobalPlatformServices->reallocateInPlace( result.memory, allocator.size,
-		                                                          result.memorySize, 1 );
-		assert( inplace == result.memory );
-		if( inplace ) {
-			result.memorySize = allocator.size;
-		}
-	} else {
-		GlobalPlatformServices->free( result.memory, result.memorySize, 1 );
-		result.memory     = nullptr;
-		result.memorySize = 0;
-	}
-	return result;
-}
-AnimatorVoxelCollection::~AnimatorVoxelCollection() { destroy(); }
-AnimatorVoxelCollection::AnimatorVoxelCollection( const AnimatorVoxelCollection& other )
-{
-	assign( other );
-}
-AnimatorVoxelCollection::AnimatorVoxelCollection( AnimatorVoxelCollection&& other )
-{
-	assign( std::move( other ) );
-}
-AnimatorVoxelCollection& AnimatorVoxelCollection::operator=( const AnimatorVoxelCollection& other )
-{
-	if( this != &other ) {
-		destroy();
-		assign( other );
-	}
-	return *this;
-}
-AnimatorVoxelCollection& AnimatorVoxelCollection::operator=( AnimatorVoxelCollection&& other )
-{
-	if( this != &other ) {
-		destroy();
-		assign( std::move( other ) );
-	}
-	return *this;
-}
-void AnimatorVoxelCollection::assign( const AnimatorVoxelCollection& other )
-{
-	assert( this != &other );
-	assert( !memory );
-	assert( !memorySize );
-
-	if( other.memory && other.memorySize ) {
-		constexpr const auto AlignmentPadding = 8;
-		memorySize                            = other.memorySize + AlignmentPadding;
-		memory                                = GlobalPlatformServices->allocate( memorySize, 1 );
-		auto allocator                        = makeStackAllocator( memory, memorySize );
-
-		voxels.texture = other.voxels.texture;
-		voxels.frames = makeArray( &allocator, VoxelCollection::Frame, other.voxels.frames.size() );
-		voxels.frameInfos =
-		    makeArray( &allocator, VoxelCollection::FrameInfo, other.voxels.frameInfos.size() );
-		voxels.animations =
-		    makeArray( &allocator, VoxelCollection::Animation, other.voxels.animations.size() );
-		voxels.voxelsFilename = makeString( &allocator, other.voxels.voxelsFilename );
-		names                 = makeArray( &allocator, StringView, other.names.size() );
-
-		voxels.frames.assign( other.voxels.frames );
-		voxels.frameInfos.assign( other.voxels.frameInfos );
-		voxels.animations.assign( other.voxels.animations );
-		auto index = 0;
-		FOR( animation : voxels.animations ) {
-			animation.name = makeString( &allocator, animation.name );
-			names[index++] = animation.name;
-		}
-
-		if( GlobalPlatformServices->reallocateInPlace( memory, allocator.size, memorySize, 1 ) ) {
-			memorySize = allocator.size;
-		}
-	}
-}
-void AnimatorVoxelCollection::assign( AnimatorVoxelCollection&& other )
-{
-	assert( this != &other );
-	assert( !memory );
-	assert( !memorySize );
-
-	voxels     = other.voxels;
-	names      = other.names;
-	memory     = exchange( other.memory, nullptr );
-	memorySize = exchange( other.memorySize, 0 );
-}
-void AnimatorVoxelCollection::destroy()
-{
-	assert( !memory || memorySize );
-	if( memory && memorySize ) {
-		GlobalPlatformServices->free( memory, memorySize, 1 );
-
-		memory = nullptr;
-		memorySize = 0;
-	}
-}
-
 // AnimatorAsset
 AnimatorAsset animatorLoadVoxelCollectionAsset( StringView filename, int16 id )
 {
 	AnimatorAsset result;
 	result.type            = AnimatorAsset::type_collection;
-	result.collection = new AnimatorVoxelCollection( animatorLoadVoxelCollection( filename ) );
+	result.collection = new DynamicVoxelCollection( loadDynamicVoxelCollection( filename ) );
 	if( !result.collection || !result.collection->memory ) {
 		if( result.collection ) {
 			delete result.collection;
@@ -3162,7 +3107,7 @@ void AnimatorAsset::assign( const AnimatorAsset& other )
 		}
 		case type_collection: {
 			type       = type_collection;
-			collection = new AnimatorVoxelCollection( *other.collection );
+			collection = new DynamicVoxelCollection( *other.collection );
 			break;
 		}
 		InvalidDefaultCase;

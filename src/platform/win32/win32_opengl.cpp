@@ -437,6 +437,7 @@ struct OpenGlContext {
 	GLuint plainWhiteTexture;  // TODO: move this to the atlas texture
 
 	GLuint currentTextures[2];
+	GLuint currentProgram;
 	ProjectionType currentProjectionType;
 	mat4 projections[2];
 	bool8 renderStates[(int)RenderStateType::Count];
@@ -603,7 +604,8 @@ static bool win32VertexBufferHasSpace( OpenGlVertexBuffer* vb, GLsizei verticesC
 }
 
 TextureId toTextureId( GLuint id ) { return {(int32)id}; }
-GLuint toOpenGlTextureId( TextureId id ) { return (GLuint)id.id ;}
+GLuint toOpenGlId( TextureId id ) { return (GLuint)id.id ;}
+GLuint toOpenGlId( ShaderId id ) { return (GLuint)id.id ;}
 
 static GLuint win32UploadImageToGpu( ImageData image )
 {
@@ -818,56 +820,99 @@ static OpenGlContext win32CreateOpenGlContext( StackAllocator* allocator, HDC hd
 
 #include "win32_opengl_shaders.cpp"
 
+static GLuint loadShader( const GLchar* data, GLint length, GLenum type )
+{
+	auto shader = glCreateShader( type );
+	if( !shader ) {
+		return 0;
+	}
+	auto lengthP = ( length ) ? ( &length ) : ( nullptr );
+	glShaderSource( shader, 1, &data, lengthP );
+	glCompileShader( shader );
+
+	GLint compileStatus;
+	glGetShaderiv( shader, GL_COMPILE_STATUS, &compileStatus );
+	if( compileStatus == GL_FALSE ) {
+		glDeleteShader( shader );
+		return 0;
+	}
+	return shader;
+}
+
+struct OpenGlShaderProgram {
+	GLuint vertex;
+	GLuint fragment;
+	GLuint program;
+};
+static OpenGlShaderProgram loadProgram( StringView vertexShader, StringView fragmentShader )
+{
+	OpenGlShaderProgram result = {};
+	result.vertex =
+	    loadShader( (const GLchar*)vertexShader.data(), vertexShader.size(), GL_VERTEX_SHADER );
+	if( !result.vertex ) {
+		return {};
+	}
+	result.fragment = loadShader( (const GLchar*)fragmentShader.data(), fragmentShader.size(),
+	                              GL_FRAGMENT_SHADER );
+	if( !result.fragment ) {
+		glDeleteShader( result.vertex );
+		return {};
+	}
+	result.program = glCreateProgram();
+	if( !result.program ) {
+		glDeleteShader( result.fragment );
+		glDeleteShader( result.vertex );
+		return {};
+	}
+	glAttachShader( result.program, result.vertex );
+	glAttachShader( result.program, result.fragment );
+
+	glBindFragDataLocation( result.program, 0, "outColor" );
+
+	glBindAttribLocation( result.program, AL_position, "position" );
+	glBindAttribLocation( result.program, AL_color, "color" );
+	glBindAttribLocation( result.program, AL_texCoords0, "texCoords0" );
+	glBindAttribLocation( result.program, AL_normal0, "normal0" );
+
+	glLinkProgram( result.program );
+	GLint linkStatus;
+	glGetProgramiv( result.program, GL_LINK_STATUS, &linkStatus );
+	if( linkStatus == GL_FALSE ) {
+		glDeleteShader( result.fragment );
+		glDeleteShader( result.vertex );
+		glDeleteProgram( result.program );
+		return {};
+	}
+	auto texture0Location = glGetUniformLocation( result.program, "texture0" );
+	if( texture0Location >= 0 ) {
+		glUseProgram( result.program );
+		glUniform1i( texture0Location, 0 );
+	}
+	return result;
+}
+
 static bool win32InitIngameShaders( OpenGlContext* context )
 {
 	auto shader = &context->shader;
 
-	shader->vertexShader   = glCreateShader( GL_VERTEX_SHADER );
-	shader->fragmentShader = glCreateShader( GL_FRAGMENT_SHADER );
-	glShaderSource( shader->vertexShader, 1, (const GLchar**)&ingameVertexShaderSource, nullptr );
-	glShaderSource( shader->fragmentShader, 1, (const GLchar**)&ingameFragmentShaderSource,
-	                nullptr );
-	glCompileShader( shader->vertexShader );
-	glCompileShader( shader->fragmentShader );
-
-	GLint vertexShaderCompileStatus;
-	glGetShaderiv( shader->vertexShader, GL_COMPILE_STATUS, &vertexShaderCompileStatus );
-	GLint fragmentShaderCompileStatus;
-	glGetShaderiv( shader->fragmentShader, GL_COMPILE_STATUS, &fragmentShaderCompileStatus );
-	if( vertexShaderCompileStatus == GL_FALSE || fragmentShaderCompileStatus == GL_FALSE ) {
+	auto prog = loadProgram( ingameVertexShaderSource, ingameFragmentShaderSource );
+	if( !prog.program ) {
 		return false;
 	}
-	shader->program = glCreateProgram();
-	glAttachShader( shader->program, shader->vertexShader );
-	glAttachShader( shader->program, shader->fragmentShader );
+	shader->vertexShader   = prog.vertex;
+	shader->fragmentShader = prog.fragment;
+	shader->program        = prog.program;
 
-	glBindFragDataLocation( shader->program, 0, "outColor" );
-
-	glBindAttribLocation( shader->program, AL_position, "position" );
-	glBindAttribLocation( shader->program, AL_color, "color" );
-	glBindAttribLocation( shader->program, AL_texCoords0, "texCoords0" );
-	glBindAttribLocation( shader->program, AL_normal0, "normal0" );
-
-	glLinkProgram( shader->program );
-	GLint linkStatus;
-	glGetProgramiv( shader->program, GL_LINK_STATUS, &linkStatus );
-	if( linkStatus == GL_FALSE ) {
-		return false;
-	}
-	glUseProgram( shader->program );
-
-	auto texture0Location     = glGetUniformLocation( shader->program, "texture0" );
-	shader->worldViewProj     = glGetUniformLocation( shader->program, "worldViewProj" );
-	shader->model             = glGetUniformLocation( shader->program, "model" );
-	shader->screenDepthOffset = glGetUniformLocation( shader->program, "screenDepthOffset" );
-	shader->ambientStrength   = glGetUniformLocation( shader->program, "ambientStrength" );
-	shader->lightColor        = glGetUniformLocation( shader->program, "lightColor" );
-	shader->lightPosition     = glGetUniformLocation( shader->program, "lightPosition" );
+	shader->worldViewProj     = glGetUniformLocation( prog.program, "worldViewProj" );
+	shader->model             = glGetUniformLocation( prog.program, "model" );
+	shader->screenDepthOffset = glGetUniformLocation( prog.program, "screenDepthOffset" );
+	shader->ambientStrength   = glGetUniformLocation( prog.program, "ambientStrength" );
+	shader->lightColor        = glGetUniformLocation( prog.program, "lightColor" );
+	shader->lightPosition     = glGetUniformLocation( prog.program, "lightPosition" );
 	if( shader->worldViewProj < 0 || shader->model < 0 || shader->ambientStrength < 0
 	    || shader->lightColor < 0 || shader->lightPosition < 0 ) {
 		return false;
 	}
-	glUniform1i( texture0Location, 0 );
 
 	return true;
 }
@@ -875,49 +920,42 @@ static bool win32InitGuiShaders( OpenGlContext* context )
 {
 	auto shader = &context->noLightingShader;
 
-	shader->vertexShader   = glCreateShader( GL_VERTEX_SHADER );
-	shader->fragmentShader = glCreateShader( GL_FRAGMENT_SHADER );
-	glShaderSource( shader->vertexShader, 1, (const GLchar**)&noLightingVertexShaderSource,
-	                nullptr );
-	glShaderSource( shader->fragmentShader, 1, (const GLchar**)&noLightingFragmentShaderSource,
-	                nullptr );
-	glCompileShader( shader->vertexShader );
-	glCompileShader( shader->fragmentShader );
-
-	GLint vertexShaderCompileStatus;
-	glGetShaderiv( shader->vertexShader, GL_COMPILE_STATUS, &vertexShaderCompileStatus );
-	GLint fragmentShaderCompileStatus;
-	glGetShaderiv( shader->fragmentShader, GL_COMPILE_STATUS, &fragmentShaderCompileStatus );
-	if( vertexShaderCompileStatus == GL_FALSE || fragmentShaderCompileStatus == GL_FALSE ) {
+	auto prog = loadProgram( noLightingVertexShaderSource, noLightingFragmentShaderSource );
+	if( !prog.program ) {
 		return false;
 	}
-	shader->program = glCreateProgram();
-	glAttachShader( shader->program, shader->vertexShader );
-	glAttachShader( shader->program, shader->fragmentShader );
+	shader->vertexShader   = prog.vertex;
+	shader->fragmentShader = prog.fragment;
+	shader->program        = prog.program;
 
-	glBindFragDataLocation( shader->program, 0, "outColor" );
-
-	glBindAttribLocation( shader->program, AL_position, "position" );
-	glBindAttribLocation( shader->program, AL_color, "color" );
-	glBindAttribLocation( shader->program, AL_texCoords0, "texCoords0" );
-
-	glLinkProgram( shader->program );
-	GLint linkStatus;
-	glGetProgramiv( shader->program, GL_LINK_STATUS, &linkStatus );
-	if( linkStatus == GL_FALSE ) {
-		return false;
-	}
-	glUseProgram( shader->program );
-
-	auto texture0Location     = glGetUniformLocation( shader->program, "texture0" );
-	shader->worldViewProj     = glGetUniformLocation( shader->program, "worldViewProj" );
-	shader->screenDepthOffset = glGetUniformLocation( shader->program, "screenDepthOffset" );
-	glUniform1i( texture0Location, 0 );
+	shader->worldViewProj     = glGetUniformLocation( prog.program, "worldViewProj" );
+	shader->screenDepthOffset = glGetUniformLocation( prog.program, "screenDepthOffset" );
 	return true;
 }
 static bool win32InitShaders( OpenGlContext* context )
 {
 	return win32InitIngameShaders( context ) && win32InitGuiShaders( context );
+}
+
+ShaderId openGlLoadShaderProgram( StringView vertexShader, StringView fragmentShader )
+{
+	auto vertex   = win32ReadWholeFileInternal( vertexShader );
+	auto fragment = win32ReadWholeFileInternal( fragmentShader );
+	auto prog     = loadProgram( vertex, fragment );
+	if( !prog.program ) {
+		return {};
+	}
+
+	glDetachShader( prog.program, prog.vertex );
+	glDetachShader( prog.program, prog.fragment );
+	glDeleteShader( prog.vertex );
+	glDeleteShader( prog.fragment );
+	return {(int32)prog.program};
+}
+
+void openGlDeleteShaderProgram( ShaderId id )
+{
+	glDeleteProgram( (GLuint)id.id );
 }
 
 void openGlClear( Color clearColor )
@@ -932,10 +970,8 @@ void openGlClear( Color clearColor )
 	Win32AppContext.info->indices = 0;
 }
 
-void openGlPrepareIngameRender( OpenGlContext* context )
+void openGlSetAttribs( OpenGlContext* context )
 {
-	auto shader = &context->shader;
-	glUseProgram( shader->program );
 	glEnableVertexAttribArray( AL_position );
 	glVertexAttribPointer( AL_position, 3, GL_FLOAT, GL_FALSE, sizeof( Vertex ), 0 );
 	glEnableVertexAttribArray( AL_color );
@@ -947,6 +983,27 @@ void openGlPrepareIngameRender( OpenGlContext* context )
 	glEnableVertexAttribArray( AL_normal0 );
 	glVertexAttribPointer( AL_normal0, 4, GL_INT_2_10_10_10_REV, GL_TRUE, sizeof( Vertex ),
 	                       BUFFER_OFFSET( offsetof( Vertex, normal ) ) );
+}
+void openGlPrepareCustomShader( OpenGlContext* context )
+{
+	auto program = context->currentProgram;
+	glUseProgram( program );
+	openGlSetAttribs( context );
+
+	auto worldViewProj     = glGetUniformLocation( program, "worldViewProj" );
+	auto model             = glGetUniformLocation( program, "model" );
+	auto screenDepthOffset = glGetUniformLocation( program, "screenDepthOffset" );
+
+	context->worldViewProj     = worldViewProj;
+	context->model             = model;
+	context->screenDepthOffset = screenDepthOffset;
+}
+void openGlPrepareIngameRender( OpenGlContext* context )
+{
+	auto shader = &context->shader;
+	glUseProgram( shader->program );
+
+	openGlSetAttribs( context );
 
 	glUniform1f( shader->ambientStrength, shader->values.ambientStrength );
 	glUniform4f( shader->lightColor, shader->values.lightColor.r, shader->values.lightColor.g,
@@ -957,6 +1014,7 @@ void openGlPrepareIngameRender( OpenGlContext* context )
 	context->worldViewProj     = shader->worldViewProj;
 	context->model             = shader->model;
 	context->screenDepthOffset = shader->screenDepthOffset;
+
 }
 void openGlPrepareNoLightingRender( OpenGlContext* context )
 {
@@ -990,7 +1048,9 @@ void openGlPrepareRender( OpenGlContext* context, bool wireframe )
 }
 void openGlPrepareShader( OpenGlContext* context )
 {
-	if( context->renderStates[valueof( RenderStateType::Lighting )] ) {
+	if( context->currentProgram ) {
+		openGlPrepareCustomShader( context );
+	} else if( context->renderStates[valueof( RenderStateType::Lighting )] ) {
 		openGlPrepareIngameRender( context );
 	} else {
 		openGlPrepareNoLightingRender( context );
@@ -1031,6 +1091,10 @@ static void win32SetRenderState( OpenGlContext* context, mat4* projections, Rend
 					glEnable( GL_DEPTH_TEST );
 					break;
 				}
+				case RenderStateType::DepthWrite: {
+					glDepthMask( GL_TRUE );
+					break;
+				}
 				case RenderStateType::Lighting: {
 					openGlPrepareShader( context );
 					break;
@@ -1039,8 +1103,12 @@ static void win32SetRenderState( OpenGlContext* context, mat4* projections, Rend
 					glEnable( GL_SCISSOR_TEST );
 					break;
 				}
-				case RenderStateType::BackCulling: {
+				case RenderStateType::BackFaceCulling: {
 					glEnable( GL_CULL_FACE );
+					break;
+				}
+				case RenderStateType::CullFrontFace: {
+					glCullFace( GL_FRONT );
 					break;
 				}
 				InvalidDefaultCase;
@@ -1051,6 +1119,10 @@ static void win32SetRenderState( OpenGlContext* context, mat4* projections, Rend
 					glDisable( GL_DEPTH_TEST );
 					break;
 				}
+				case RenderStateType::DepthWrite: {
+					glDepthMask( GL_FALSE );
+					break;
+				}
 				case RenderStateType::Lighting: {
 					openGlPrepareShader( context );
 					break;
@@ -1059,8 +1131,12 @@ static void win32SetRenderState( OpenGlContext* context, mat4* projections, Rend
 					glDisable( GL_SCISSOR_TEST );
 					break;
 				}
-				case RenderStateType::BackCulling: {
+				case RenderStateType::BackFaceCulling: {
 					glDisable( GL_CULL_FACE );
+					break;
+				}
+				case RenderStateType::CullFrontFace: {
+					glCullFace( GL_BACK );
 					break;
 				}
 				InvalidDefaultCase;
@@ -1077,6 +1153,7 @@ static void win32ProcessRenderCommands( OpenGlContext* context, RenderCommands* 
 	auto vb = &context->dynamicBuffer;
 	win32MapBuffers( vb );
 
+	context->currentProgram = 0;
 	context->shader.values.ambientStrength = renderCommands->ambientStrength;
 	context->shader.values.lightColor      = getColorF( renderCommands->lightColor );
 	context->shader.values.lightPosition   = renderCommands->lightPosition;
@@ -1173,7 +1250,7 @@ static void win32ProcessRenderCommands( OpenGlContext* context, RenderCommands* 
 			case RenderCommandEntryType::SetTexture: {
 				auto body = getRenderCommandBody( &stream, header, RenderCommandSetTexture );
 				assert( body->stage >= 0 && body->stage < 2 );
-				auto id = toOpenGlTextureId( body->id );
+				auto id = toOpenGlId( body->id );
 				if( id == 0 ) {
 					id = context->plainWhiteTexture;
 				}
@@ -1183,6 +1260,16 @@ static void win32ProcessRenderCommands( OpenGlContext* context, RenderCommands* 
 					glActiveTexture( GL_TEXTURE0 + body->stage );
 					glBindTexture( GL_TEXTURE_2D, id );
 					context->currentTextures[body->stage] = id;
+				}
+				break;
+			}
+			case RenderCommandEntryType::SetShader: {
+				auto body = getRenderCommandBody( &stream, header, RenderCommandSetShader );
+				auto id = toOpenGlId( body->id );
+				if( id != context->currentProgram ) {
+					win32RenderAndFlushBuffers( context, projections, GL_TRIANGLES );
+					context->currentProgram = id;
+					openGlPrepareShader( context );
 				}
 				break;
 			}
@@ -1282,6 +1369,7 @@ static bool win32InitOpenGL( OpenGlContext* context, float width, float height )
 	wglSwapIntervalEXT( 0 );
 
 	context->renderStates[valueof( RenderStateType::DepthTest )] = true;
+	context->renderStates[valueof( RenderStateType::DepthWrite )] = true;
 	context->renderStates[valueof( RenderStateType::Lighting )] = true;
 
 	return true;

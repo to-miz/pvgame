@@ -3,7 +3,9 @@
 #ifndef _WIN32MALLOC_H_INCLUDED_
 #define _WIN32MALLOC_H_INCLUDED_
 
-#define WIN32
+#ifndef WIN32
+	#define WIN32
+#endif
 #define MSPACES 1
 #define ONLY_MSPACES 1
 #define USE_LOCKS 0

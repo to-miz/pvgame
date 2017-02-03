@@ -1637,76 +1637,37 @@ bool imguiRadiobox( StringView name )
 	auto handle = imguiMakeStringHandle( name );
 	return imguiRadiobox( handle.handle, handle.string );
 }
+bool imguiRadiobox( ImGuiHandle handle, StringView name, bool checked )
+{
+	auto container = imguiCurrentContainer();
+	auto isChecked =
+	    ( ( container->checkedRadiobox == handle ) || ( !container->checkedRadiobox && checked ) );
+	auto changed = checked != isChecked;
+	checked      = isChecked;
+	if( !container->checkedRadiobox && checked ) {
+		container->checkedRadiobox = handle;
+	}
+
+	if( imguiRadiobox( handle, name ) ) {
+		if( !checked ) {
+			changed                    = true;
+			checked                    = true;
+			container->checkedRadiobox = handle;
+		}
+	}
+	return changed;
+}
 bool imguiRadiobox( StringView name, bool* checked )
 {
 	assert( checked );
 
 	auto handle = imguiMakeHandle( checked, ImGuiControlType::Radiobox );
-	auto container = imguiCurrentContainer();
-	auto isChecked =
-	    ( ( container->checkedRadiobox == handle ) || ( !container->checkedRadiobox && *checked ) );
-	auto changed  = *checked != isChecked;
-	*checked = isChecked;
-	if( !container->checkedRadiobox && *checked ) {
-		container->checkedRadiobox = handle;
-	}
-
-	if( imguiRadiobox( handle, name ) ) {
-		if( !*checked ) {
-			changed                    = true;
-			*checked                   = true;
-			container->checkedRadiobox = handle;
-		}
-	}
-	return changed;
-#if 0
-	auto renderer  = ImGui->renderer;
-	auto font      = ImGui->font;
-	auto style     = &ImGui->style;
-	auto container = imguiCurrentContainer();
-
-	auto handle  = imguiMakeHandle( checked, ImGuiControlType::Radiobox );
-	auto changed = false;
-
-	using namespace ImGuiTexCoords;
-	auto index = ( *checked ) ? ( RadioboxChecked ) : ( RadioboxUnchecked );
-
-	auto innerPadding = style->innerPadding;
-	auto width  = stringWidth( font, name ) + innerPadding * 3 + ::width( style->rects[index] );
-	auto height = max( stringHeight( font ), ::height( style->rects[index] ) ) + innerPadding * 2;
-	auto rect   = imguiAddItem( width, height );
-	auto inner  = imguiInnerRect( rect );
-	auto checkRect = translate( style->rects[index], inner.leftTop );
-
-	auto isChecked =
-	    ( ( container->checkedRadiobox == handle ) || ( !container->checkedRadiobox && *checked ) );
-	changed  = *checked != isChecked;
-	*checked = isChecked;
-	if( !container->checkedRadiobox && *checked ) {
-		container->checkedRadiobox = handle;
-	}
-
-	if( imguiKeypressButton( handle, checkRect ) ) {
-		if( !*checked ) {
-			changed                    = true;
-			*checked                   = true;
-			container->checkedRadiobox = handle;
-		}
-	}
-
-	RENDER_COMMANDS_STATE_BLOCK( renderer ) {
-		setTexture( renderer, 0, style->atlas );
-		MESH_STREAM_BLOCK( stream, renderer ) {
-			pushQuad( stream, checkRect, 0, makeQuadTexCoords( style->texCoords[index] ) );
-		}
-		renderer->color = multiply( renderer->color, Color::White );
-		auto textArea   = inner;
-		textArea.left += ::width( checkRect ) + innerPadding;
-		renderTextCenteredClipped( renderer, font, name, textArea );
-	}
-
-	return changed;
-#endif
+	return imguiRadiobox( handle, name, *checked );
+}
+bool imguiRadiobox( StringView name, bool checked )
+{
+	auto handle = imguiMakeStringHandle( name );
+	return imguiRadiobox( handle.handle, handle.string, checked );
 }
 
 bool imguiBeginDropGroup( ImGuiHandle handle, StringView name, bool expanded )
@@ -2454,8 +2415,76 @@ struct ImGuiListboxItem {
 	StringView text;
 	bool selected;
 };
-int32 imguiListboxIntrusive( float* scrollPos, void* items, int32 entrySize, int32 itemsCount,
-                             float width, float height, bool multiselect = true )
+// scary looking class, but it allows typesafe iteration over ImGuiListboxItem members of entries of
+// an array. The constructors are typesafe and convert the arguments into type erased array and
+// getter. This way only the constructor of this class needs to be templated instead of making
+// imguiListboxIntrusive into a templated function
+struct ImGuiListboxItemView {
+	char* ptr;
+	uint16 entrySize;
+	int32 sz;
+	void* state;
+	ImGuiListboxItem& (*get)( void*, void* );
+
+	template < class T, class Func >
+	ImGuiListboxItemView( Array< T > array, Func&& func )
+	: ptr( (char*)array.data() ), entrySize( sizeof( T ) ), sz( array.size() ), state( &func )
+	{
+		get = []( void* functor, void* entry ) -> ImGuiListboxItem& {
+			assert_alignment( entry, alignof( T ) );
+			assert_alignment( functor, alignof( Func ) );
+			return ( *(std::add_pointer_t< Func >)functor )( *(T*)entry );
+		};
+	}
+
+	ImGuiListboxItemView( Array< ImGuiListboxItem > array )
+	: ptr( (char*)array.data() ),
+	  entrySize( sizeof( ImGuiListboxItem ) ),
+	  sz( array.size() ),
+	  state( nullptr )
+	{
+		get = []( void*, void* entry ) -> ImGuiListboxItem& {
+			assert_alignment( entry, alignof( ImGuiListboxItem ) );
+			return *(ImGuiListboxItem*)entry;
+		};
+	}
+
+	struct iterator {
+		char* ptr;
+		uint16 entrySize;
+		void* state;
+		ImGuiListboxItem& ( *get )( void*, void* );
+
+		iterator& operator++()
+		{
+			ptr += entrySize;
+			return *this;
+		}
+		iterator operator++( int )
+		{
+			auto ret = *this;
+			ptr += entrySize;
+			return ret;
+		}
+		ImGuiListboxItem& operator*() { return get( state, ptr ); }
+		bool operator!=( iterator other ) { return this->ptr != other.ptr; }
+		bool operator==( iterator other ) { return this->ptr == other.ptr; }
+	};
+
+	iterator begin() const { return iterator{ptr, entrySize, state, get}; }
+	iterator end() const { return iterator{ptr + sz * entrySize, entrySize, state, get}; }
+
+	ImGuiListboxItem& operator[]( int32 index ) const
+	{
+		assert( index >= 0 && index < sz );
+		auto p = ptr + entrySize * index;
+		return get( state, p );
+	}
+
+	int32 size() const { return sz; }
+};
+int32 imguiListboxIntrusive( float* scrollPos, const ImGuiListboxItemView& items, float width,
+                             float height, bool multiselect = true )
 {
 	auto handle   = imguiMakeHandle( scrollPos, ImGuiControlType::Listbox );
 	auto renderer = ImGui->renderer;
@@ -2469,9 +2498,7 @@ int32 imguiListboxIntrusive( float* scrollPos, void* items, int32 entrySize, int
 	bool scrollActive   = false;
 	rectf scrollRect    = {rect.right - style->scrollWidth, rect.top, rect.right, rect.bottom};
 
-	auto first = (char*)items;
-	auto last  = first + entrySize * itemsCount;
-
+	const auto itemsCount = items.size();
 	if( itemsCount * itemHeight > height ) {
 		rect.right -= style->scrollWidth + style->innerPadding;
 		scrollActive = true;
@@ -2486,18 +2513,13 @@ int32 imguiListboxIntrusive( float* scrollPos, void* items, int32 entrySize, int
 		auto index = ( int32 )( ( inputs->mouse.position.y - rect.top + *scrollPos ) / itemHeight );
 		if( index >= 0 && index < itemsCount ) {
 			if( multiselect && isKeyDown( inputs, KC_Control ) ) {
-				auto entry = (ImGuiListboxItem*)( (char*)items + entrySize * index );
-				assert_alignment( entry, alignof( ImGuiListboxItem ) );
+				auto entry = &items[index];
 				entry->selected = !entry->selected;
 			} else {
-				for( auto it = first; it < last; it += entrySize ) {
-					auto entry = (ImGuiListboxItem*)it;
-					assert_alignment( entry, alignof( ImGuiListboxItem ) );
-					entry->selected = false;
+				FOR( entry : items ) {
+					entry.selected = false;
 				}
-				auto entry = (ImGuiListboxItem*)( first + entrySize * index );
-				assert_alignment( entry, alignof( ImGuiListboxItem ) );
-				entry->selected = true;
+				items[index].selected = true;
 			}
 			selectedIndex = index;
 		}
@@ -2517,10 +2539,8 @@ int32 imguiListboxIntrusive( float* scrollPos, void* items, int32 entrySize, int
 		entryRect.bottom = entryRect.top + itemHeight;
 		Color colors[]   = {{multiply( renderer->color, 0xFF342B1B )},
 		                  {multiply( renderer->color, 0xFF5F594C )}};
-		for( auto it = first; it < last; it += entrySize ) {
-			auto entry = (ImGuiListboxItem*)it;
-			assert_alignment( entry, alignof( ImGuiListboxItem ) );
-			stream->color = colors[(int32)entry->selected];
+		FOR( entry : items ) {
+			stream->color = colors[(int32)entry.selected];
 			pushQuad( stream, entryRect );
 			entryRect = translate( entryRect, 0, itemHeight );
 		}
@@ -2531,10 +2551,8 @@ int32 imguiListboxIntrusive( float* scrollPos, void* items, int32 entrySize, int
 	reset( font );
 	RENDER_COMMANDS_STATE_BLOCK( renderer ) {
 		renderer->color = multiply( renderer->color, Color::White );
-		for( auto it = first; it < last; it += entrySize ) {
-			auto entry = (ImGuiListboxItem*)it;
-			assert_alignment( entry, alignof( ImGuiListboxItem ) );
-			renderText( renderer, font, entry->text, entryRect );
+		FOR( entry : items ) {
+			renderText( renderer, font, entry.text, entryRect );
 			entryRect = translate( entryRect, 0, itemHeight );
 		}
 	}
@@ -2544,8 +2562,7 @@ int32 imguiListboxIntrusive( float* scrollPos, void* items, int32 entrySize, int
 int32 imguiListbox( float* scrollPos, Array< ImGuiListboxItem > items, float width, float height,
                     bool multiselect = true )
 {
-	return imguiListboxIntrusive( scrollPos, items.data(), sizeof( ImGuiListboxItem ), items.size(),
-	                              width, height, multiselect );
+	return imguiListboxIntrusive( scrollPos, items, width, height, multiselect );
 }
 
 rectf imguiScrollable( vec2* scrollPos, rectfarg scrollDomain, float width, float height,

@@ -454,26 +454,20 @@ int CALLBACK WinMain( HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdL
 
 	win32PopulateKeyboardKeyNames();
 
-	PlatformServices platformServices = {&win32LoadTexture,
-	                                     &win32LoadTextureFromMemory,
-	                                     &win32DeleteTexture,
-	                                     &loadImageToMemory,
-	                                     &freeImageData,
-	                                     &win32LoadFont,
-	                                     &win32WriteBufferToFile,
-	                                     &win32ReadFileToBuffer,
-	                                     &win32UploadMeshToGpu,
-	                                     &win32GetOpenFilename,
-	                                     &win32GetSaveFilename,
-	                                     &win32GetKeyboardKeyName,
-	                                     &win32DlmallocMalloc,
-	                                     &win32DlmallocRealloc,
-	                                     &win32DlmallocReallocInPlace,
-	                                     &win32DlmallocMfree,
-	                                     &win32DlmallocAllocate,
-	                                     &win32DlmallocReallocate,
-	                                     &win32DlmallocReallocateInPlace,
-	                                     win32DlmallocFree};
+	PlatformServices platformServices = {
+	    &win32LoadTexture, &win32LoadTextureFromMemory, &win32DeleteTexture, &loadImageToMemory,
+	    &freeImageData, &win32LoadFont, &win32WriteBufferToFile, &win32ReadFileToBuffer,
+	    &win32UploadMeshToGpu, &win32GetOpenFilename, &win32GetSaveFilename,
+	    &win32GetKeyboardKeyName,
+
+	    // malloc
+	    &win32DlmallocMalloc, &win32DlmallocRealloc, &win32DlmallocReallocInPlace,
+	    &win32DlmallocMfree, &win32DlmallocAllocate, &win32DlmallocReallocate,
+	    &win32DlmallocReallocateInPlace, &win32DlmallocFree,
+
+	    // shader
+	    &openGlLoadShaderProgram, &openGlDeleteShaderProgram,
+	};
 	PlatformInfo info     = {};
 	Win32AppContext.info  = &info;
 	auto initializeResult = initializeApp( gameMemory, gameMemorySize, platformServices, &info );

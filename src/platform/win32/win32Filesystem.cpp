@@ -46,8 +46,8 @@ FileContents win32ReadWholeFile( StringView filename, char* buffer, size_t buffe
 }
 
 struct AllocatedFileContents {
-	char* data = nullptr;
-	size_t size = 0;
+	char* data                   = nullptr;
+	size_t size                  = 0;
 	ReadWholeFileErrorType error = ReadWholeFileErrorType::Ok;
 
 	void allocate( size_t size )
@@ -68,6 +68,7 @@ struct AllocatedFileContents {
 	}
 	~AllocatedFileContents() { destroy(); }
 	inline explicit operator bool() const { return error == ReadWholeFileErrorType::Ok; }
+	operator StringView() const { return {data, safe_truncate< int32 >( size )}; }
 };
 AllocatedFileContents win32ReadWholeFileInternal( StringView filename )
 {

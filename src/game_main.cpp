@@ -164,10 +164,10 @@ void* reallocate( void* ptr, size_t newSize, size_t oldSize, uint32 alignment )
 	assert( GlobalPlatformServices );
 	return GlobalPlatformServices->reallocate( ptr, newSize, oldSize, alignment );
 }
-void free( void* ptr, size_t size, uint32 alignment )
+void deallocate( void* ptr, size_t size, uint32 alignment )
 {
 	assert( GlobalPlatformServices );
-	GlobalPlatformServices->free( ptr, size, alignment );
+	GlobalPlatformServices->deallocate( ptr, size, alignment );
 }
 
 template < class T >
@@ -181,9 +181,9 @@ T* reallocate( T* ptr, size_t newCount, size_t oldCount )
 	return (T*)::reallocate( ptr, newCount * sizeof( T ), oldCount * sizeof( T ), alignof( T ) );
 }
 template< class T >
-void free( T* ptr, size_t count = 1 )
+void deallocate( T* ptr, size_t count = 1 )
 {
-	::free( ptr, count * sizeof( T ), alignof( T ) );
+	::deallocate( ptr, count * sizeof( T ), alignof( T ) );
 }
 
 void* operator new( std::size_t size ) /*throw( std::bad_alloc )*/
@@ -194,7 +194,7 @@ void* operator new( std::size_t size ) /*throw( std::bad_alloc )*/
 void operator delete( void* ptr ) /*throw()*/
 {
 	assert( GlobalPlatformServices );
-	GlobalPlatformServices->mfree( ptr );
+	GlobalPlatformServices->free( ptr );
 }
 void* operator new[]( std::size_t size ) /*throw(std::bad_alloc)*/
 {
@@ -204,12 +204,28 @@ void* operator new[]( std::size_t size ) /*throw(std::bad_alloc)*/
 void operator delete[]( void* ptr ) /*throw()*/
 {
 	assert( GlobalPlatformServices );
-	GlobalPlatformServices->mfree( ptr );
+	GlobalPlatformServices->free( ptr );
 }
 
 #include <vector>
 #include <new>
 #include <memory>
+
+FilenameString getOpenFilename( const char* filter, const char* initialDir, bool multiselect )
+{
+	FilenameString result;
+	result.resize( GlobalPlatformServices->getOpenFilename( filter, initialDir, multiselect,
+	                                                        result.data(), result.capacity() ) );
+	return result;
+}
+extern global_var PlatformServices* GlobalPlatformServices;
+FilenameString getSaveFilename( const char* filter, const char* initialDir )
+{
+	FilenameString result;
+	result.resize( GlobalPlatformServices->getSaveFilename( filter, initialDir, result.data(),
+	                                                        result.capacity() ) );
+	return result;
+}
 
 void debug_Clear()
 {
@@ -347,7 +363,8 @@ struct VoxelCollection {
 	Array< Frame > frames;
 	Array< FrameInfo > frameInfos;
 	Array< Animation > animations;
-	string voxelsFilename;
+	string filename;        // filename of the voxel collection json
+	string voxelsFilename;  // filename of the voxel grids file .raw
 };
 
 struct TileInfo {
@@ -400,6 +417,9 @@ Array< VoxelCollection::Frame > getAnimationFrames( VoxelCollection* collection,
 	return makeRangeView( collection->frames, getAnimationRange( collection, name ) );
 }
 
+#include "Editor/Common/DynamicVoxelCollection.h"
+#include "Editor/Common/EditorView.h"
+#include "Editor/Common/EditorView.cpp"
 #include "VoxelEditor.h"
 
 struct CountdownTimer {
@@ -1030,6 +1050,8 @@ struct GameState {
 
 	bool debugCamera;
 	bool debugCollisionBoxes;
+
+	ShaderId outlineShader;
 };
 
 bool emitProjectile( GameState* game, vec2arg origin, vec2arg velocity )
@@ -1214,11 +1236,6 @@ struct AppData {
 	bool mouseLocked;
 	bool displayDebug;
 };
-
-bool loadVoxelCollection( StackAllocator* allocator, StringView filename, VoxelCollection* out );
-
-#include "Editor/TexturePack/TexturePack.cpp"
-#include "Editor/Animator/Animator.cpp"
 
 void fillVoxelGridFromImage( VoxelGrid* grid, ImageData image )
 {
@@ -1440,6 +1457,7 @@ bool loadVoxelCollectionTextureMapping( StackAllocator* allocator, StringView fi
 		}
 		out->voxelsFilename = makeString( primary, root["voxels"].getString() );
 	}
+	out->filename = makeString( primary, filename );
 	guard.commit();
 	return true;
 }
@@ -1578,6 +1596,9 @@ static void processCamera( GameInputs* inputs, GameSettings* settings, Camera* c
 	updateCamera( camera, cameraDelta );
 }
 
+#include "Editor/Common/DynamicVoxelCollection.cpp"
+#include "Editor/TexturePack/TexturePack.cpp"
+#include "Editor/Animator/Animator.cpp"
 #include "VoxelEditor.cpp"
 
 const float SafetyDistance = 0.01f;
@@ -2521,6 +2542,9 @@ static void doGame( AppData* app, GameInputs* inputs, bool focus, float dt, bool
 		game->particleSystem.texture = app->platform.loadTexture( "Data/Images/dust.png" );
 		loadVoxelCollection( allocator, "Data/voxels/projectile.json", &game->projectile );
 
+		game->outlineShader =
+		    app->platform.loadShader( "Shaders/scale_by_normal.vsh", "Shaders/single_color.fsh" );
+
 		loadTileSet( allocator, "Data/voxels/default_tileset.json", &app->gameState.tileSet );
 		loadHeroVoxelCollection( allocator, "Data/voxels/hero.json",
 		                         &app->gameState.heroVoxelCollection );
@@ -2677,6 +2701,7 @@ static void doGame( AppData* app, GameInputs* inputs, bool focus, float dt, bool
 		};
 
 		{
+			// render tiles
 			auto tileWidth  = GameConstants::TileWidth;
 			auto tileHeight = GameConstants::TileHeight;
 			const float zTranslation[] = {0, TILE_DEPTH, -TILE_DEPTH};

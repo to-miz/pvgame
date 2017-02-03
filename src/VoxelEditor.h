@@ -25,9 +25,6 @@ struct VoxelGuiState {
 	float fadeProgress;
 	bool initialized;
 
-	bool lightingChecked;
-	bool noLightingChecked;
-
 	bool fileExpanded;
 	bool sizesExpanded;
 	bool texturesExpanded;
@@ -43,12 +40,16 @@ struct VoxelGuiState {
 	int32 mappingType;
 };
 
+enum class VoxelCameraType { Fixed, Free };
+
 struct VoxelState {
 	vec3 position;
+	VoxelCameraType cameraType;
 	Camera camera;
+	EditorView view;
 	MeshStream meshStream;
 	VoxelGrid voxels;
-	VoxelGrid voxelsMoving;
+	VoxelGrid voxelsIntermediate;
 	VoxelGrid voxelsCombined;
 	VoxelCell placingCell;
 	bool lighting;
@@ -59,6 +60,8 @@ struct VoxelState {
 	aabbi selection;
 	VoxelGuiState gui;
 
+	uint8 capture;
+
 	bool isFaceSelected;
 	vec3i selectionNormal;
 	vec3 selectionOrigin;
@@ -67,11 +70,9 @@ struct VoxelState {
 	vec3 lastAxisPosition;
 
 	VoxelGridTextureMap textureMap;
+	DynamicVoxelCollection collection;
 	int32 currentFrame;
-	Array< VoxelGrid > frameVoxels;
-
-	StackAllocator collectionArena;
-	VoxelCollection collection;
 
 	bool renderWithOffset;
+	bool renderEdges;
 };

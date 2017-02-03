@@ -14,9 +14,14 @@ typedef void WriteBufferToFileType( StringView filename, void* buffer, size_t bu
 typedef size_t ReadFileToBufferType( StringView filename, void* buffer, size_t bufferSize );
 typedef MeshId UploadMeshType( Mesh mesh );
 
+typedef ShaderId LoadShaderType( StringView vertexShader, StringView fragmentShader );
+typedef void DeleteShaderType( ShaderId shader );
+
+// TODO: get rid of MAX_PATH dependency
 #ifndef MAX_PATH
 	#define MAX_PATH 260
 #endif
+typedef short_string< MAX_PATH > FilenameString;
 static const char* DefaultFilter = "All\0*.*\0";
 static const char* JsonFilter = "Json\0*.json\0All\0*.*\0";
 
@@ -53,15 +58,20 @@ struct PlatformServices {
 
 	GetKeyboardKeyNameType* getKeyboardKeyName;
 
+	// malloc
 	MallocType* malloc;
 	ReallocType* realloc;
 	ReallocType* reallocInPlace;
-	MfreeType* mfree;
+	MfreeType* free;
 
 	AllocateType* allocate;
 	ReallocateType* reallocate;
 	ReallocateType* reallocateInPlace;
-	FreeType* free;
+	FreeType* deallocate;
+
+	// shader
+	LoadShaderType* loadShader;
+	DeleteShaderType* deleteShader;
 };
 
 // structures that get passed into the platform layer, get filled and passed back

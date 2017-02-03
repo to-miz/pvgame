@@ -86,7 +86,7 @@ bool doTextureDisplay( AppData* app, TexturePackSource* source )
 
 		rectf textureRect = {0, 0, source->width * editor->textureScale,
 		                     source->height * editor->textureScale};
-		auto rect = imguiScrollable( &textureDisplay->scrollPos, textureRect, 400, 400 );
+		auto rect = imguiScrollable( &textureDisplay->scrollPos, textureRect, 800, 600 );
 
 		auto clip = ClippingRect( renderer, rect );
 		setTexture( renderer, 0, source->id );
@@ -363,9 +363,10 @@ TexturePackSource* doTexturePackSources( AppData* app )
 
 	imguiText( "Texture Sources" );
 	auto textureSources = &editor->textureSources;
-	auto selectedIndex  = imguiListboxIntrusive(
-		&textureSources->scrollPos, textureSources->items.data(), sizeof( TexturePackSource ),
-		textureSources->items.size(), 150, 150, false );
+	auto getter = []( TexturePackSource& source ) -> ImGuiListboxItem& { return source.lb; };
+	auto items = makeArrayView( textureSources->items );
+	auto selectedIndex =
+	    imguiListboxIntrusive( &textureSources->scrollPos, {items, getter}, 150, 150, false );
 	if( selectedIndex >= 0 ) {
 		textureSources->lastSelected = selectedIndex;
 	}
@@ -725,23 +726,20 @@ void texturePackSave( AppData* app )
 {
 	auto editor = &app->texturePackState;
 
-	char filenameBuffer[260];
-	auto filenameLength = GlobalPlatformServices->getSaveFilename(
-	    nullptr, "Data/Images", filenameBuffer, countof( filenameBuffer ) );
-	if( !filenameLength ) {
+	auto filename = getSaveFilename( nullptr, "Data/Images" );
+	if( !filename.size() ) {
 		return;
 	}
-	StringView filename = {filenameBuffer, filenameLength};
 
 	auto allocator = &app->stackAllocator;
 	TEMPORARY_MEMORY_BLOCK( allocator ) {
-		auto textureFilename = snprint( allocator, "{}.png", filename );
-		auto jsonFilename = snprint( allocator, "{}.json", filename );
-		auto voxelsFilename = snprint( allocator, "{}.raw", filename );
+		auto textureFilename = snprint( allocator, "{}.png", StringView{filename} );
+		auto jsonFilename    = snprint( allocator, "{}.json", StringView{filename} );
+		auto voxelsFilename  = snprint( allocator, "{}.raw", StringView{filename} );
 
 		doBinPacking( app, textureFilename );
 
-	// output json
+		// output json
 		auto bufferSize = safe_truncate< int32 >( remaining( allocator ) );
 		auto buffer = allocateArray( allocator, char, bufferSize );
 		auto writer = makeJsonWriter( buffer, bufferSize );
@@ -859,7 +857,7 @@ void doTexturePack( AppData* app, GameInputs* inputs, bool focus, float dt )
 
 	doTexturePackEntries( app );
 
-	imguiNextColumn( &layout, 400 );
+	imguiNextColumn( &layout, 800 );
 	if( doTextureDisplay( app, lastSelected ) ) {
 	}
 

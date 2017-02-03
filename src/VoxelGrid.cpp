@@ -31,7 +31,10 @@ enum VoxelCellFlags : VoxelCell {
 	VoxelCellInner           = 0x8u,
 	VoxelCellMask            = 0xFu,
 	VoxelCellFaceTextureMask = 0x7u,
-	VoxelCellBits            = 4
+	VoxelCellBits            = 4,
+
+	// only used by editor to mark a cell that should be removed when combining multiple grids
+	VoxelToDelete = 0x80000000u,
 };
 #define SET_VOXEL_FACE( front, left, back, right, top, bottom )      \
 	( ( ( (VoxelCell)front + 1 ) << ( VF_Front * VoxelCellBits ) )   \
@@ -41,8 +44,9 @@ enum VoxelCellFlags : VoxelCell {
 	  | ( ( (VoxelCell)top + 1 ) << ( VF_Top * VoxelCellBits ) )     \
 	  | ( ( (VoxelCell)bottom + 1 ) << ( VF_Bottom * VoxelCellBits ) ) )
 
-constexpr const VoxelCell EmptyCell   = {0};
-constexpr const VoxelCell DefaultCell = {SET_VOXEL_FACE( 0, 1, 2, 3, 4, 5 )};
+constexpr const VoxelCell EmptyCell    = {0};
+constexpr const VoxelCell ToDeleteCell = {valueof( VoxelCellFlags::VoxelToDelete )};
+constexpr const VoxelCell DefaultCell  = {SET_VOXEL_FACE( 0, 1, 2, 3, 4, 5 )};
 
 struct VoxelGrid {
 	VoxelCell data[CELL_MAX_COUNT];
@@ -57,6 +61,7 @@ struct VoxelGrid {
 
 	int32 size() { return width * height * depth; }
 	int32 max_size() { return CELL_MAX_COUNT; }
+	void clear() { zeroMemory( data, size() ); }
 };
 
 #define CELL_WIDTH 1.0f

@@ -37,7 +37,8 @@ void generateMeshFromVoxelGridNaive( MeshStream* stream, VoxelGrid* grid, vec3ar
 }
 
 struct RayCastResult {
-	bool found;
+	bool8 found;         // whether a non empty cell found
+	bool8 isInsideGrid;  // whether position holds a value inside grid
 	vec3i position;
 	vec3i normal;
 	vec3 intersection;
@@ -119,10 +120,15 @@ RayCastResult raycastIntoVoxelGrid( VoxelGrid* grid, vec3arg rayOrigin, vec3 ray
 
 	result.intersection = rayOrigin + originalDir * rayIntersectionT;
 	if( getCell( grid, x, y, z ) != EmptyCell ) {
-		result.position = {x, y, z};
-		result.found    = true;
+		result.position     = {x, y, z};
+		result.found        = true;
+		result.isInsideGrid = true;
 	} else {
 		float t     = 0;
+		if( isPointInsideVoxelBounds( grid, x, y, z ) ) {
+			result.isInsideGrid = true;
+			result.position     = {(int32)x, (int32)y, (int32)z};
+		}
 		while( t < tMax ) {
 			if( !isPointInsideVoxelBounds( grid, x, y, z ) ) {
 				result.found = false;
@@ -133,6 +139,7 @@ RayCastResult raycastIntoVoxelGrid( VoxelGrid* grid, vec3arg rayOrigin, vec3 ray
 				result.intersection = rayOrigin + originalDir * ( t + rayIntersectionT );
 				result.position     = {(int32)x, (int32)y, (int32)z};
 				result.found        = true;
+				result.isInsideGrid = true;
 				break;
 			}
 
@@ -165,58 +172,12 @@ RayCastResult raycastIntoVoxelGrid( VoxelGrid* grid, vec3arg rayOrigin, vec3 ray
 					tMaxZ += tDeltaZ;
 				}
 			}
+			result.isInsideGrid = true;
+			result.position     = {(int32)x, (int32)y, (int32)z};
 		}
 	}
 
 	return result;
-}
-
-static void processBuildMode( AppData* app, GameInputs* inputs, bool focus, float dt )
-{
-	auto voxel  = &app->voxelState;
-	auto camera = &voxel->camera;
-	// auto renderer     = &app->renderer;
-	auto cameraCenter = center( camera );
-
-	auto generateVoxelMesh = false;
-	if( isKeyPressed( inputs, KC_LButton ) ) {
-		auto result = raycastIntoVoxelGrid( &voxel->voxels, cameraCenter, camera->look, 10000 );
-		if( result.found ) {
-			auto destinationCell = result.position + result.normal;
-			if( isPointInsideVoxelBounds( &voxel->voxels, destinationCell ) ) {
-				getCell( &voxel->voxels, destinationCell ) = voxel->placingCell;
-				generateVoxelMesh = true;
-			}
-		}
-	}
-	if( isKeyPressed( inputs, KC_RButton ) ) {
-		auto result = raycastIntoVoxelGrid( &voxel->voxels, cameraCenter, camera->look, 10000 );
-		if( result.found ) {
-			auto destinationCell = result.position;
-			if( isPointInsideVoxelBounds( &voxel->voxels, destinationCell ) ) {
-				getCell( &voxel->voxels, destinationCell ) = EmptyCell;
-				generateVoxelMesh = true;
-			}
-		}
-	}
-
-	if( generateVoxelMesh ) {
-		clear( &voxel->meshStream );
-		generateMeshFromVoxelGrid( &voxel->meshStream, &voxel->voxels, &voxel->textureMap,
-		                           EditorVoxelCellSize );
-	}
-}
-
-aabb calculateSelectionWorld( VoxelState* voxel )
-{
-	auto grid             = &voxel->voxels;
-	auto selectionWorld   = AabbScaled( voxel->selection, EditorVoxelCellSize );
-	auto voxelGridTop     = EDITOR_CELL_HEIGHT * grid->height;
-	selectionWorld        = translate( selectionWorld, {0, voxelGridTop, 0} );
-	selectionWorld.bottom = voxelGridTop * 2 - selectionWorld.bottom;
-	selectionWorld.top    = voxelGridTop * 2 - selectionWorld.top;
-	swap( selectionWorld.bottom, selectionWorld.top );
-	return selectionWorld;
 }
 
 aabbi getSelection( VoxelState* state )
@@ -233,17 +194,136 @@ aabbi getSelection( VoxelState* state )
 	result.max.z = min( max( state->selection.min.z, state->selection.max.z ), grid->depth );
 	return result;
 }
-static void processSelectMode( AppData* app, GameInputs* inputs, bool focus, float dt )
+
+void voxelCommitChanges( VoxelState* voxel )
 {
+	voxel->voxels = voxel->voxelsCombined;
+	voxel->voxelsIntermediate.clear();
+}
+
+void setCellsInRegion( VoxelGrid* grid, const aabbi& region, VoxelCell newCell )
+{
+	for( int32 z = region.min.z; z < region.max.z; ++z ) {
+		for( int32 y = region.min.y; y < region.max.y; ++y ) {
+			for( int32 x = region.min.x; x < region.max.x; ++x ) {
+				getCell( grid, x, y, z ) = newCell;
+			}
+		}
+	}
+}
+
+static bool processBuildMode( AppData* app, GameInputs* inputs, bool focus, mat4arg invViewProj,
+                              float dt )
+{
+	bool processed = false;
+	auto voxel     = &app->voxelState;
+
+	auto ray = pointToWorldSpaceRay( invViewProj, inputs->mouse.position, app->width, app->height );
+
+	auto generateVoxelMesh = false;
+	if( isKeyPressed( inputs, KC_LButton ) ) {
+		auto result = raycastIntoVoxelGrid( &voxel->voxels, ray.start, ray.dir, 10000 );
+		if( result.found ) {
+			auto destinationCell = result.position + result.normal;
+			if( isPointInsideVoxelBounds( &voxel->voxels, destinationCell ) ) {
+				getCell( &voxel->voxels, destinationCell ) = voxel->placingCell;
+				generateVoxelMesh = true;
+				processed         = true;
+			}
+		}
+	}
+	if( isKeyPressed( inputs, KC_RButton ) ) {
+		auto result = raycastIntoVoxelGrid( &voxel->voxels, ray.start, ray.dir, 10000 );
+		if( result.isInsideGrid ) {
+			auto destinationCell = result.position;
+			if( !isPointInsideVoxelBounds( &voxel->voxelsIntermediate, destinationCell ) ) {
+				destinationCell += result.normal;
+			}
+			if( isPointInsideVoxelBounds( &voxel->voxelsIntermediate, destinationCell ) ) {
+				voxel->selection.min = destinationCell;
+				voxel->selection.max = destinationCell;
+				generateVoxelMesh    = true;
+				voxel->capture       = KC_RButton;
+			}
+		}
+	}
+	if( voxel->capture == KC_RButton ) {
+		if( isKeyReleased( inputs, KC_RButton ) ) {
+			voxel->capture    = 0;
+			generateVoxelMesh = true;
+			voxelCommitChanges( voxel );
+		} else {
+			auto result = raycastIntoVoxelGrid( &voxel->voxels, ray.start, ray.dir, 10000 );
+			if( result.isInsideGrid ) {
+				auto destinationCell = result.position;
+				if( !isPointInsideVoxelBounds( &voxel->voxelsIntermediate, destinationCell ) ) {
+					destinationCell += result.normal;
+				}
+				if( isPointInsideVoxelBounds( &voxel->voxelsIntermediate, destinationCell ) ) {
+					voxel->selection.max = destinationCell;
+					generateVoxelMesh = true;
+				}
+
+				voxel->voxelsIntermediate.clear();
+				auto selection = getSelection( voxel );
+				selection.max += vec3i{1, 1, 1};
+				setCellsInRegion( &voxel->voxelsIntermediate, selection, ToDeleteCell );
+			}
+		}
+	}
+
+	if( generateVoxelMesh ) {
+		voxel->voxelsCombined = voxel->voxels;
+		for( int32 z = 0; z < voxel->voxels.depth; ++z ) {
+			for( int32 y = 0; y < voxel->voxels.height; ++y ) {
+				for( int32 x = 0; x < voxel->voxels.width; ++x ) {
+					auto src   = getCell( &voxel->voxelsIntermediate, x, y, z );
+					auto& dest = getCell( &voxel->voxelsCombined, x, y, z );
+					if( src != EmptyCell ) {
+						if( src == ToDeleteCell ) {
+							dest = EmptyCell;
+						} else {
+							dest = src;
+						}
+					}
+				}
+			}
+		}
+		clear( &voxel->meshStream );
+		generateMeshFromVoxelGrid( &voxel->meshStream, &voxel->voxelsCombined, &voxel->textureMap,
+		                           EditorVoxelCellSize );
+	}
+	return processed;
+}
+
+aabb calculateSelectionWorld( VoxelState* voxel )
+{
+	auto grid             = &voxel->voxels;
+	auto selectionWorld   = AabbScaled( voxel->selection, EditorVoxelCellSize );
+	auto voxelGridTop     = EDITOR_CELL_HEIGHT * grid->height;
+	selectionWorld        = translate( selectionWorld, {0, voxelGridTop, 0} );
+	selectionWorld.bottom = voxelGridTop * 2 - selectionWorld.bottom;
+	selectionWorld.top    = voxelGridTop * 2 - selectionWorld.top;
+	swap( selectionWorld.bottom, selectionWorld.top );
+	return selectionWorld;
+}
+
+static bool processSelectMode( AppData* app, GameInputs* inputs, bool focus, mat4arg invViewProj,
+                               float dt )
+{
+	bool processed    = false;
 	auto voxel        = &app->voxelState;
 	auto camera       = &voxel->camera;
 	auto cameraCenter = center( camera );
 	auto grid         = &voxel->voxels;
 
+	auto ray = pointToWorldSpaceRay( invViewProj, inputs->mouse.position, app->width, app->height );
+
 	if( isKeyPressed( inputs, KC_MButton ) ) {
-		auto result = raycastIntoVoxelGrid( &voxel->voxels, cameraCenter, camera->look, 10000 );
+		auto result = raycastIntoVoxelGrid( &voxel->voxels, ray.start, ray.dir, 10000 );
 		if( result.found ) {
 			voxel->selection = AabbWHD( result.position, 1, 1, 1 );
+			processed        = true;
 		}
 	}
 
@@ -255,8 +335,7 @@ static void processSelectMode( AppData* app, GameInputs* inputs, bool focus, flo
 	if( voxel->dragAction == DragAction::None ) {
 		auto& selectionWorld = voxel->selectionWorld = calculateSelectionWorld( voxel );
 		TestRayVsAabbResult result;
-		voxel->isFaceSelected =
-		    testRayVsAabb( cameraCenter, camera->look, selectionWorld, &result );
+		voxel->isFaceSelected = testRayVsAabb( ray.start, ray.dir, selectionWorld, &result );
 		if( voxel->isFaceSelected ) {
 			TestRayVsAabbOption* option;
 			if( isKeyDown( inputs, KC_Alt ) ) {
@@ -264,7 +343,7 @@ static void processSelectMode( AppData* app, GameInputs* inputs, bool focus, flo
 			} else {
 				option = &result.enter;
 			}
-			voxel->selectionOrigin = cameraCenter + camera->look * option->t;
+			voxel->selectionOrigin = ray.start + ray.dir * option->t;
 			voxel->selectionNormal = option->normal;
 		}
 	}
@@ -283,20 +362,7 @@ static void processSelectMode( AppData* app, GameInputs* inputs, bool focus, flo
 		case DragAction::MoveVoxels: {
 			if( isKeyUp( inputs, KC_RButton ) ) {
 				voxel->dragAction = DragAction::None;
-				auto selection    = getSelection( voxel );
-				for( int32 z = selection.min.z; z < selection.max.z; ++z ) {
-					for( int32 y = selection.min.y; y < selection.max.y; ++y ) {
-						for( int32 x = selection.min.x; x < selection.max.x; ++x ) {
-							auto& cell     = getCell( &voxel->voxels, x, y, z );
-							auto& selected = getCell( &voxel->voxelsMoving, x - selection.min.x,
-							                          y - selection.min.y, z - selection.min.z );
-							if( selected != EmptyCell ) {
-								cell = selected;
-							}
-							selected = EmptyCell;
-						}
-					}
-				}
+				voxelCommitChanges( voxel );
 				generateVoxelMesh = true;
 			}
 			break;
@@ -308,6 +374,7 @@ static void processSelectMode( AppData* app, GameInputs* inputs, bool focus, flo
 	if( voxel->dragAction == DragAction::None && voxel->isFaceSelected ) {
 		if( isKeyPressed( inputs, KC_LButton ) ) {
 			voxel->dragAction = DragAction::DragSelection;
+			processed = true;
 		} else if( isKeyPressed( inputs, KC_RButton ) ) {
 			voxel->dragAction = DragAction::MoveVoxels;
 		}
@@ -367,7 +434,7 @@ static void processSelectMode( AppData* app, GameInputs* inputs, bool focus, flo
 			InvalidCodePath();
 		}
 
-		auto result = shortestLineBetweenLines( cameraCenter, camera->look, axisOrigin, axisDir );
+		auto result = shortestLineBetweenLines( ray.start, ray.dir, axisOrigin, axisDir );
 		auto axisResult = axisOrigin + axisDir * result.tB;
 		if( startedDragging ) {
 			voxel->lastAxisPosition = axisResult;
@@ -392,7 +459,7 @@ static void processSelectMode( AppData* app, GameInputs* inputs, bool focus, flo
 							for( int32 x = selection.min.x; x < selection.max.x; ++x ) {
 								auto& cell = getCell( &voxel->voxels, x, y, z );
 								auto& selected =
-								    getCell( &voxel->voxelsMoving, x - selection.min.x,
+								    getCell( &voxel->voxelsIntermediate, x - selection.min.x,
 								             y - selection.min.y, z - selection.min.z );
 								selected = cell;
 								if( !duplicate ) {
@@ -426,14 +493,7 @@ static void processSelectMode( AppData* app, GameInputs* inputs, bool focus, flo
 
 	if( isKeyPressed( inputs, KC_Delete ) ) {
 		generateVoxelMesh = true;
-		auto selection    = getSelection( voxel );
-		for( int32 z = selection.min.z; z < selection.max.z; ++z ) {
-			for( int32 y = selection.min.y; y < selection.max.y; ++y ) {
-				for( int32 x = selection.min.x; x < selection.max.x; ++x ) {
-					getCell( &voxel->voxels, x, y, z ) = EmptyCell;
-				}
-			}
-		}
+		setCellsInRegion( &voxel->voxels, getSelection( voxel ), EmptyCell );
 	}
 
 	if( generateVoxelMesh ) {
@@ -442,7 +502,7 @@ static void processSelectMode( AppData* app, GameInputs* inputs, bool focus, flo
 		for( int32 z = selection.min.z; z < selection.max.z; ++z ) {
 			for( int32 y = selection.min.y; y < selection.max.y; ++y ) {
 				for( int32 x = selection.min.x; x < selection.max.x; ++x ) {
-					auto src = getCell( &voxel->voxelsMoving, x - selection.min.x,
+					auto src = getCell( &voxel->voxelsIntermediate, x - selection.min.x,
 					                    y - selection.min.y, z - selection.min.z );
 					auto& dest = getCell( &voxel->voxelsCombined, x, y, z );
 					if( src != EmptyCell ) {
@@ -455,22 +515,31 @@ static void processSelectMode( AppData* app, GameInputs* inputs, bool focus, flo
 		generateMeshFromVoxelGrid( &voxel->meshStream, &voxel->voxelsCombined, &voxel->textureMap,
 		                           EditorVoxelCellSize );
 	}
+
+	return processed;
 }
-static void processEditMode( AppData* app, GameInputs* inputs, bool focus, float dt )
+static bool processEditMode( AppData* app, GameInputs* inputs, bool focus, float dt )
 {
 	auto voxel = &app->voxelState;
 
-	switch( voxel->editMode ) {
-		case EditMode::Build: {
-			processBuildMode( app, inputs, focus, dt );
-			break;
+	auto& view       = app->renderer.view;
+	auto& projection = app->perspective;
+
+	bool processed = false;
+	if( auto invViewProj = inverse( view * projection ) ) {
+		switch( voxel->editMode ) {
+			case EditMode::Build: {
+				processed = processBuildMode( app, inputs, focus, invViewProj.matrix, dt );
+				break;
+			}
+			case EditMode::Select: {
+				processed = processSelectMode( app, inputs, focus, invViewProj.matrix, dt );
+				break;
+			}
+				InvalidDefaultCase;
 		}
-		case EditMode::Select: {
-			processSelectMode( app, inputs, focus, dt );
-			break;
-		}
-			InvalidDefaultCase;
 	}
+	return processed;
 }
 
 void saveVoxelGridToFile( PlatformServices* platform, StringView filename, VoxelGrid* grid )
@@ -566,11 +635,11 @@ static void doVoxelGui( AppData* app, GameInputs* inputs, bool focus, float dt )
 	auto imgui = &app->guiState;
 	imguiBind( imgui );
 	if( !gui->initialized ) {
-		gui->editMode         = imguiGenerateContainer( imgui );
-		gui->rendering        = imguiGenerateContainer( imgui, {ImGui->style.containerWidth} );
-		gui->textureIndex     = imguiGenerateContainer( imgui, RectWH( ImGui->style.containerWidth, 200, 240, 200 ) );
-		gui->textureMapDialog = imguiGenerateContainer( imgui, {0, 300} );
-		gui->noLightingChecked = true;
+		gui->editMode  = imguiGenerateContainer( imgui );
+		gui->rendering = imguiGenerateContainer( imgui, {ImGui->style.containerWidth} );
+		gui->textureIndex =
+		    imguiGenerateContainer( imgui, RectWH( ImGui->style.containerWidth, 200, 240, 200 ) );
+		gui->textureMapDialog  = imguiGenerateContainer( imgui, {0, 300} );
 
 		gui->animations = makeUArray( &app->stackAllocator, VoxelGuiState::Animation, 100 );
 
@@ -655,52 +724,46 @@ static void doVoxelGui( AppData* app, GameInputs* inputs, bool focus, float dt )
 	}
 
 	if( imguiDialog( "Rendering Settings", gui->rendering ) ) {
-		if( imguiRadiobox( "Lighting", &gui->lightingChecked ) ) {
-			voxel->lighting = gui->lightingChecked;
-		}
-		if( imguiRadiobox( "No Lighting", &gui->noLightingChecked ) ) {
-			voxel->lighting = !gui->noLightingChecked;
-		}
+		imguiCheckbox( "Lighting", &voxel->lighting );
+		imguiCheckbox( "Edges", &voxel->renderEdges );
 		imguiCheckbox( "Frame Offset", &voxel->renderWithOffset );
+		imguiText( "Camera Mode" );
+		if( imguiRadiobox( "Fixed", voxel->cameraType == VoxelCameraType::Fixed ) ) {
+			voxel->cameraType = VoxelCameraType::Fixed;
+		}
+		if( imguiRadiobox( "Free", voxel->cameraType == VoxelCameraType::Free ) ) {
+			voxel->cameraType = VoxelCameraType::Free;
+		}
 	}
 
 	if( imguiDialog( "Texture Mapping", gui->textureMapDialog ) ) {
 		if( imguiBeginDropGroup( "Load & Save", &gui->collectionSaveLoadExpanded ) ) {
 			imguiSameLine( 2 );
 			if( imguiButton( "Load Collection" ) ) {
-				char filenameBuffer[260];
-				auto filenameLength =
-				    app->platform.getOpenFilename( "json\0*.json\0", "Data/voxel", false,
-				                                   filenameBuffer, countof( filenameBuffer ) );
-				if( filenameLength ) {
-					clear( &voxel->collectionArena );
-					auto collection     = &voxel->collection;
-					*collection         = {};
+				auto filename = getOpenFilename( JsonFilter, "Data/voxel", false );
+				if( filename.size() ) {
 					voxel->currentFrame = -1;
 					gui->animations.clear();
-					if( loadVoxelCollectionTextureMapping( &voxel->collectionArena,
-					                                       {filenameBuffer, filenameLength},
-					                                       collection ) ) {
-						gui->animations.resize( collection->animations.size() );
-						auto framesCount = collection->frames.size();
-						voxel->frameVoxels =
-						    makeArray( &voxel->collectionArena, VoxelGrid, framesCount );
-						if( !loadVoxelGridsFromFile( &app->platform, collection->voxelsFilename,
-						                             voxel->frameVoxels ) ) {
+					auto collection = &voxel->collection;
+					*collection     = loadDynamicVoxelCollectionWithoutMeshes( filename );
+					if( *collection ) {
+						gui->animations.resize( collection->voxels.animations.size() );
+						zeroMemory( gui->animations.data(), gui->animations.size() );
+						if( !collection->gridsLoaded && collection->grids.size() ) {
+							auto framesCount = collection->voxels.frames.size();
 							for( auto frame = 0; frame < framesCount; ++frame ) {
-								auto textureMap = &collection->frameInfos[frame].textureMap;
-								auto voxels     = &voxel->frameVoxels[frame];
+								auto textureMap = &collection->voxels.frameInfos[frame].textureMap;
+								auto voxels     = &collection->grids[frame];
 								*voxels = getVoxelGridFromTextureMapTopLeftColorKey( textureMap );
 							}
 						}
-						zeroMemory( gui->animations.data(), gui->animations.size() );
 					}
 				}
 			}
 			if( imguiButton( "Save Collection" ) ) {
-				if( voxel->collection.texture ) {
-					saveVoxelGridsToFile( &app->platform, voxel->collection.voxelsFilename,
-					                      voxel->frameVoxels );
+				if( voxel->collection.voxels.texture ) {
+					saveVoxelGridsToFile( &app->platform, voxel->collection.voxels.voxelsFilename,
+					                      voxel->collection.grids );
 				}
 			}
 			imguiEndDropGroup();
@@ -709,10 +772,10 @@ static void doVoxelGui( AppData* app, GameInputs* inputs, bool focus, float dt )
 		imguiSeperator();
 		imguiSameLine( 2 );
 		if( imguiButton( "Assign to current" ) ) {
-			auto collection = &voxel->collection;
+			auto collection = &voxel->collection.voxels;
 			auto index      = voxel->currentFrame;
-			if( collection->texture && index >= 0 && index < voxel->frameVoxels.size() ) {
-				voxel->frameVoxels[index] = voxel->voxels;
+			if( collection->texture && index >= 0 && index < voxel->collection.grids.size() ) {
+				voxel->collection.grids[index] = voxel->voxels;
 			}
 		}
 		/*if( imguiBeginDropGroup( "Offset", &gui->collectionOffsetExpanded ) ) {
@@ -731,10 +794,10 @@ static void doVoxelGui( AppData* app, GameInputs* inputs, bool focus, float dt )
 		}
 
 		imguiSeperator();
-		if( voxel->collection.texture
+		if( voxel->collection.voxels.texture
 		    && imguiBeginDropGroup( "Collection", &gui->collectionExpanded ) ) {
 
-			auto collection = &voxel->collection;
+			auto collection = &voxel->collection.voxels;
 			for( auto i = 0, count = collection->animations.size(); i < count; ++i ) {
 				auto entry = &collection->animations[i];
 				auto state = &gui->animations[i];
@@ -752,7 +815,7 @@ static void doVoxelGui( AppData* app, GameInputs* inputs, bool focus, float dt )
 						if( imguiButton( handle, str, ImGui->style.buttonWidth,
 						                 ImGui->style.buttonHeight ) ) {
 							voxel->textureMap   = collection->frameInfos[frameIndex].textureMap;
-							voxel->voxels       = voxel->frameVoxels[frameIndex];
+							voxel->voxels       = voxel->collection.grids[frameIndex];
 							voxel->currentFrame = frameIndex;
 							generateVoxelMesh   = true;
 						}
@@ -765,10 +828,10 @@ static void doVoxelGui( AppData* app, GameInputs* inputs, bool focus, float dt )
 	}
 
 	if( generateVoxelMesh ) {
-		voxel->voxelsCombined      = voxel->voxels;
-		voxel->voxelsMoving.width  = voxel->voxels.width;
-		voxel->voxelsMoving.height = voxel->voxels.height;
-		voxel->voxelsMoving.depth  = voxel->voxels.depth;
+		voxel->voxelsCombined            = voxel->voxels;
+		voxel->voxelsIntermediate.width  = voxel->voxels.width;
+		voxel->voxelsIntermediate.height = voxel->voxels.height;
+		voxel->voxelsIntermediate.depth  = voxel->voxels.depth;
 		clear( &voxel->meshStream );
 		generateMeshFromVoxelGrid( &voxel->meshStream, &voxel->voxels, &voxel->textureMap,
 		                           EditorVoxelCellSize );
@@ -843,18 +906,17 @@ static void doVoxel( AppData* app, GameInputs* inputs, bool focus, float dt )
 	if( !focus ) {
 		return;
 	}
+	auto imgui = &app->guiState;
+	imguiBind( imgui );
 	if( !voxel->initialized ) {
-		auto textureMapId = app->platform.loadTexture( "Data/Images/texture_map.png" );
-		voxel->textureMap = makeDefaultVoxelGridTextureMap( textureMapId );
-
-		voxel->collectionArena = makeStackAllocator( &app->stackAllocator, megabytes( 5 ) );
-
 		voxel->placingCell  = DefaultCell;
 		voxel->currentFrame = -1;
 		// initial voxel grid size
 		voxel->voxels.width  = 16;
 		voxel->voxels.height = 16;
 		voxel->voxels.depth  = 16;
+		voxel->view.z        = 1000;
+
 		voxel->initialized   = true;
 	}
 
@@ -875,15 +937,35 @@ static void doVoxel( AppData* app, GameInputs* inputs, bool focus, float dt )
 		inputs->mouse.locked = app->mouseLocked;
 	}
 
-	if( voxel->focus == VoxelFocus::Voxel ) {
-		processCamera( inputs, settings, &voxel->camera, dt );
-		voxel->position = camera->position;
-		processEditMode( app, inputs, focus, dt );
-	}
+	auto grid            = &voxel->voxels;
+	aabb gridBoundingBox = {0,
+	                        0,
+	                        0,
+	                        grid->width * EDITOR_CELL_WIDTH,
+	                        grid->height * EDITOR_CELL_HEIGHT,
+	                        grid->depth * EDITOR_CELL_DEPTH};
 
 	setProjection( renderer, ProjectionType::Perspective );
-	auto cameraTranslation = matrixTranslation( 0, -50, 0 );
-	renderer->view         = cameraTranslation * getViewMatrix( camera );
+	if( voxel->focus == VoxelFocus::Voxel ) {
+		auto consumedInputs = processEditMode( app, inputs, focus, dt );
+		auto viewInputs     = ( consumedInputs ) ? ( nullptr ) : ( inputs );
+		switch( voxel->cameraType ) {
+			case VoxelCameraType::Fixed: {
+				renderer->view =
+				    processEditorView( &voxel->view, viewInputs, {0, 0, app->width, app->height} );
+				break;
+			}
+			case VoxelCameraType::Free: {
+				processCamera( inputs, settings, &voxel->camera, dt );
+				voxel->position        = camera->position;
+				auto cameraTranslation = matrixTranslation( 0, -50, 0 );
+				renderer->view         = cameraTranslation * getViewMatrix( camera );
+				break;
+			}
+		}
+		renderer->view = translateLocal( renderer->view, -::width( gridBoundingBox ) * 0.5f, 0,
+		                                 -::depth( gridBoundingBox ) * 0.5f );
+	}
 
 	setTexture( renderer, 0, null );
 
@@ -893,22 +975,15 @@ static void doVoxel( AppData* app, GameInputs* inputs, bool focus, float dt )
 	}
 
 	LINE_MESH_STREAM_BLOCK( stream, renderer ) {
-		auto grid     = &voxel->voxels;
 		stream->color = 0xFF0000FF;
-		aabb box      = {0,
-		            0,
-		            0,
-		            grid->width * EDITOR_CELL_WIDTH,
-		            grid->height * EDITOR_CELL_HEIGHT,
-		            grid->depth * EDITOR_CELL_DEPTH};
-		pushAabbOutline( stream, box );
+		pushAabbOutline( stream, gridBoundingBox );
 	}
 
 	setRenderState( renderer, RenderStateType::Lighting, voxel->lighting );
 	setTexture( renderer, 0, voxel->textureMap.texture );
-	if( voxel->renderWithOffset && voxel->collection.texture ) {
+	if( voxel->renderWithOffset && voxel->collection.voxels.texture ) {
 		pushMatrix( renderer->matrixStack );
-		auto collection = &voxel->collection;
+		auto collection = &voxel->collection.voxels;
 		auto index      = voxel->currentFrame;
 		if( auto current = queryElement( collection->frames, index ) ) {
 			translate( renderer->matrixStack, -current->offset.x * EDITOR_CELL_WIDTH,

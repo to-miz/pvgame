@@ -1,4 +1,21 @@
-typedef UArray< char > string;
+struct string : basic_string {
+	using basic_string::append;
+
+	string() : basic_string{} {}
+	string( basic_string other ) : basic_string{other} {}
+	string( char* ptr, int32 sz, int32 cap ) : basic_string{ptr, sz, cap} {}
+
+	void append( StringView other )
+	{
+		auto len = min( other.size(), capacity() );
+		append( other.data(), other.data() + len );
+	}
+	string& operator+=( StringView other )
+	{
+		append( other );
+		return *this;
+	}
+};
 
 template < uint16 N >
 struct short_string : string {
@@ -19,21 +36,27 @@ struct short_string : string {
 	}
 	short_string& operator=( const short_string& other )
 	{
-		assert( ptr );
 		assign( other );
 		return *this;
 	}
 	short_string& operator=( StringView other )
 	{
-		assert( ptr );
 		assign( other );
 		return *this;
 	}
 
-	inline void assign( StringView other ) { sz = (uint16)copyToString( other, ptr, N ); }
+	inline void assign( StringView other )
+	{
+		assert( ptr == buf );
+		assert( cap == N );
+		sz = min( other.size(), cap );
+		if( other.data() != buf ) {
+			memmove( buf, other.data(), sz );
+		}
+	}
 };
 
-void copyToString( const char* in, string* out )
+void copyToString( const char* in, basic_string* out )
 {
 	auto len = (int32)strlen( in );
 	if( len > out->capacity() ) {

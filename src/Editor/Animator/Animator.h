@@ -6,13 +6,12 @@
 typedef int32 GroupId;
 typedef trange< GroupId > GroupChildren;
 
-struct AnimatorVoxelCollection;
 struct AnimatorAsset {
 	ImGuiListboxItem item = {};
 
 	enum Type { type_none, type_collection } type = type_none;
 	union {
-		AnimatorVoxelCollection* collection = nullptr;
+		DynamicVoxelCollection* collection = nullptr;
 	};
 	int16 id = -1;
 	char name[10];
@@ -121,9 +120,7 @@ enum class AnimatorMousePlane : int8 {
 };
 
 struct AnimatorEditor {
-	vec3 rotation;
-	vec3 translation;
-	float scale;
+	EditorView view;
 
 	enum : uint32 {
 		EditorSettings = BITFIELD( 0 ),
@@ -153,25 +150,6 @@ struct AnimatorEditor {
 	float nodesListboxScroll;
 	float assetsScrollPos;
 };
-
-struct AnimatorVoxelCollection {
-	AnimatorVoxelCollection() = default;
-	~AnimatorVoxelCollection();
-	AnimatorVoxelCollection( const AnimatorVoxelCollection& other );
-	AnimatorVoxelCollection( AnimatorVoxelCollection&& other );
-	AnimatorVoxelCollection& operator=( const AnimatorVoxelCollection& other );
-	AnimatorVoxelCollection& operator=( AnimatorVoxelCollection&& other );
-
-	void assign( const AnimatorVoxelCollection& other );
-	void assign( AnimatorVoxelCollection&& other );
-	void destroy();
-
-	VoxelCollection voxels;
-	Array< StringView > names;
-	void* memory      = nullptr;
-	size_t memorySize = 0;
-};
-AnimatorVoxelCollection animatorLoadVoxelCollection( StringView filename );
 
 struct AnimatorAnimation {
 	std::vector< AnimatorNode > nodes;
@@ -243,7 +221,7 @@ struct AnimatorState {
 	StringPool stringPool;
 	StringView fieldNames[4];
 
-	short_string< MAX_PATH > filename;
+	FilenameString filename;
 
 	struct MessageBox {
 		int32 container;

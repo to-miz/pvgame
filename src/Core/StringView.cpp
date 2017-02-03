@@ -1,4 +1,4 @@
-typedef UArray< char > string;
+typedef UArray< char > basic_string;
 
 struct StringView {
 	const char* ptr = nullptr;
@@ -40,7 +40,7 @@ struct StringView {
 		}
 	}
 
-	constexpr StringView( const string& str ) : ptr( str.ptr ), sz( str.sz ) {}
+	constexpr StringView( const basic_string& str ) : ptr( str.ptr ), sz( str.sz ) {}
 
 	// substr of a StringView [pos, end)
 	StringView( StringView other, size_type pos );
@@ -158,6 +158,18 @@ inline bool operator==( StringView a, StringView b )
 	return a.ptr == b.ptr || sz <= 0 || memcmp( a.ptr, b.ptr, sz ) == 0;
 }
 inline bool operator!=( StringView a, StringView b ) { return !( a == b ); }
+
+bool equalsIgnoreCase( StringView a, StringView b )
+{
+	if( a.sz != b.sz ) return false;
+	if( a.ptr == b.ptr ) return true;
+	for( auto i = 0; i < a.sz; ++i ) {
+		if( toupper( unsignedof( a[i] ) ) != toupper( unsignedof( b[i] ) ) ) {
+			return false;
+		}
+	}
+	return true;
+}
 
 StringView trim( StringView str, StringView whitespace = utility::whitespace );
 StringView trimLeft( StringView str, StringView whitespace = utility::whitespace );
@@ -353,7 +365,7 @@ StringView trimLeftNonNumeric( StringView str )
 
 // these filename functions are platform agnostic, because the platform layer converts this format
 // into a native format
-StringView getFilenameWithoutExtension( StringView file )
+StringView getFilename( StringView file )
 {
 	auto start = findLast( file, '/' );
 	if( !start ) {
@@ -362,8 +374,15 @@ StringView getFilenameWithoutExtension( StringView file )
 		++start.pos;
 	}
 	file = substr( file, start );
-	auto end = findLast( file, '.' );
-	return substr( file, 0, end );
+	return file;
+}
+StringView getFilenameAndPathWithoutExtension( StringView file )
+{
+	return substr( file, 0, findLast( file, '.' ) );
+}
+StringView getFilenameWithoutExtension( StringView file )
+{
+	return getFilenameAndPathWithoutExtension( getFilename( file ) );
 }
 // includes '.'
 StringView getFilenameExtension( StringView file )

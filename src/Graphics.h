@@ -8,6 +8,7 @@ enum class RenderCommandEntryType : int8 {
 	LineMesh,
 	StaticMesh,
 	SetTexture,
+	SetShader,
 	SetBlend,
 	SetProjection,        // sets currently active projection type (perspective vs orthogonal)
 	SetProjectionMatrix,  // specifies matrix of projection type
@@ -17,9 +18,11 @@ enum class RenderCommandEntryType : int8 {
 };
 enum class RenderStateType {
 	DepthTest,
+	DepthWrite,
 	Lighting,
 	Scissor,
-	BackCulling,
+	BackFaceCulling,
+	CullFrontFace,
 
 	Count
 };
@@ -28,19 +31,18 @@ enum class BlendType {
 };
 enum class ProjectionType { Perspective, Orthogonal };
 
-struct TextureId {
-	int32 id;
-	inline explicit operator bool() const { return id != 0; };
-};
-inline bool operator==( TextureId a, TextureId b ) { return a.id == b.id; }
-inline bool operator!=( TextureId a, TextureId b ) { return a.id != b.id; }
+// macro to define typesafe id types
+#define GRAPHICS_MAKE_ID_ENTRY( name )                                \
+	struct name {                                                     \
+		int32 id;                                                     \
+		inline explicit operator bool() const { return id != 0; };    \
+	};                                                                \
+	inline bool operator==( name a, name b ) { return a.id == b.id; } \
+	inline bool operator!=( name a, name b ) { return a.id != b.id; }
 
-struct MeshId {
-	int32 id;
-	inline explicit operator bool() const { return id != 0; };
-};
-inline bool operator==( MeshId a, MeshId b ) { return a.id == b.id; }
-inline bool operator!=( MeshId a, MeshId b ) { return a.id != b.id; }
+GRAPHICS_MAKE_ID_ENTRY( TextureId );
+GRAPHICS_MAKE_ID_ENTRY( MeshId );
+GRAPHICS_MAKE_ID_ENTRY( ShaderId );
 
 struct Vertex {
 	vec3 position;
@@ -80,6 +82,11 @@ struct RenderCommandSetTexture {
 
 	int32 stage;
 	TextureId id;
+};
+struct RenderCommandSetShader {
+	static const RenderCommandEntryType type = RenderCommandEntryType::SetShader;
+
+	ShaderId id;
 };
 struct RenderCommandSetBlend {
 	BlendType type;
@@ -862,7 +869,8 @@ void addRenderCommandMesh( RenderCommands* renderCommands, const Mesh& mesh )
 	body->mesh = mesh;
 	body->size = 0;
 }
-void addRenderCommandMeshTransformed( RenderCommands* renderCommands, const Mesh& mesh )
+RenderCommandMesh* addRenderCommandMeshTransformed( RenderCommands* renderCommands,
+                                                    const Mesh& mesh )
 {
 	PROFILE_FUNCTION();
 
@@ -875,6 +883,7 @@ void addRenderCommandMeshTransformed( RenderCommands* renderCommands, const Mesh
 		vertices[i].position = transformVector( current, mesh.vertices[i].position );
 	}
 	copy( body->mesh.indices, mesh.indices, body->mesh.indicesCount );
+	return body;
 }
 
 RenderCommandStaticMesh* addRenderCommandMesh( RenderCommands* renderCommands, MeshId meshId )
@@ -1107,10 +1116,26 @@ void setTexture( RenderCommands* renderCommands, int32 textureStage, TextureId t
 	body->stage = textureStage;
 	body->id    = texture;
 }
-
 void setTexture( RenderCommands* renderCommands, int32 textureStage, null_t )
 {
 	setTexture( renderCommands, textureStage, TextureId{} );
+}
+
+void setShader( RenderCommands* renderCommands, ShaderId shader )
+{
+	PROFILE_FUNCTION();
+
+	assert( isValid( renderCommands ) );
+
+	auto allocator = &renderCommands->allocator;
+
+	allocateRenderCommandHeader( allocator, RenderCommandSetShader );
+	auto body = allocateStruct( allocator, RenderCommandSetShader );
+	body->id  = shader;
+}
+void setShader( RenderCommands* renderCommands, null_t )
+{
+	setShader( renderCommands, ShaderId{} );
 }
 
 void setProjection( RenderCommands* renderCommands, ProjectionType type )
