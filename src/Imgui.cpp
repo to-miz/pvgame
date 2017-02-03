@@ -927,6 +927,11 @@ bool imguiButton( ImGuiHandle handle, StringView name, float width, float height
 	return imguiButton( handle, rect );
 }
 
+bool imguiButton( ImGuiHandle handle, StringView name, ImGuiSize size = {} )
+{
+	size = imguiMakeSize( size, ImGui->style.buttonWidth, ImGui->style.buttonHeight );
+	return imguiButton( handle, name, size.width, size.height );
+}
 bool imguiButton( StringView name, ImGuiSize size = {} )
 {
 	size              = imguiMakeSize( size, ImGui->style.buttonWidth, ImGui->style.buttonHeight );
@@ -1669,6 +1674,23 @@ bool imguiRadiobox( StringView name, bool checked )
 	auto handle = imguiMakeStringHandle( name );
 	return imguiRadiobox( handle.handle, handle.string, checked );
 }
+template < class T >
+bool imguiRadiobox( StringView name, T* value, T entry )
+{
+	auto handle  = imguiMakeStringHandle( name );
+	auto checked = *value == entry;
+	auto container             = imguiCurrentContainer();
+	if( checked ) {
+		container->checkedRadiobox = handle.handle;
+	} else if( container->checkedRadiobox == handle.handle ) {
+		container->checkedRadiobox = {};
+	}
+	if( imguiRadiobox( handle.handle, handle.string, checked ) ) {
+		*value = entry;
+		return true;
+	}
+	return false;
+}
 
 bool imguiBeginDropGroup( ImGuiHandle handle, StringView name, bool expanded )
 {
@@ -2373,6 +2395,7 @@ struct ImGuiBeginColumnResult {
 	float lastColumnWidth;
 	float x;
 	float y;
+	float yMax;
 };
 ImGuiBeginColumnResult imguiBeginColumn( float width )
 {
@@ -2392,6 +2415,7 @@ void imguiNextColumn( ImGuiBeginColumnResult* columns, float width )
 	auto container           = imguiCurrentContainer();
 	auto lastColumnWidth     = columns->lastColumnWidth;
 	columns->lastColumnWidth = width;
+	columns->yMax            = max( columns->yMax, container->addPosition.y );
 	container->rect          = columns->rect;
 	container->rect.left     = columns->x + lastColumnWidth + ImGui->style.innerPadding;
 	container->rect.right    = container->rect.left + width;
@@ -2403,8 +2427,9 @@ void imguiNextColumn( ImGuiBeginColumnResult* columns, float width )
 void imguiEndColumn( ImGuiBeginColumnResult* columns )
 {
 	auto container           = imguiCurrentContainer();
+	columns->yMax            = max( columns->yMax, container->addPosition.y );
 	container->rect          = columns->rect;
-	container->rect.top      = container->addPosition.y;
+	container->rect.top      = columns->yMax;
 	container->addPosition   = container->rect.leftTop;
 	columns->lastColumnWidth = 0;
 	columns->x               = container->addPosition.x;

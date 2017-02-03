@@ -20,6 +20,7 @@ struct VoxelGuiState {
 	int32 editMode;
 	int32 rendering;
 	int32 textureIndex;
+	int32 meshInfo;
 	ImGuiContainerId textureMapDialog;
 
 	float fadeProgress;

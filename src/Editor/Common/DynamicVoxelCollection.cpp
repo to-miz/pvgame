@@ -117,11 +117,12 @@ void DynamicVoxelCollection::assign( DynamicVoxelCollection&& other )
 	assert( !memory );
 	assert( !memorySize );
 
-	voxels     = other.voxels;
-	names      = exchange( other.names, {} );
-	grids      = exchange( other.grids, {} );
-	memory     = exchange( other.memory, nullptr );
-	memorySize = exchange( other.memorySize, 0 );
+	voxels      = other.voxels;
+	names       = exchange( other.names, {} );
+	grids       = exchange( other.grids, {} );
+	gridsLoaded = exchange( other.gridsLoaded, false );
+	memory      = exchange( other.memory, nullptr );
+	memorySize  = exchange( other.memorySize, 0 );
 }
 void DynamicVoxelCollection::destroy()
 {

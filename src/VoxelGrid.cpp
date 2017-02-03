@@ -243,25 +243,25 @@ void generateMeshFromVoxelGrid( MeshStream* stream, VoxelGrid* grid, VoxelGridTe
 					                   + plane->zAxis * ( plane->zSize * position.z )
 					                   + plane->origin;
 					assert( textureIndex < (uint32)countof( textures->entries ) );
-					auto textureEntry = &textures->entries[textureIndex];
-					auto texelPlane   = getTexelPlaneByFace( textureIndex );
-					auto tw           = getAxisAlignedWidth( textureEntry->texCoords );
-					auto th           = getAxisAlignedHeight( textureEntry->texCoords );
-					auto texelWidth   = tw / grid->dim[texelPlane.x];
-					auto texelHeight  = th / grid->dim[texelPlane.y];
-					auto offsetedPos  = first.position + posOffset;
-					auto tu           = offsetedPos[texelPlane.x] * texelWidth
-					          + textureEntry->texCoords.elements[0].u;
-					auto tv = offsetedPos[texelPlane.y] * texelHeight
-					          + textureEntry->texCoords.elements[0].v;
+					auto textureEntry    = &textures->entries[textureIndex];
+					auto texelPlane      = getTexelPlaneByFace( textureIndex );
+					auto texCoords       = textureEntry->texCoords.elements;
+					auto tw              = texCoords[1] - texCoords[0];
+					auto th              = texCoords[2] - texCoords[0];
+					auto texelHorizontal = tw / (float)grid->dim[texelPlane.x];
+					auto texelVertical   = th / (float)grid->dim[texelPlane.y];
+					auto offsetedPos     = first.position + posOffset;
+					auto topLeft         = (float)offsetedPos[texelPlane.x] * texelHorizontal
+					               + (float)offsetedPos[texelPlane.y] * texelVertical
+					               + texCoords[0];
 					Vertex quad[4] = {
-					    {startVertex, 0xFFFFFFFF, tu, tv, plane->normal},
-					    {startVertex + plane->hAxis * plane->hSize, 0xFFFFFFFF, tu + texelWidth, tv,
-					     plane->normal},
-					    {startVertex + plane->vAxis * plane->vSize, 0xFFFFFFFF, tu,
-					     tv + texelHeight, plane->normal},
+					    {startVertex, 0xFFFFFFFF, topLeft, plane->normal},
+					    {startVertex + plane->hAxis * plane->hSize, 0xFFFFFFFF,
+					     topLeft + texelHorizontal, plane->normal},
+					    {startVertex + plane->vAxis * plane->vSize, 0xFFFFFFFF,
+					     topLeft + texelVertical, plane->normal},
 					    {startVertex + plane->vAxis * plane->vSize + plane->hAxis * plane->hSize,
-					     0xFFFFFFFF, tu + texelWidth, tv + texelHeight, plane->normal}};
+					     0xFFFFFFFF, topLeft + texelHorizontal + texelVertical, plane->normal}};
 					if( plane->face != textureIndex ) {
 						// plane face doesn't match texture index
 						// that means that the voxel face plane doesn't match the texelPlane
@@ -278,9 +278,9 @@ void generateMeshFromVoxelGrid( MeshStream* stream, VoxelGrid* grid, VoxelGridTe
 						for( int32 x = position.x + 1; x < plane->hCellCount; ++x ) {
 							if( isGeneratingQuad( grid, plane, map, x, y, z, textureIndex ) ) {
 								quad[1].position += plane->hAxis * plane->hSize;
-								quad[1].texCoords.x += texelWidth;
+								quad[1].texCoords += texelHorizontal;
 								quad[3].position += plane->hAxis * plane->hSize;
-								quad[3].texCoords.x += texelWidth;
+								quad[3].texCoords += texelHorizontal;
 								map[x + y * plane->hCellCount] = 1;
 								++xEnd;
 							} else {
@@ -303,9 +303,9 @@ void generateMeshFromVoxelGrid( MeshStream* stream, VoxelGrid* grid, VoxelGridTe
 									map[x + y * plane->hCellCount] = 1;
 								}
 								quad[2].position += plane->vAxis * plane->vSize;
-								quad[2].texCoords.y += texelHeight;
+								quad[2].texCoords += texelVertical;
 								quad[3].position += plane->vAxis * plane->vSize;
-								quad[3].texCoords.y += texelHeight;
+								quad[3].texCoords += texelVertical;
 							} else {
 								break;
 							}

@@ -226,24 +226,12 @@ bool doTextureDisplay( AppData* app, TexturePackSource* source )
 		}
 		if( imguiBeginDropGroup( "Orientation", &editor->orientationExpanded ) ) {
 			auto layout = imguiBeginColumn( 100 );
-			if( imguiRadiobox( "Def" ) ) {
-				editor->orientation = TexturePackOrientation::Def;
-			}
-			if( imguiRadiobox( "Cw90" ) ) {
-				editor->orientation = TexturePackOrientation::Cw90;
-			}
-			if( imguiRadiobox( "Ccw90" ) ) {
-				editor->orientation = TexturePackOrientation::Ccw90;
-			}
-			if( imguiRadiobox( "Horizontal" ) ) {
-				editor->orientation = TexturePackOrientation::Horizontal;
-			}
-			if( imguiRadiobox( "Vertical" ) ) {
-				editor->orientation = TexturePackOrientation::Vertical;
-			}
-			if( imguiRadiobox( "Diagonal" ) ) {
-				editor->orientation = TexturePackOrientation::Diagonal;
-			}
+			imguiRadiobox( "Def", &editor->orientation, TexturePackOrientation::Def );
+			imguiRadiobox( "Cw90", &editor->orientation, TexturePackOrientation::Cw90 );
+			imguiRadiobox( "Ccw90", &editor->orientation, TexturePackOrientation::Ccw90 );
+			imguiRadiobox( "Horizontal", &editor->orientation, TexturePackOrientation::Horizontal );
+			imguiRadiobox( "Vertical", &editor->orientation, TexturePackOrientation::Vertical );
+			imguiRadiobox( "Diagonal", &editor->orientation, TexturePackOrientation::Diagonal );
 
 			imguiNextColumn( &layout, 100 );
 			auto rect = imguiRegion( 100, 100 );
@@ -255,6 +243,7 @@ bool doTextureDisplay( AppData* app, TexturePackSource* source )
 			auto texCoords = texturePackGetTexCoords( normalized, editor->orientation );
 			addRenderCommandSingleQuad( renderer, rect, 0, texCoords );
 
+			imguiEndColumn( &layout );
 			imguiEndDropGroup();
 		}
 	}
@@ -464,7 +453,9 @@ void doTexturePackEntries( AppData* app )
 						                              makeArrayView( frame->textureMapItems ), 150,
 						                              6 * stringHeight( ImGui->font ), true );
 						if( selected >= 0 ) {
-							auto regionId = frame->faces[selected].regionId;
+							auto face           = &frame->faces[selected];
+							auto regionId       = face->regionId;
+							editor->orientation = face->orientation;
 							if( auto region = getTexturePackRegion( editor, regionId ) ) {
 								auto textureDisplay            = &editor->textureDisplay;
 								textureDisplay->selectedIndex  = 0;
@@ -733,15 +724,16 @@ void texturePackSave( AppData* app )
 
 	auto allocator = &app->stackAllocator;
 	TEMPORARY_MEMORY_BLOCK( allocator ) {
-		auto textureFilename = snprint( allocator, "{}.png", StringView{filename} );
-		auto jsonFilename    = snprint( allocator, "{}.json", StringView{filename} );
-		auto voxelsFilename  = snprint( allocator, "{}.raw", StringView{filename} );
+		auto filenameStub    = getFilenameAndPathWithoutExtension( filename );
+		auto textureFilename = snprint( allocator, "{}.png", filenameStub );
+		auto jsonFilename    = snprint( allocator, "{}.json", filenameStub );
+		auto voxelsFilename  = snprint( allocator, "{}.raw", filenameStub );
 
 		doBinPacking( app, textureFilename );
 
 		// output json
-		auto bufferSize = safe_truncate< int32 >( remaining( allocator ) );
-		auto buffer = allocateArray( allocator, char, bufferSize );
+		auto bufferSize                 = safe_truncate< int32 >( remaining( allocator ) );
+		auto buffer                     = allocateArray( allocator, char, bufferSize );
 		auto writer = makeJsonWriter( buffer, bufferSize );
 		writer.builder.format.precision = 9;
 

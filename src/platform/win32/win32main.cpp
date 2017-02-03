@@ -268,7 +268,7 @@ static void win32HandleInputs( HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam
 			break;
 		}
 		case WM_MOUSEWHEEL: {
-			auto delta = GET_WHEEL_DELTA_WPARAM( wParam );
+			auto delta          = GET_WHEEL_DELTA_WPARAM( wParam );
 			inputs->mouse.wheel = (float)delta / WHEEL_DELTA;
 			break;
 		}
@@ -276,14 +276,21 @@ static void win32HandleInputs( HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam
 }
 static void win32FillMouseData( GameMouseInput* mouse, float width, float height )
 {
-	assert( width > 0 );
-	assert( height > 0 );
-	mouse->relative.x      = mouse->position.x / width;
-	mouse->relative.y      = mouse->position.y / height;
-	mouse->delta.x         = mouse->position.x - mouse->prev.x;
-	mouse->delta.y         = mouse->position.y - mouse->prev.y;
-	mouse->relativeDelta.x = mouse->delta.x / width;
-	mouse->relativeDelta.y = mouse->delta.y / height;
+	if( width > 0 && height > 0 ) {
+		mouse->relative.x      = mouse->position.x / width;
+		mouse->relative.y      = mouse->position.y / height;
+		mouse->delta.x         = mouse->position.x - mouse->prev.x;
+		mouse->delta.y         = mouse->position.y - mouse->prev.y;
+		mouse->relativeDelta.x = mouse->delta.x / width;
+		mouse->relativeDelta.y = mouse->delta.y / height;
+	} else {
+		mouse->relative.x      = 0;
+		mouse->relative.y      = 0;
+		mouse->delta.x         = 0;
+		mouse->delta.y         = 0;
+		mouse->relativeDelta.x = 0;
+		mouse->relativeDelta.y = 0;
+	}
 }
 
 double win32PerformanceInit()

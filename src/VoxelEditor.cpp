@@ -221,18 +221,25 @@ static bool processBuildMode( AppData* app, GameInputs* inputs, bool focus, mat4
 	auto ray = pointToWorldSpaceRay( invViewProj, inputs->mouse.position, app->width, app->height );
 
 	auto generateVoxelMesh = false;
-	if( isKeyPressed( inputs, KC_LButton ) ) {
+	if( isKeyPressed( inputs, KC_LButton ) && !isKeyDown( inputs, KC_Space ) ) {
 		auto result = raycastIntoVoxelGrid( &voxel->voxels, ray.start, ray.dir, 10000 );
 		if( result.found ) {
 			auto destinationCell = result.position + result.normal;
+			if( !isPointInsideVoxelBounds( &voxel->voxels, destinationCell )
+			    || isKeyDown( inputs, KC_Alt ) ) {
+
+				destinationCell = result.position;
+			}
 			if( isPointInsideVoxelBounds( &voxel->voxels, destinationCell ) ) {
-				getCell( &voxel->voxels, destinationCell ) = voxel->placingCell;
-				generateVoxelMesh = true;
-				processed         = true;
+				voxel->selection.min = destinationCell;
+				voxel->selection.max = destinationCell;
+				generateVoxelMesh    = true;
+				voxel->capture       = KC_LButton;
+				processed            = true;
 			}
 		}
 	}
-	if( isKeyPressed( inputs, KC_RButton ) ) {
+	if( isKeyPressed( inputs, KC_RButton ) && !isKeyDown( inputs, KC_Space ) ) {
 		auto result = raycastIntoVoxelGrid( &voxel->voxels, ray.start, ray.dir, 10000 );
 		if( result.isInsideGrid ) {
 			auto destinationCell = result.position;
@@ -247,8 +254,15 @@ static bool processBuildMode( AppData* app, GameInputs* inputs, bool focus, mat4
 			}
 		}
 	}
-	if( voxel->capture == KC_RButton ) {
-		if( isKeyReleased( inputs, KC_RButton ) ) {
+
+	VoxelCell placingCell = EmptyCell;
+	if( voxel->capture == KC_LButton ) {
+		placingCell = voxel->placingCell;
+	} else if( voxel->capture == KC_RButton ) {
+		placingCell = ToDeleteCell;
+	}
+	if( voxel->capture ) {
+		if( isKeyReleased( inputs, voxel->capture ) ) {
 			voxel->capture    = 0;
 			generateVoxelMesh = true;
 			voxelCommitChanges( voxel );
@@ -261,13 +275,13 @@ static bool processBuildMode( AppData* app, GameInputs* inputs, bool focus, mat4
 				}
 				if( isPointInsideVoxelBounds( &voxel->voxelsIntermediate, destinationCell ) ) {
 					voxel->selection.max = destinationCell;
-					generateVoxelMesh = true;
+					generateVoxelMesh    = true;
 				}
 
 				voxel->voxelsIntermediate.clear();
 				auto selection = getSelection( voxel );
 				selection.max += vec3i{1, 1, 1};
-				setCellsInRegion( &voxel->voxelsIntermediate, selection, ToDeleteCell );
+				setCellsInRegion( &voxel->voxelsIntermediate, selection, placingCell );
 			}
 		}
 	}
@@ -578,13 +592,20 @@ VoxelGrid getVoxelGridFromTextureMap( VoxelGridTextureMap* map, Color colorkey )
 	auto isEmpty = [&]( vec3iarg index, uint32 face ) {
 		auto plane     = getTexelPlaneByFace( face );
 		auto texCoords = map->entries[face].texCoords.elements;
-		float tx       = ( (float)index.elements[plane.x] + 0.5f ) / (float)result.dim[plane.x];
-		float ty       = ( (float)index.elements[plane.y] + 0.5f ) / (float)result.dim[plane.y];
-		auto posX      = lerp( tx, texCoords[2].u, texCoords[3].u ) * info->image.width;
-		auto posY      = lerp( ty, texCoords[1].v, texCoords[3].v ) * info->image.height;
-		auto textureX  = (int32)floor( posX );
-		auto textureY  = (int32)floor( posY );
-		auto pixel     = getPixelColor( info->image, textureX, textureY );
+		float px       = ( (float)index.elements[plane.x] + 0.5f ) / (float)result.dim[plane.x];
+		float py       = ( (float)index.elements[plane.y] + 0.5f ) / (float)result.dim[plane.y];
+
+		// primitive pos to texel pos
+		auto topTexel    = lerp( px, texCoords[0], texCoords[1] );
+		auto bottomTexel = lerp( px, texCoords[2], texCoords[3] );
+		auto texel       = lerp( py, topTexel, bottomTexel );
+
+		// texel to pixel pos
+		auto posX      = texel.x * info->image.width;
+		auto posY      = texel.y * info->image.height;
+		auto pixelX    = (int32)floor( posX );
+		auto pixelY    = (int32)floor( posY );
+		auto pixel     = getPixelColor( info->image, pixelX, pixelY );
 		auto alpha     = getAlpha( pixel );
 		bool ret       = ( alpha == 0 || pixel == colorkey );
 		return ret;
@@ -618,6 +639,15 @@ VoxelGrid getVoxelGridFromTextureMapTopLeftColorKey( VoxelGridTextureMap* map )
 	return getVoxelGridFromTextureMap( map, getPixelColor( info->image, 0, 0 ) );
 }
 
+static void voxelAssignToCurrent( VoxelState* voxel )
+{
+	auto collection = &voxel->collection.voxels;
+	auto index      = voxel->currentFrame;
+	if( collection->texture && index >= 0 && index < voxel->collection.grids.size() ) {
+		voxel->collection.grids[index] = voxel->voxels;
+	}
+}
+
 static void doVoxelGui( AppData* app, GameInputs* inputs, bool focus, float dt )
 {
 	PROFILE_FUNCTION();
@@ -639,7 +669,8 @@ static void doVoxelGui( AppData* app, GameInputs* inputs, bool focus, float dt )
 		gui->rendering = imguiGenerateContainer( imgui, {ImGui->style.containerWidth} );
 		gui->textureIndex =
 		    imguiGenerateContainer( imgui, RectWH( ImGui->style.containerWidth, 200, 240, 200 ) );
-		gui->textureMapDialog  = imguiGenerateContainer( imgui, {0, 300} );
+		gui->textureMapDialog = imguiGenerateContainer( imgui, {0, 300} );
+		gui->meshInfo         = imguiGenerateContainer( imgui, RectWH( 400.0f, 0, 200, 200 ) );
 
 		gui->animations = makeUArray( &app->stackAllocator, VoxelGuiState::Animation, 100 );
 
@@ -699,23 +730,17 @@ static void doVoxelGui( AppData* app, GameInputs* inputs, bool focus, float dt )
 		if( imguiBeginDropGroup( "Load & Save", &gui->fileExpanded ) ) {
 			imguiSameLine( 2 );
 			if( imguiButton( "Load" ) ) {
-				char filenameBuffer[260];
-				auto filenameSize = app->platform.getOpenFilename(
-				    "All\0*.*\0", nullptr, false, filenameBuffer, countof( filenameBuffer ) );
-				if( filenameSize ) {
-					loadVoxelGridFromFile( &app->platform, {filenameBuffer, filenameSize},
-					                       &voxel->voxels );
+				auto filename = getOpenFilename( DefaultFilter, nullptr, false );
+				if( filename.size() ) {
+					loadVoxelGridFromFile( &app->platform, filename, &voxel->voxels );
 					generateVoxelMesh = true;
 				}
 			}
 
 			if( imguiButton( "Save" ) ) {
-				char filenameBuffer[260];
-				auto filenameSize = app->platform.getSaveFilename(
-				    "All\0*.*\0", nullptr, filenameBuffer, countof( filenameBuffer ) );
-				if( filenameSize ) {
-					saveVoxelGridToFile( &app->platform, {filenameBuffer, filenameSize},
-					                     &voxel->voxels );
+				auto filename = getSaveFilename( DefaultFilter, nullptr );
+				if( filename.size() ) {
+					saveVoxelGridToFile( &app->platform, filename, &voxel->voxels );
 				}
 			}
 
@@ -772,11 +797,7 @@ static void doVoxelGui( AppData* app, GameInputs* inputs, bool focus, float dt )
 		imguiSeperator();
 		imguiSameLine( 2 );
 		if( imguiButton( "Assign to current" ) ) {
-			auto collection = &voxel->collection.voxels;
-			auto index      = voxel->currentFrame;
-			if( collection->texture && index >= 0 && index < voxel->collection.grids.size() ) {
-				voxel->collection.grids[index] = voxel->voxels;
-			}
+			voxelAssignToCurrent( voxel );
 		}
 		/*if( imguiBeginDropGroup( "Offset", &gui->collectionOffsetExpanded ) ) {
 		    auto collection = &voxel->collection;
@@ -812,10 +833,11 @@ static void doVoxelGui( AppData* app, GameInputs* inputs, bool focus, float dt )
 						}
 						auto handle =
 						    imguiMakeHandle( entry->name.data(), ImGuiControlType::Button, frame );
-						if( imguiButton( handle, str, ImGui->style.buttonWidth,
-						                 ImGui->style.buttonHeight ) ) {
+						if( imguiButton( handle, str, imguiRelative() ) ) {
 							voxel->textureMap   = collection->frameInfos[frameIndex].textureMap;
-							voxel->voxels       = voxel->collection.grids[frameIndex];
+							if( !isKeyDown( inputs, KC_Alt ) ) {
+								voxel->voxels       = voxel->collection.grids[frameIndex];
+							}
 							voxel->currentFrame = frameIndex;
 							generateVoxelMesh   = true;
 						}
@@ -888,6 +910,13 @@ static void doVoxelGui( AppData* app, GameInputs* inputs, bool focus, float dt )
 		}
 	}
 
+	if( imguiDialog( "Mesh Info", gui->meshInfo ) ) {
+		static_string_builder< 100 > sb;
+		auto mesh = toMesh( &voxel->meshStream );
+		sb.println( "Vertices: {}\nIndices: {}", mesh.verticesCount, mesh.indicesCount  );
+		imguiText( asStringView( sb ) );
+	}
+
 	imguiUpdate( dt );
 
 	imguiFinalize();
@@ -929,6 +958,10 @@ static void doVoxel( AppData* app, GameInputs* inputs, bool focus, float dt )
 		}
 	}
 
+	if( isKeyPressed( inputs, KC_Q ) ) {
+		voxelAssignToCurrent( voxel );
+	}
+
 	// mouse lock
 	if( isKeyPressed( inputs, KC_L ) ) {
 		app->mouseLocked = !app->mouseLocked;
@@ -946,7 +979,7 @@ static void doVoxel( AppData* app, GameInputs* inputs, bool focus, float dt )
 	                        grid->depth * EDITOR_CELL_DEPTH};
 
 	setProjection( renderer, ProjectionType::Perspective );
-	if( voxel->focus == VoxelFocus::Voxel ) {
+	if( voxel->focus == VoxelFocus::Voxel || voxel->cameraType == VoxelCameraType::Fixed ) {
 		auto consumedInputs = processEditMode( app, inputs, focus, dt );
 		auto viewInputs     = ( consumedInputs ) ? ( nullptr ) : ( inputs );
 		switch( voxel->cameraType ) {
@@ -963,8 +996,18 @@ static void doVoxel( AppData* app, GameInputs* inputs, bool focus, float dt )
 				break;
 			}
 		}
-		renderer->view = translateLocal( renderer->view, -::width( gridBoundingBox ) * 0.5f, 0,
-		                                 -::depth( gridBoundingBox ) * 0.5f );
+		if( voxel->renderWithOffset && voxel->collection.voxels.texture ) {
+			auto collection = &voxel->collection.voxels;
+			auto index      = voxel->currentFrame;
+			if( auto current = queryElement( collection->frames, index ) ) {
+				renderer->view = translateLocal(
+				    renderer->view, -current->offset.x * EDITOR_CELL_WIDTH,
+				    current->offset.y * EDITOR_CELL_HEIGHT, -::depth( gridBoundingBox ) * 0.5f );
+			}
+		} else {
+			renderer->view = translateLocal( renderer->view, -::width( gridBoundingBox ) * 0.5f, 0,
+			                                 -::depth( gridBoundingBox ) * 0.5f );
+		}
 	}
 
 	setTexture( renderer, 0, null );
@@ -981,21 +1024,7 @@ static void doVoxel( AppData* app, GameInputs* inputs, bool focus, float dt )
 
 	setRenderState( renderer, RenderStateType::Lighting, voxel->lighting );
 	setTexture( renderer, 0, voxel->textureMap.texture );
-	if( voxel->renderWithOffset && voxel->collection.voxels.texture ) {
-		pushMatrix( renderer->matrixStack );
-		auto collection = &voxel->collection.voxels;
-		auto index      = voxel->currentFrame;
-		if( auto current = queryElement( collection->frames, index ) ) {
-			translate( renderer->matrixStack, -current->offset.x * EDITOR_CELL_WIDTH,
-			           current->offset.y * EDITOR_CELL_HEIGHT );
-			addRenderCommandMeshTransformed( renderer, toMesh( &voxel->meshStream ) );
-		} else {
-			addRenderCommandMesh( renderer, toMesh( &voxel->meshStream ) );
-		}
-		popMatrix( renderer->matrixStack );
-	} else {
-		addRenderCommandMesh( renderer, toMesh( &voxel->meshStream ) );
-	}
+	addRenderCommandMeshTransformed( renderer, toMesh( &voxel->meshStream ) );
 
 	if( voxel->editMode == EditMode::Select ) {
 		setTexture( renderer, 0, null );

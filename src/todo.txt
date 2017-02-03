@@ -1,5 +1,6 @@
 todo:
-	refactor write voxel saving to file system using voxels field of json
+	implement deleteMesh so that meshes created with uploadMeshToGpu can be destroyed
+		DynamicVoxelCollection needs to delete created meshes
 	rework framerate independent movement, seems to have some problems
 
 bugs:

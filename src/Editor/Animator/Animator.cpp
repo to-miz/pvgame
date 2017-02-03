@@ -678,6 +678,7 @@ void openAnimation( AnimatorState* animator, AnimatorAnimation* animation )
 		animator->keyframes.push_back(
 		    std::make_unique< AnimatorKeyframe >( toAbsoluteKeyframe( base->get(), &keyframe ) ) );
 	}
+	sortKeyframes( animator );
 }
 
 void commitAnimation( AnimatorState* animator )
@@ -1139,6 +1140,7 @@ bool animatorOpen( StackAllocator* allocator, AnimatorState* animator, StringVie
 		}
 	}
 	animator->filename = filename;
+
 	return true;
 }
 
@@ -2075,11 +2077,13 @@ void doAnimatorMenu( AppData* app, GameInputs* inputs, rectfarg rect )
 					if( index >= 0 ) {
 						auto asset           = animator->assets[index].get();
 						node.asset           = asset;
+						node.assetId         = asset->id;
 						node.assetType       = asset->type;
 						node.voxel.animation = -1;
 						node.voxel.frame     = 0;
 					} else {
 						node.asset     = nullptr;
+						node.assetId   = -1;
 						node.assetType = {};
 					}
 				}
