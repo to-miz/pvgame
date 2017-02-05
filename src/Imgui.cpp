@@ -1126,11 +1126,11 @@ bool imguiMenuItem( ImGuiHandle handle, StringView text, int32 containerIndex = 
 		showMenu = true;
 		imguiFocus( handle );
 	}
-	if( showMenu || imguiKeypressButton( handle, rect ) ) {
+	auto buttonPressed = imguiKeypressButton( handle, rect );
+	if( showMenu || buttonPressed ) {
 		if( containerIndex >= 0 ) {
 			imguiShowContainerAt( containerIndex, {rect.left, rect.bottom} );
 			ImGui->processInputs = false;
-
 			imguiFocus( handle );
 		}
 		return true;
@@ -1562,7 +1562,7 @@ void imguiUpdate( float dt )
 	}
 }
 
-bool imguiCheckbox( StringView name, bool* checked )
+bool imguiCheckbox( ImGuiHandle handle, StringView name, bool* checked )
 {
 	assert( checked );
 
@@ -1570,7 +1570,6 @@ bool imguiCheckbox( StringView name, bool* checked )
 	auto font     = ImGui->font;
 	auto style    = &ImGui->style;
 
-	auto handle  = imguiMakeHandle( checked, ImGuiControlType::Checkbox );
 	auto changed = false;
 
 	using namespace ImGuiTexCoords;
@@ -1601,6 +1600,33 @@ bool imguiCheckbox( StringView name, bool* checked )
 
 	return changed;
 }
+bool imguiCheckbox( StringView name, bool* checked )
+{
+	auto handle = imguiMakeHandle( checked, ImGuiControlType::Checkbox );
+	return imguiCheckbox( handle, name, checked );
+}
+bool imguiCheckbox( ImGuiHandle handle, StringView name, bool checked )
+{
+	imguiCheckbox( handle, name, &checked );
+	return checked;
+}
+bool imguiCheckbox( StringView name, bool checked )
+{
+	auto handle = imguiMakeStringHandle( name );
+	imguiCheckbox( handle.handle, handle.string, &checked );
+	return checked;
+}
+template < class T >
+bool imguiCheckbox( StringView name, T* value, T cmp )
+{
+	auto handle = imguiMakeHandle( value, ImGuiControlType::Checkbox );
+	if( imguiCheckbox( handle, name, *value == cmp ) ) {
+		*value = cmp;
+		return true;
+	}
+	return false;
+}
+
 bool imguiRadiobox( ImGuiHandle handle, StringView name )
 {
 	auto renderer  = ImGui->renderer;

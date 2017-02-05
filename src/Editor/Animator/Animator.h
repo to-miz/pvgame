@@ -9,13 +9,26 @@ typedef trange< GroupId > GroupChildren;
 struct AnimatorAsset {
 	ImGuiListboxItem item = {};
 
-	enum Type { type_none, type_collection } type = type_none;
+	enum Type {
+		type_none,
+		type_collection,
+		type_collision,
+		type_hitbox,
+		type_hurtbox
+	} type = type_none;
+
 	union {
 		DynamicVoxelCollection* collection = nullptr;
+		rectf collision;
+		rectf hitbox;
+		rectf hurtbox;
 	};
 	int16 id = -1;
 	char name[10];
-	int32 nameLength;
+	int32 nameLength = 0;
+
+	char itemText[30];
+	int32 itemTextLength = 0;
 
 	void setName( StringView str );
 
@@ -113,14 +126,12 @@ enum class AnimatorTranslateOptions : int8 {
 	ParentAlong,
 	ParentPerpendicular
 };
-enum class AnimatorMousePlane : int8 {
-	XY,
-	YZ,
-	XZ
-};
+enum class AnimatorMousePlane : int8 { XY, YZ, XZ };
+enum class AnimatorEditorViewType { Node, Hitbox };
 
 struct AnimatorEditor {
 	EditorView view;
+	AnimatorEditorViewType viewType;
 
 	enum : uint32 {
 		EditorSettings = BITFIELD( 0 ),
@@ -171,6 +182,7 @@ struct AnimatorState {
 	bool initialized;
 
 	int32 fileMenu;
+	int32 viewMenu;
 	TextureId controlIcons;
 
 	ImGuiScrollableRegion scrollableRegion;
