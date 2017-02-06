@@ -12,6 +12,8 @@ enum RectComponentValues : int32 {
 
 template< class T >
 union trect {
+	typedef T value_type;
+
 	struct {
 		T left;
 		T top;
@@ -39,6 +41,8 @@ typedef trect< int32 > recti;
 
 template< class T >
 union tregion {
+	typedef T value_type;
+
 	struct {
 		T left;
 		T top;
@@ -104,7 +108,7 @@ trect< T > RectHalfSize( tvec2< T > center, A halfWidth, B halfHeight );
 template< class T > trect< T > RectHalfSize( tvec2< T > center, tvec2< T > halfSize );
 template< class T > trect< T > RectHalfSize( T centerX, T centerY, tvec2< T > halfSize );
 template< class T > trect< T > RectBounding( trectarg< T > a, trectarg< T > b );
-template< class T > trect< T > RectBounding( tvec2< T >* vertices, intmax count );
+template< class T > trect< T > RectBounding( tvec2< T >* vertices, int32 count );
 template< class T > trect< T > RectClipped( trectarg< T > a, trectarg< T > b );
 template< class T > trect< T > RectOverlap( trectarg< T > a, trectarg< T > b );
 template< class T > trect< T > RectCentered( tvec2< T > center, T width, T height );
@@ -144,7 +148,7 @@ template< class T > trect< T > ceil( trectarg< T > r );
 template< class T > trect< T > floor( trectarg< T > r );
 template< class T > trect< T > sweep( trectarg< T > r, tvec2< T > delta );
 template< class T > trect< T >
-swizzle( trectarg< T > r, intmax left, intmax top, intmax right, intmax bottom );
+swizzle( trectarg< T > r, int32 left, int32 top, int32 right, int32 bottom );
 
 template < class T > tvec2< T > clamp( tvec2arg< T > v, trectarg< T > r );
 template <class T > trect< T > correct( trectarg< T > r );
@@ -289,13 +293,13 @@ template< class T > trect< T > RectBounding( trectarg< T > a, trectarg< T > b )
 {
 	return RectMax( a, b );
 }
-template< class T > trect< T > RectBounding( tvec2< T >* vertices, intmax count )
+template< class T > trect< T > RectBounding( tvec2< T >* vertices, int32 count )
 {
 	assert( vertices );
 	trect< T > result;
 	if( count ) {
 		result = {vertices[0].x, vertices[0].y, vertices[0].x, vertices[0].y};
-		for( intmax i = 1; i < count; ++i, ++vertices ) {
+		for( int32 i = 1; i < count; ++i, ++vertices ) {
 			auto v = *vertices;
 			if( result.left > v.x ) result.left = v.x;
 			if( result.top > v.y ) result.top = v.y;
@@ -498,7 +502,7 @@ template< class T > trect< T > sweep( trectarg< T > r, tvec2< T > delta )
 	return result;
 }
 template< class T > trect< T >
-swizzle( trectarg< T > r, intmax left, intmax top, intmax right, intmax bottom )
+swizzle( trectarg< T > r, int32 left, int32 top, int32 right, int32 bottom )
 {
 	return {r.elements[left], r.elements[top], r.elements[right], r.elements[bottom]};
 }

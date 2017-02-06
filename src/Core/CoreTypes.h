@@ -8,9 +8,21 @@ const null_t null;
 
 struct bool8 {
 	int8 value;
-	bool8& operator=( bool other ) { value = other; return *this; }
-	constexpr bool operator!=( bool other ) const { return value != (int8)other; }
-	constexpr bool operator==( bool other ) const { return value == (int8)other; }
+	bool8& operator=( bool other )
+	{
+		value = other;
+		return *this;
+	}
+	inline constexpr bool operator!=( bool other ) const { return value != (int8)other; }
+	inline constexpr bool operator!=( bool8 other ) const
+	{
+		return ( value != 0 ) != ( other.value != 0 );
+	}
+	inline constexpr bool operator==( bool other ) const { return value == (int8)other; }
+	inline constexpr bool operator==( bool8 other ) const
+	{
+		return ( value != 0 ) == ( other.value != 0 );
+	}
 	explicit operator bool() const
 	{
 		assert( value == 0 || value == 1 );

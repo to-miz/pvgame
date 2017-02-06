@@ -1,28 +1,19 @@
-constexpr const float PaddleWidth           = 5;
-constexpr const float PaddleHeight          = 10;
-constexpr const float KeyframePrecision     = 1.0f / 5.0f;
-constexpr const float PropertiesColumnWidth = 200;
-constexpr const float NamesWidth            = 100;
-constexpr const float RegionHeight          = 200;
-constexpr const float MenuHeight            = 18;
+constexpr const float PaddleWidth            = 5;
+constexpr const float PaddleHeight           = 10;
+constexpr const float KeyframePrecision      = 1.0f / 5.0f;
+constexpr const float PropertiesColumnWidth  = 200;
+constexpr const float NamesWidth             = 100;
+constexpr const float RegionHeight           = 200;
+constexpr const float MenuHeight             = 18;
+constexpr const int32 KeyablePropertiesCount = 4;
 
 static const vec3 AnimatorInitialRotation = {0, -0.2f, 0};
 
-
 static const StringView EaseTypeNames[] = {
-	"Lerp",
-	"Step",
-	"Smoothstep",
-	"EaseOutBounce",
-	"EaseOutElastic",
-	"Curve",
+    "Lerp", "Step", "Smoothstep", "EaseOutBounce", "EaseOutElastic", "Curve",
 };
 static const StringView AnimatorAssetTypeNames[] = {
-	"None",
-	"VoxelCollection",
-	"Collision",
-	"Hitbox",
-	"Hurtbox",
+    "None", "VoxelCollection", "Collision", "Hitbox", "Hurtbox",
 };
 StringView to_string( AnimatorKeyframeData::EaseType type )
 {
@@ -33,6 +24,11 @@ StringView to_string( AnimatorAsset::Type type )
 {
 	assert( type >= 0 && type < countof( AnimatorAssetTypeNames ) );
 	return AnimatorAssetTypeNames[type];
+}
+StringView to_string( AnimatorState* animator, AnimatorKeyframeData::Type type )
+{
+	assert( type >= 0 && type < countof( animator->fieldNames ) );
+	return animator->fieldNames[type];
 }
 void from_string( StringView str, AnimatorKeyframeData::EaseType* out )
 {
@@ -96,23 +92,49 @@ AnimatorAsset::Type convert_to< AnimatorAsset::Type >( StringView str,
 }
 
 // AnimatorAsset
+bool isHitboxType( AnimatorAsset::Type type )
+{
+	return type >= AnimatorAsset::type_collision && type <= AnimatorAsset::type_hurtbox;
+}
+// all three union fields point to the same location, but because of strict aliasing we can't
+// read from a union field we didn't write to
+rectf* getHitboxRect( AnimatorAsset* asset )
+{
+	assert( asset );
+	assert( isHitboxType( asset->type ) );
+	switch( asset->type ) {
+		case AnimatorAsset::type_collision: {
+			return &asset->collision;
+			break;
+		}
+		case AnimatorAsset::type_hitbox: {
+			return &asset->hitbox;
+			break;
+		}
+		case AnimatorAsset::type_hurtbox: {
+			return &asset->hurtbox;
+			break;
+		}
+	}
+	return nullptr;
+};
 AnimatorAsset animatorHitboxAsset( AnimatorAsset::Type type, int16 id )
 {
 	AnimatorAsset result;
 	switch( type ) {
 		case AnimatorAsset::type_collision: {
 			result.type      = AnimatorAsset::type_collision;
-			result.collision = {};
+			result.collision = {-5, -5, 5, 5};
 			break;
 		}
 		case AnimatorAsset::type_hitbox: {
 			result.type   = AnimatorAsset::type_hitbox;
-			result.hitbox = {};
+			result.hitbox = {-5, -5, 5, 5};
 			break;
 		}
 		case AnimatorAsset::type_hurtbox: {
 			result.type    = AnimatorAsset::type_hurtbox;
-			result.hurtbox = {};
+			result.hurtbox = {-5, -5, 5, 5};
 			break;
 		}
 		InvalidDefaultCase;
@@ -162,38 +184,73 @@ void clearSelectedNodes( AnimatorState* animator )
 	animator->editor.clickedNode = nullptr;
 }
 
-int32 makeAnimatorGroup( int16 ownerId, int32 index )
+int32 makeAnimatorGroup( int16 ownerId, AnimatorKeyframeData::Type type = {} )
 {
-	assert( index >= 0 && index < 256 );
-	return (int32)( (uint32)ownerId << 8 | (uint32)index );
+	assert( type >= 0 && type < 256 );
+	return ( int32 )( ( (uint32)ownerId << 8 ) | ( (uint32)type & 0xFF ) );
 }
-int16 getAnimatorKeyframeOwner( GroupId id )
+AnimatorKeyframeData::Type getAnimatorGroupType( GroupId id )
 {
-	return (int16)( (uint32)id >> 8 );
+	return ( AnimatorKeyframeData::Type )( (uint32)id & 0xFF );
 }
-GroupId getAnimatorParentGroup( GroupId id )
+bool isParentGroup( GroupId id )
 {
-	return (int32)( (uint32)id & 0xFFFFFF00u );
+	return id >= 0 && getAnimatorGroupType( id ) == AnimatorKeyframeData::type_none;
 }
-void addAnimatorGroups( AnimatorState* animator, StringView parentName,
-                        Array< const StringView > childNames, int16 ownerId )
+int16 getAnimatorKeyframeOwner( GroupId id ) { return ( int16 )( (uint32)id >> 8 ); }
+bool isMyChild( GroupId parent, GroupId child )
+{
+	return getAnimatorKeyframeOwner( parent ) == getAnimatorKeyframeOwner( child );
+}
+GroupId getAnimatorParentGroup( GroupId id ) { return ( int32 )( (uint32)id & 0xFFFFFF00u ); }
+
+void addAnimatorGroups( AnimatorState* animator, StringView parentName, int16 ownerId,
+                        AnimatorAsset::Type type )
 {
 	Array< AnimatorGroup > groups = {};
-	auto count                    = childNames.size() + 1;
-	auto start                    = safe_truncate< int32 >( animator->groups.size() );
-	auto end                      = start + count;
+	auto count                    = KeyablePropertiesCount + 1;
+	if( type == AnimatorAsset::type_none ) {
+		--count;
+	}
+	auto start = safe_truncate< int32 >( animator->groups.size() );
+	auto end   = start + count;
 	animator->groups.resize( end, {} );
 	groups = makeRangeView( animator->groups, start, end );
-	for( auto i = 0; i < count; ++i ) {
+
+	auto root      = &groups[0];
+	root->name     = parentName;
+	root->id       = makeAnimatorGroup( ownerId );
+	root->expanded = false;
+
+	for( int32 i = 1; i < AnimatorKeyframeData::type_frame; ++i ) {
 		auto entry      = &groups[i];
-		entry->name     = ( i == 0 ) ? parentName : childNames[i - 1];
-		entry->id       = makeAnimatorGroup( ownerId, i );
-		entry->expanded = false;
+		auto propertyType = (AnimatorKeyframeData::Type)i;
+		entry->name       = to_string( animator, propertyType );
+		entry->id         = makeAnimatorGroup( ownerId, propertyType );
+		entry->expanded   = false;
 	}
-	if( count > 1 ) {
-		groups[0].children = {groups[1].id, groups[1].id + childNames.size()};
-	} else {
-		groups[0].children = {};
+	if( type != AnimatorAsset::type_none ) {
+		AnimatorKeyframeData::Type propertyType = {};
+		switch( type ) {
+			case AnimatorAsset::type_none: {
+				break;
+			}
+			case AnimatorAsset::type_collection: {
+				propertyType = AnimatorKeyframeData::type_frame;
+				break;
+			}
+			case AnimatorAsset::type_collision:
+			case AnimatorAsset::type_hitbox:
+			case AnimatorAsset::type_hurtbox: {
+				propertyType = AnimatorKeyframeData::type_active;
+				break;
+			}
+			InvalidDefaultCase;
+		}
+		auto entry      = &groups[count - 1];
+		entry->name     = to_string( animator, propertyType );
+		entry->id       = makeAnimatorGroup( ownerId, propertyType );
+		entry->expanded = false;
 	}
 }
 void clearAnimatorGroups( AnimatorState* animator )
@@ -205,12 +262,23 @@ void clearAnimatorGroups( AnimatorState* animator )
 void populateVisibleGroups( AnimatorState* animator )
 {
 	animator->visibleGroups.clear();
-	animator->visibleGroups.push_back( {-1, -1} );
+	animator->visibleGroups.push_back( {-1} );
 	if( animator->flags.timelineRootExpanded ) {
 		for( auto it = animator->groups.begin(), end = animator->groups.end(); it < end; ++it ) {
-			animator->visibleGroups.push_back( {it->id, it->children} );
-			if( !it->expanded && it->children ) {
-				it += width( it->children );
+			animator->visibleGroups.push_back( {it->id} );
+			if( !it->expanded && isParentGroup( it->id ) ) {
+				// skip children
+				auto cur = it->id;
+				++it;
+				while( it < end && isMyChild( cur, it->id ) ) {
+					++it;
+				}
+				if( it == end ) {
+					break;
+				}
+				if( !isMyChild( cur, it->id ) ) {
+					--it;
+				}
 			}
 		}
 	}
@@ -272,7 +340,18 @@ AnimatorKeyframeData lerp( Array< AnimatorCurveData > curves, float t,
 			result.frame = (int16)lerp( t, (float)a.frame, (float)b.frame );
 			break;
 		}
-			InvalidDefaultCase;
+		case AnimatorKeyframeData::type_active: {
+			result.type = AnimatorKeyframeData::type_active;
+			// TODO: experiment with lerping even if active is a bool
+#if 1
+			result.active =
+			    lerp( t, (float)a.active.value, (float)b.active.value ) >= Float::BigEpsilon;
+#else
+			result.active = a.active;
+#endif
+			break;
+		}
+		InvalidDefaultCase;
 	}
 	return result;
 }
@@ -349,13 +428,12 @@ AnimatorNode getCurrentFrameNode( AnimatorState* animator, AnimatorNode* node )
 	auto base   = find_first_where( animator->nodes, entry->id == node->id )->get();
 	auto result = *base;
 
-	auto baseGroup = makeAnimatorGroup( node->id, 0 );
-	assert_init( auto group = find_first_where( animator->groups, entry.id == baseGroup ),
-	             width( group->children ) == 4 );
-	GroupId translationId = baseGroup + 1;
-	GroupId rotationId    = baseGroup + 2;
-	GroupId scaleId       = baseGroup + 3;
-	GroupId frameId       = baseGroup + 4;
+	auto baseGroup = makeAnimatorGroup( node->id );
+	GroupId translationId = baseGroup + AnimatorKeyframeData::type_translation;
+	GroupId rotationId    = baseGroup + AnimatorKeyframeData::type_rotation;
+	GroupId scaleId       = baseGroup + AnimatorKeyframeData::type_scale;
+	GroupId frameId       = baseGroup + AnimatorKeyframeData::type_frame;
+	GroupId activeId       = baseGroup + AnimatorKeyframeData::type_active;
 
 	auto translationKeyframe =
 	    getInterpolatedKeyframe( animator, animator->currentFrame, translationId );
@@ -366,9 +444,22 @@ AnimatorNode getCurrentFrameNode( AnimatorState* animator, AnimatorNode* node )
 	    get_variant_or_default( translationKeyframe, translation, base->translation );
 	result.rotation = get_variant_or_default( rotationKeyframe, rotation, base->rotation );
 	result.scale    = get_variant_or_default( scaleKeyframe, scale, base->scale );
-	if( base->assetType == AnimatorAsset::type_collection ) {
-		auto frameKeyframe = getInterpolatedKeyframe( animator, animator->currentFrame, frameId );
-		result.voxel.frame = get_variant_or_default( frameKeyframe, frame, base->voxel.frame );
+	switch( base->assetType ) {
+		case AnimatorAsset::type_collection: {
+			auto frameKeyframe =
+			    getInterpolatedKeyframe( animator, animator->currentFrame, frameId );
+			result.voxel.frame = get_variant_or_default( frameKeyframe, frame, base->voxel.frame );
+			break;
+		}
+		case AnimatorAsset::type_collision:
+		case AnimatorAsset::type_hitbox:
+		case AnimatorAsset::type_hurtbox: {
+			auto activeKeyframe =
+			    getInterpolatedKeyframe( animator, animator->currentFrame, activeId );
+			result.hitbox.active =
+			    get_variant_or_default( activeKeyframe, active, base->hitbox.active );
+			break;
+		}
 	}
 
 	result.parent   = node->parent;
@@ -489,7 +580,7 @@ AnimatorNode* addNewNode( AnimatorState* animator, const AnimatorNode& node )
 		result->name.resize( snprint( result->name.data(), result->name.capacity(), "Unnamed {}",
 		                              StringView{idString} ) );
 	}
-	addAnimatorGroups( animator, result->name, makeArrayView( animator->fieldNames ), result->id );
+	addAnimatorGroups( animator, result->name, result->id, result->assetType );
 	setUnsavedChanges( animator );
 	return result;
 }
@@ -499,7 +590,7 @@ AnimatorNode* addExistingNode( AnimatorState* animator, const AnimatorNode& node
 	auto result           = animator->nodes.back().get();
 	result->parent        = nullptr;
 	result->childrenCount = 0;
-	addAnimatorGroups( animator, result->name, makeArrayView( animator->fieldNames ), result->id );
+	addAnimatorGroups( animator, result->name, result->id, result->assetType );
 	return result;
 }
 
@@ -867,6 +958,14 @@ void animatorSave( StackAllocator* allocator, AnimatorState* animator, StringVie
 				writeEndObject( writer );
 				break;
 			}
+			case AnimatorAsset::type_collision:
+			case AnimatorAsset::type_hitbox:
+			case AnimatorAsset::type_hurtbox: {
+				writePropertyName( writer, "hitbox" );
+					writeProperty( writer, "active", node->hitbox.active );
+				writeEndObject( writer );
+				break;
+			}
 			InvalidDefaultCase;
 		}
 	};
@@ -896,6 +995,10 @@ void animatorSave( StackAllocator* allocator, AnimatorState* animator, StringVie
 							}
 							case AnimatorKeyframeData::type_frame: {
 								writeProperty( writer, "value", keyframe.data.frame );
+								break;
+							}
+							case AnimatorKeyframeData::type_active: {
+								writeProperty( writer, "value", keyframe.data.active );
 								break;
 							}
 							InvalidDefaultCase;
@@ -961,25 +1064,36 @@ void animatorSave( StackAllocator* allocator, AnimatorState* animator, StringVie
 					FOR( node : animation.nodes ) {
 						writeStartObject( writer );
 							writeNodeKeyableProperties( writer, &node );
-							auto group = makeAnimatorGroup( node.id, 0 );
+							auto group = makeAnimatorGroup( node.id );
 							writePropertyName( writer, "keyframes" );
 							writeStartObject( writer );
-								writeKeyframes( writer, keyframes, "translation", group + 1 );
-								writeKeyframes( writer, keyframes, "rotation", group + 2 );
-								writeKeyframes( writer, keyframes, "scale", group + 3 );
-								// make sure that node has a valid asset set up
-								refreshAsset( animator, &node );
+				            writeKeyframes( writer, keyframes, "translation",
+				                            group + AnimatorKeyframeData::type_translation );
+				            writeKeyframes( writer, keyframes, "rotation",
+				                            group + AnimatorKeyframeData::type_rotation );
+				            writeKeyframes( writer, keyframes, "scale",
+				                            group + AnimatorKeyframeData::type_scale );
+				            // make sure that node has a valid asset set up
+				            refreshAsset( animator, &node );
 
-								switch( node.assetType ) {
-									case AnimatorAsset::type_none: {
-										break;
-									}
-									case AnimatorAsset::type_collection: {
-										writeKeyframes( writer, keyframes, "frame", group + 4 );
-										break;
-									}
-									InvalidDefaultCase;
-								}
+				            switch( node.assetType ) {
+					            case AnimatorAsset::type_none: {
+						            break;
+					            }
+					            case AnimatorAsset::type_collection: {
+						            writeKeyframes( writer, keyframes, "frame",
+						                            group + AnimatorKeyframeData::type_frame );
+						            break;
+					            }
+					            case AnimatorAsset::type_collision:
+					            case AnimatorAsset::type_hitbox:
+					            case AnimatorAsset::type_hurtbox: {
+					            	writeKeyframes( writer, keyframes, "active",
+					            	                group + AnimatorKeyframeData::type_active );
+					            	break;
+					            }
+								InvalidDefaultCase;
+							}
 							writeEndObject( writer );
 						writeEndObject( writer );
 					}
@@ -1005,6 +1119,7 @@ struct translation_tag {};
 struct rotation_tag {};
 struct scale_tag {};
 struct frame_tag {};
+struct active_tag {};
 
 vec3& getValue( AnimatorKeyframeData& data, translation_tag )
 {
@@ -1025,6 +1140,11 @@ int16& getValue( AnimatorKeyframeData& data, frame_tag )
 {
 	data.type = AnimatorKeyframeData::type_frame;
 	return data.frame;
+}
+bool8& getValue( AnimatorKeyframeData& data, active_tag )
+{
+	data.type = AnimatorKeyframeData::type_active;
+	return data.active;
 }
 
 template < class Tag >
@@ -1127,14 +1247,21 @@ bool animatorOpen( StackAllocator* allocator, AnimatorState* animator, StringVie
 				}
 
 				auto keyframes = node["keyframes"].getObject();
-				auto group = makeAnimatorGroup( addedNode->id, 0 );
-				loadKeyframes( keyframes["translation"].getObjectArray(), group + 1,
-				               translation_tag{}, &added->keyframes );
-				loadKeyframes( keyframes["rotation"].getObjectArray(), group + 2, rotation_tag{},
+				auto group     = makeAnimatorGroup( addedNode->id );
+				loadKeyframes( keyframes["translation"].getObjectArray(),
+				               group + AnimatorKeyframeData::type_translation, translation_tag{},
 				               &added->keyframes );
-				loadKeyframes( keyframes["scale"].getObjectArray(), group + 3, scale_tag{},
+				loadKeyframes( keyframes["rotation"].getObjectArray(),
+				               group + AnimatorKeyframeData::type_rotation, rotation_tag{},
 				               &added->keyframes );
-				loadKeyframes( keyframes["frame"].getObjectArray(), group + 4, frame_tag{},
+				loadKeyframes( keyframes["scale"].getObjectArray(),
+				               group + AnimatorKeyframeData::type_scale, scale_tag{},
+				               &added->keyframes );
+				loadKeyframes( keyframes["frame"].getObjectArray(),
+				               group + AnimatorKeyframeData::type_frame, frame_tag{},
+				               &added->keyframes );
+				loadKeyframes( keyframes["active"].getObjectArray(),
+				               group + AnimatorKeyframeData::type_active, active_tag{},
 				               &added->keyframes );
 			}
 		}
@@ -1322,7 +1449,7 @@ void doKeyframesNames( AppData* app, GameInputs* inputs, float width, float heig
 	FOR( visible : animator->visibleGroups ) {
 		auto group    = find_first_where( animator->groups, entry.id == visible.group );
 		auto textRect = RectSetLeft( cell, cell.left + expandWidth + padding * 2 );
-		if( visible.group < 0 || visible.children ) {
+		if( visible.group < 0 || isParentGroup( visible.group ) ) {
 			auto expandRect = cell;
 			expandRect.top += padding;
 			expandRect.bottom = expandRect.top + expandHeight;
@@ -1504,24 +1631,23 @@ void doKeyframesSelection( ImGuiHandle handle, AppData* app, GameInputs* inputs,
 							if( firstGroup == 0 ) {
 								// top level group is every visible group
 								FOR( visible : animator->visibleGroups ) {
-									if( visible.group >= 0 ) {
-										groups.push_back( visible.group );
-										auto children = visible.children;
-										for( auto i = children.min; i < children.max; ++i ) {
-											groups.push_back( i );
-										}
+									groups.push_back( visible.group );
+									if( isParentGroup( visible.group ) ) {
+										append_unique( groups, visible.group + 1 );
+										append_unique( groups, visible.group + 2 );
+										append_unique( groups, visible.group + 3 );
+										append_unique( groups, visible.group + 4 );
 									}
 								}
 							} else {
 								for( auto i = firstGroup; i < lastGroup; ++i ) {
 									auto visible = &animator->visibleGroups[i];
 									append_unique( groups, visible->group );
-									if( visible->children && visible->group >= 0 ) {
-										// group is parent group, add all child groups
-										auto children = visible->children;
-										for( auto i = children.min; i < children.max; ++i ) {
-											append_unique( groups, i );
-										}
+									if( isParentGroup( visible->group ) ) {
+										append_unique( groups, visible->group + 1 );
+										append_unique( groups, visible->group + 2 );
+										append_unique( groups, visible->group + 3 );
+										append_unique( groups, visible->group + 4 );
 									}
 								}
 							}
@@ -1610,7 +1736,7 @@ bool doKeyframesDisplay( ImGuiHandle handle, AppData* app, GameInputs* inputs, c
 	float clickedT  = 0;
 	float movement  = 0;
 	auto parent     = find_first_where( animator->groups, entry.id == group );
-	auto isParent   = ( parent && !isEmpty( parent->children ) );
+	auto isParent   = ( parent && isParentGroup( parent->id ) );
 	MESH_STREAM_BLOCK( stream, renderer ) {
 		Color colors[] = {Color::White, Color::Red};
 		FOR( entry : animator->keyframes ) {
@@ -1618,7 +1744,7 @@ bool doKeyframesDisplay( ImGuiHandle handle, AppData* app, GameInputs* inputs, c
 			if( group >= 0 && !isParent && frame->group != group ) {
 				continue;
 			}
-			if( isParent && !isInRange( parent->children, frame->group ) ) {
+			if( isParent && !isMyChild( parent->id, frame->group ) ) {
 				continue;
 			}
 			auto oldT   = frame->t;
@@ -1663,7 +1789,7 @@ bool doKeyframesDisplay( ImGuiHandle handle, AppData* app, GameInputs* inputs, c
 		// select any frame which is whithin equal range of t
 		FOR( entry : animator->keyframes ) {
 			auto frame = entry.get();
-			if( ( isRoot || isInRange( parent->children, frame->group ) )
+			if( ( isRoot || isMyChild( parent->id, frame->group ) )
 			    && floatEqSoft( frame->t, clickedT ) ) {
 
 				frame->selected = true;
@@ -2081,7 +2207,7 @@ void doAnimatorMenu( AppData* app, GameInputs* inputs, rectfarg rect )
 			}
 			if( imguiEditbox( "Name", node.name.data(), &node.name.sz, node.name.capacity() ) ) {
 				if( auto group = find_first_where( animator->groups,
-				                                   entry.id == makeAnimatorGroup( node.id, 0 ) ) ) {
+				                                   entry.id == makeAnimatorGroup( node.id ) ) ) {
 					group->name = node.name;
 				}
 			}
@@ -2357,9 +2483,10 @@ void doAnimatorMenu( AppData* app, GameInputs* inputs, rectfarg rect )
 			return floatEqSoft( a.x, b.x ) && floatEqSoft( a.y, b.y ) && floatEqSoft( a.z, b.z );
 		};
 		StringView translation = "Translation*";
-		StringView rotation = "Rotation*";
-		StringView scale = "Scale*";
-		StringView frame = "Frame*";
+		StringView rotation    = "Rotation*";
+		StringView scale       = "Scale*";
+		StringView frame       = "Frame*";
+		StringView active      = "Active*";
 
 		if( compareVector( current.translation, node->translation ) ) {
 			translation.pop_back();
@@ -2373,33 +2500,47 @@ void doAnimatorMenu( AppData* app, GameInputs* inputs, rectfarg rect )
 		if( current.voxel.frame == node->voxel.frame ) {
 			frame.pop_back();
 		}
+		if( current.hitbox.active == node->hitbox.active ) {
+			active.pop_back();
+		}
 		if( imguiButton( translation ) ) {
 			AnimatorKeyframe key = {};
 			key.t                = animator->currentFrame;
-			key.group            = makeAnimatorGroup( node->id, 1 );
+			key.group = makeAnimatorGroup( node->id, AnimatorKeyframeData::type_translation );
 			set_variant( key.data, translation ) = node->translation;
 			addKeyframe( animator, key );
 		}
 		if( imguiButton( rotation ) ) {
 			AnimatorKeyframe key = {};
 			key.t                = animator->currentFrame;
-			key.group            = makeAnimatorGroup( node->id, 2 );
+			key.group = makeAnimatorGroup( node->id, AnimatorKeyframeData::type_rotation );
 			set_variant( key.data, rotation ) = node->rotation;
 			addKeyframe( animator, key );
 		}
 		if( imguiButton( scale ) ) {
 			AnimatorKeyframe key = {};
 			key.t                = animator->currentFrame;
-			key.group            = makeAnimatorGroup( node->id, 3 );
+			key.group            = makeAnimatorGroup( node->id, AnimatorKeyframeData::type_scale );
 			set_variant( key.data, scale ) = node->scale;
 			addKeyframe( animator, key );
 		}
 		if( imguiButton( frame ) ) {
-			AnimatorKeyframe key = {};
-			key.t                = animator->currentFrame;
-			key.group            = makeAnimatorGroup( node->id, 4 );
-			set_variant( key.data, frame ) = node->voxel.frame;
-			addKeyframe( animator, key );
+			if( node->assetType == AnimatorAsset::type_collection ) {
+				AnimatorKeyframe key = {};
+				key.t                = animator->currentFrame;
+				key.group = makeAnimatorGroup( node->id, AnimatorKeyframeData::type_frame );
+				set_variant( key.data, frame ) = node->voxel.frame;
+				addKeyframe( animator, key );
+			}
+		}
+		if( imguiButton( active ) ) {
+			if( isHitboxType( node->assetType ) ) {
+				AnimatorKeyframe key = {};
+				key.t                = animator->currentFrame;
+				key.group = makeAnimatorGroup( node->id, AnimatorKeyframeData::type_active );
+				set_variant( key.data, active ) = (bool)node->hitbox.active;
+				addKeyframe( animator, key );
+			}
 		}
 
 		imguiEndDropGroup();
@@ -2601,31 +2742,64 @@ vec3 getDestinationVectorFromScreenPos( AnimatorState* animator, AnimatorNode* n
 	return destination;
 }
 
-void doNodeEditor( AppData* app, GameInputs* inputs, rectfarg rect )
+struct AnimatorProjection {
+	mat4 viewProj;
+	MatrixInverseResult invViewProj;
+};
+AnimatorProjection animatorSetProjection( AppData* app, GameInputs* inputs, rectfarg rect )
 {
-	auto renderer = &app->renderer;
+	AnimatorProjection result;
+
 	auto animator = &app->animatorState;
 	auto editor   = &animator->editor;
+	auto renderer = &app->renderer;
 	auto handle   = imguiMakeHandle( editor, ImGuiControlType::None );
+	if( editor->viewType == AnimatorEditorViewType::Perspective ) {
+		// auto aspect = width( rect ) / height( rect );
+		auto aspect = app->width / app->height;
+		// we need to translate in homogeneous coordinates to offset the origin of the projection matrix
+		// to the center of the editor frame, hence the division by app->width
+		auto offset      = matrixTranslation( rect.left / app->width, 0, 0 );
+		auto perspective = matrixPerspectiveFovProjection( degreesToRadians( 65 ), aspect, -1, 1 );
+		// translate origin first, then apply perspective matrix
+		auto projection = perspective * offset;
+		setProjectionMatrix( renderer, ProjectionType::Perspective, projection );
+		setProjection( renderer, ProjectionType::Perspective );
 
-	// auto aspect = width( rect ) / height( rect );
-	auto aspect = app->width / app->height;
-	// we need to translate in homogeneous coordinates to offset the origin of the projection matrix
-	// to the center of the editor frame, hence the division by app->width
-	auto offset = matrixTranslation( rect.left / app->width, 0, 0 );
-	auto perspective = matrixPerspectiveFovProjection( degreesToRadians( 65 ), aspect, -1, 1 );
-	// translate origin first, then apply perspective matrix
-	auto projection = perspective * offset;
-	setProjectionMatrix( renderer, ProjectionType::Perspective, projection );
-	setProjection( renderer, ProjectionType::Perspective );
-	setRenderState( renderer, RenderStateType::Scissor, true );
+		auto mat = processEditorViewGui( &editor->view, inputs, rect );
+		if( animator->flags.mirror ) {
+			mat = matrixScale( -1, 1, 1 ) * mat;
+		}
+		renderer->view  = mat;
+		result.viewProj = renderer->view * projection;
+	} else {
+		auto orthogonal = matrixOrthogonalProjection( 0, 0, app->width, app->height,
+		                                               -editor->view.z, editor->view.z );
+		// translate origin first, then apply orthogonal matrix
+		auto c          = center( rect );
+		auto offset     = matrixTranslation( c.x, -c.y, -editor->view.z ) * matrixScale( 1, -1, 1 );
+		auto projection = offset * orthogonal;
+		setProjectionMatrix( renderer, ProjectionType::Perspective, projection );
+		setProjection( renderer, ProjectionType::Perspective );
+		setRenderState( renderer, RenderStateType::BackFaceCulling, false );
+		setRenderState( renderer, RenderStateType::CullFrontFace, false );
 
-	auto mat = processEditorViewGui( &editor->view, inputs, rect );
-	if( animator->flags.mirror ) {
-		mat = matrixScale( -1, 1, 1 ) * mat;
+		editor->view.scale += 5;
+		auto mat = processEditorViewGui( &editor->view, inputs, rect );
+		editor->view.scale -= 5;
+		if( animator->flags.mirror ) {
+			mat = matrixScale( -1, 1, 1 ) * mat;
+		}
+		renderer->view  = mat;
+		result.viewProj = renderer->view * projection;
 	}
-	renderer->view = mat;
 
+	result.invViewProj = inverse( result.viewProj );
+	return result;
+}
+
+void animatorUpdateAndRenderNodes( RenderCommands* renderer, AnimatorState* animator )
+{
 	// render grid
 	setTexture( renderer, 0, null );
 	LINE_MESH_STREAM_BLOCK( stream, renderer ) {
@@ -2696,10 +2870,25 @@ void doNodeEditor( AppData* app, GameInputs* inputs, rectfarg rect )
 			pushLine( stream, base, head );
 		}
 	}
+}
+rectf animatorControlRect( vec2arg pos ) { return RectHalfSize( pos, 5, 5 ); }
+
+void doNodeEditor( AppData* app, GameInputs* inputs, rectfarg rect )
+{
+	auto renderer = &app->renderer;
+	auto animator = &app->animatorState;
+	auto editor   = &animator->editor;
+	auto handle   = imguiMakeHandle( editor, ImGuiControlType::None );
+
+	auto projection = animatorSetProjection( app, inputs, rect );
+	setScissorRect( renderer, Rect< int32 >( rect ) );
+	setRenderState( renderer, RenderStateType::Scissor, true );
+
+	animatorUpdateAndRenderNodes( renderer, animator );
 
 	// render controls
-	auto viewProj    = renderer->view * projection;
-	auto invViewProj = inverse( viewProj );
+	auto& viewProj    = projection.viewProj;
+	auto& invViewProj = projection.invViewProj;
 
 	setProjection( renderer, ProjectionType::Orthogonal );
 	bool selectedAny = false;
@@ -2725,7 +2914,7 @@ void doNodeEditor( AppData* app, GameInputs* inputs, rectfarg rect )
 		FOR( node : animator->nodes ) {
 			auto mat      = node->world * viewProj;
 			auto head     = toScreenSpace( mat, {}, app->width, app->height );
-			auto headRect = RectHalfSize( head, 5, 5 );
+			auto headRect = animatorControlRect( head );
 			if( isPointInside( headRect, inputs->mouse.position ) && lMousePressed
 			    && imguiIsHover( handle ) ) {
 
@@ -2827,92 +3016,89 @@ void doNodeEditor( AppData* app, GameInputs* inputs, rectfarg rect )
 			setProjection( renderer, ProjectionType::Orthogonal );
 		}
 
-
-		if( editor->moving && hasMagnitude( inputs->mouse.delta ) ) {
-			if( invViewProj ) {
-				auto mouse       = inputs->mouse.position + editor->mouseOffset;
-				auto destination = getDestinationVectorFromScreenPos(
-				    animator, node, plane, invViewProj.matrix, mouse, app->width, app->height );
-				switch( editor->mouseMode ) {
-					case AnimatorMouseMode::Select: {
-						break;
-					}
-					case AnimatorMouseMode::Translate: {
-						// destination is in world space, convert to local space
-						mat4 mat = matrixIdentity();
-						if( node->parent ) {
-							if( auto invWorld = inverse( node->parent->world ) ) {
-								mat = invWorld.matrix;
-							}
-						}
-
-						vec3 delta = {};
-						// transform world coordinates into local coordinates
-						if( editor->clickedVoxel ) {
-							auto clicked = transformVector3( mat, editor->clickedPlanePos );
-							editor->clickedPlanePos = destination;
-							destination             = transformVector3( mat, destination );
-							delta                   = destination - clicked;
-						} else {
-							destination = transformVector3( mat, destination );
-							auto head   = transformVector3( mat, plane.origin );
-							delta       = destination - head;
-						}
-						node->translation += delta;
-
-						break;
-					}
-					case AnimatorMouseMode::Rotate: {
-						if( editor->mousePlane == AnimatorMousePlane::YZ ) {
-							// there is no good reference vector for this rotation
-							auto deltaIntersection = destination - plane.origin;
-							auto other             = vec3{-plane.normal.z, 0, plane.normal.y};
-							auto rotation = angle( deltaIntersection, other, plane.normal );
-							node->rotation -=
-							    dot( plane.rotationNormal, node->rotation ) * plane.rotationNormal;
-							node->rotation -= plane.rotationNormal * rotation;
-						} else if( !editor->clickedVoxel && node->length != 0 ) {
-							auto deltaIntersection = destination - plane.base;
-							auto deltaHead         = plane.origin - plane.base;
-
-							// we want the two vectors to be on the same plane for better accuracy
-							deltaIntersection -=
-							    dot( deltaIntersection, plane.normal ) * plane.normal;
-							deltaHead -= dot( deltaHead, plane.normal ) * plane.normal;
-
-							// get angle of the two vectors guided by the plane normal
-							auto deltaRotation =
-							    angle( deltaIntersection, deltaHead, plane.normal );
-
-							node->rotation = node->rotation - plane.rotationNormal * deltaRotation;
-							FOR( element : node->rotation.elements ) {
-								element = simplifyAngle( element );
-							}
-						} else if( editor->clickedVoxel ) {
-							auto deltaIntersection = destination - plane.base;
-							auto deltaHead         = editor->clickedPlanePos - plane.base;
-
-							// we want the two vectors to be on the same plane for better accuracy
-							deltaIntersection -=
-							    dot( deltaIntersection, plane.normal ) * plane.normal;
-							deltaHead -= dot( deltaHead, plane.normal ) * plane.normal;
-
-							// get angle of the two vectors guided by the plane normal
-							auto rotation = angle( deltaIntersection, deltaHead, plane.normal );
-
-							node->rotation -=
-							    dot( plane.rotationNormal, node->rotation ) * plane.rotationNormal;
-							node->rotation -= plane.rotationNormal * rotation;
-							node->rotation += dot( plane.rotationNormal, editor->clickedRotation )
-							                  * plane.rotationNormal;
-							FOR( element : node->rotation.elements ) {
-								element = simplifyAngle( element );
-							}
-						}
-						break;
-					}
-						InvalidDefaultCase;
+		if( editor->moving && hasMagnitude( inputs->mouse.delta ) && invViewProj ) {
+			auto mouse       = inputs->mouse.position + editor->mouseOffset;
+			auto destination = getDestinationVectorFromScreenPos(
+			    animator, node, plane, invViewProj.matrix, mouse, app->width, app->height );
+			switch( editor->mouseMode ) {
+				case AnimatorMouseMode::Select: {
+					break;
 				}
+				case AnimatorMouseMode::Translate: {
+					// destination is in world space, convert to local space
+					mat4 mat = matrixIdentity();
+					if( node->parent ) {
+						if( auto invWorld = inverse( node->parent->world ) ) {
+							mat = invWorld.matrix;
+						}
+					}
+
+					vec3 delta = {};
+					// transform world coordinates into local coordinates
+					if( editor->clickedVoxel ) {
+						auto clicked = transformVector3( mat, editor->clickedPlanePos );
+						editor->clickedPlanePos = destination;
+						destination             = transformVector3( mat, destination );
+						delta                   = destination - clicked;
+					} else {
+						destination = transformVector3( mat, destination );
+						auto head   = transformVector3( mat, plane.origin );
+						delta       = destination - head;
+					}
+					node->translation += delta;
+
+					break;
+				}
+				case AnimatorMouseMode::Rotate: {
+					if( editor->mousePlane == AnimatorMousePlane::YZ ) {
+						// there is no good reference vector for this rotation
+						auto deltaIntersection = destination - plane.origin;
+						auto other             = vec3{-plane.normal.z, 0, plane.normal.y};
+						auto rotation = angle( deltaIntersection, other, plane.normal );
+						node->rotation -=
+						    dot( plane.rotationNormal, node->rotation ) * plane.rotationNormal;
+						node->rotation -= plane.rotationNormal * rotation;
+					} else if( !editor->clickedVoxel && node->length != 0 ) {
+						auto deltaIntersection = destination - plane.base;
+						auto deltaHead         = plane.origin - plane.base;
+
+						// we want the two vectors to be on the same plane for better accuracy
+						deltaIntersection -=
+						    dot( deltaIntersection, plane.normal ) * plane.normal;
+						deltaHead -= dot( deltaHead, plane.normal ) * plane.normal;
+
+						// get angle of the two vectors guided by the plane normal
+						auto deltaRotation =
+						    angle( deltaIntersection, deltaHead, plane.normal );
+
+						node->rotation = node->rotation - plane.rotationNormal * deltaRotation;
+						FOR( element : node->rotation.elements ) {
+							element = simplifyAngle( element );
+						}
+					} else if( editor->clickedVoxel ) {
+						auto deltaIntersection = destination - plane.base;
+						auto deltaHead         = editor->clickedPlanePos - plane.base;
+
+						// we want the two vectors to be on the same plane for better accuracy
+						deltaIntersection -=
+						    dot( deltaIntersection, plane.normal ) * plane.normal;
+						deltaHead -= dot( deltaHead, plane.normal ) * plane.normal;
+
+						// get angle of the two vectors guided by the plane normal
+						auto rotation = angle( deltaIntersection, deltaHead, plane.normal );
+
+						node->rotation -=
+						    dot( plane.rotationNormal, node->rotation ) * plane.rotationNormal;
+						node->rotation -= plane.rotationNormal * rotation;
+						node->rotation += dot( plane.rotationNormal, editor->clickedRotation )
+						                  * plane.rotationNormal;
+						FOR( element : node->rotation.elements ) {
+							element = simplifyAngle( element );
+						}
+					}
+					break;
+				}
+					InvalidDefaultCase;
 			}
 		}
 	}
@@ -2947,19 +3133,220 @@ void doNodeEditor( AppData* app, GameInputs* inputs, rectfarg rect )
 }
 void doHitboxEditor( AppData* app, GameInputs* inputs, rectfarg rect )
 {
+	auto renderer = &app->renderer;
+	auto animator = &app->animatorState;
+	auto editor   = &animator->editor;
+	auto handle   = imguiMakeHandle( editor, ImGuiControlType::None );
 
+	auto projection = animatorSetProjection( app, inputs, rect );
+	setScissorRect( renderer, Rect< int32 >( rect ) );
+	setRenderState( renderer, RenderStateType::Scissor, true );
+
+	animatorUpdateAndRenderNodes( renderer, animator );
+
+	// render hitboxes
+	auto& viewProj    = projection.viewProj;
+
+	const Color HitboxColors[3] = {0x800000FF, 0x80FF0000, 0x8000FF00};
+	setRenderState( renderer, RenderStateType::BackFaceCulling, false );
+	setTexture( renderer, 0, null );
+	MESH_STREAM_BLOCK( stream, renderer ) {
+		stream->color = 0x800000FF;
+		FOR( nodeEntry : animator->nodes ) {
+			auto node = nodeEntry.get();
+			if( isHitboxType( node->assetType ) ) {
+				auto head       = transformVector3( node->world, {} );
+				auto hitbox     = getHitboxRect( node->asset );
+				auto abs        = translate( *hitbox, head.xy );
+				auto quad       = makeQuad( abs, head.z );
+				auto colorIndex = node->assetType - AnimatorAsset::type_collision;
+				assert( colorIndex >= 0 && colorIndex < countof( HitboxColors ) );
+				stream->color = HitboxColors[colorIndex];
+				pushQuad( stream, quad.elements );
+			}
+		}
+	}
+
+	// render controls
+	auto& invViewProj = projection.invViewProj;
+	auto view         = &editor->hitboxView;
+
+	setRenderState( renderer, RenderStateType::BackFaceCulling, true );
+	setProjection( renderer, ProjectionType::Orthogonal );
+
+	struct HitboxControl {
+		int8 x;
+		int8 y;
+	};
+
+	// same ordering as AnimatorEditorHitboxFeature
+	static const HitboxControl controls[8] = {
+	    {RectComponent_Left, RectComponent_Top},     {-1, RectComponent_Top},
+	    {RectComponent_Right, RectComponent_Top},    {RectComponent_Right, -1},
+	    {RectComponent_Right, RectComponent_Bottom}, {-1, RectComponent_Bottom},
+	    {RectComponent_Left, RectComponent_Bottom},  {RectComponent_Left, -1},
+	};
+
+	auto lMousePressed =
+	    isKeyPressed( inputs, KC_LButton ) && isPointInside( rect, inputs->mouse.position );
+	auto selected = false;
+	LINE_MESH_STREAM_BLOCK( stream, renderer ) {
+		stream->color = Color::White;
+		FOR( nodeEntry : animator->nodes ) {
+			auto node = nodeEntry.get();
+			if( isHitboxType( node->assetType ) ) {
+				auto& hitbox = *getHitboxRect( node->asset );
+
+				for( auto i = 0, count = countof( controls ); i < count; ++i ) {
+					auto control = controls[i];
+					vec2 pos;
+					if( control.x < 0 ) {
+						pos.x = ( hitbox.left + hitbox.right ) * 0.5f;
+						pos.y = hitbox.elements[control.y];
+					} else if( control.y < 0 ) {
+						pos.x = hitbox.elements[control.x];
+						pos.y = ( hitbox.top + hitbox.bottom ) * 0.5f;
+					} else {
+						pos = {hitbox.elements[control.x], hitbox.elements[control.y]};
+					}
+					auto head = transformVector3( node->world, {} );
+					pos = toScreenSpace( viewProj, Vec3( pos, 0 ) + head, app->width, app->height );
+					auto controlRect = animatorControlRect( pos );
+
+					if( isPointInside( controlRect, inputs->mouse.position )
+					    && lMousePressed ) {
+
+						view->selectedFeature = ( AnimatorEditorHitboxFeature )( i + 1 );
+						editor->mouseOffset   = inputs->mouse.position - pos;
+						editor->clickedNode   = node;
+						editor->moving = true;
+						selected = true;
+					}
+					if( editor->clickedNode == node && valueof( view->selectedFeature ) == i + 1 ) {
+						stream->color = Color::Red;
+					} else {
+						stream->color = Color::White;
+					}
+					pushQuadOutline( stream, controlRect );
+				}
+			}
+		}
+	}
+	if( !selected && lMousePressed && invViewProj ) {
+		// try selecting a hitbox itself
+		FOR( nodeEntry : animator->nodes ) {
+			auto node = nodeEntry.get();
+			if( isHitboxType( node->assetType ) ) {
+				auto& hitbox = *getHitboxRect( node->asset );
+
+				auto head  = transformVector3( node->world, {} );
+				auto mouse = inputs->mouse.position;
+				auto ray =
+				    pointToWorldSpaceRay( invViewProj.matrix, mouse, app->width, app->height );
+				auto intersection = rayIntersectionWithPlane( ray, head, {0, 0, 1} ) - head;
+				if( isPointInside( hitbox, intersection.xy ) ) {
+					view->selectedFeature = AnimatorEditorHitboxFeature::None;
+					editor->clickedNode   = node;
+					editor->mouseOffset   = {};
+					editor->moving        = true;
+					editor->clickedPlanePos = intersection;
+					selected              = true;
+				}
+			}
+		}
+	}
+
+	if( lMousePressed && !selected ) {
+		editor->moving        = false;
+		editor->clickedNode   = nullptr;
+		view->selectedFeature = AnimatorEditorHitboxFeature::None;
+	}
+	if( isKeyReleased( inputs, KC_LButton ) ) {
+		editor->moving = false;
+	}
+
+	if( editor->moving && editor->clickedNode && hasMagnitude( inputs->mouse.delta )
+	    && invViewProj ) {
+
+		auto node  = editor->clickedNode;
+		auto head  = transformVector3( node->world, {} );
+		auto mouse = inputs->mouse.position - editor->mouseOffset;
+		auto ray   = pointToWorldSpaceRay( invViewProj.matrix, mouse, app->width, app->height );
+		auto destination        = rayIntersectionWithPlane( ray, head, {0, 0, 1} ) - head;
+
+		if( view->selectedFeature != AnimatorEditorHitboxFeature::None ) {
+			switch( editor->mouseMode ) {
+				case AnimatorMouseMode::Select: {
+					break;
+				}
+				case AnimatorMouseMode::Translate: {
+					assert( node->asset );
+					auto& hitbox = *getHitboxRect( node->asset );
+					auto index = valueof( view->selectedFeature ) - 1;
+					assert( index >= 0 && index < 8 );
+					auto control = controls[index];
+					if( control.x >= 0 ) {
+						hitbox.elements[control.x] = destination.x;
+					}
+					if( control.y >= 0 ) {
+						hitbox.elements[control.y] = destination.y;
+					}
+
+					auto swapped = false;
+					if( hitbox.left > hitbox.right ) {
+						swap( hitbox.left, hitbox.right );
+						swapped = true;
+						if( control.x >= 0 ) {
+							control.x = ( control.x + 2 ) % 4;
+						}
+					}
+					if( hitbox.top > hitbox.bottom ) {
+						swap( hitbox.top, hitbox.bottom );
+						swapped = true;
+						if( control.y >= 0 ) {
+							control.y = ( control.y + 2 ) % 4;
+						}
+					}
+					if( swapped ) {
+						if( auto it = find_index_if( controls, [control]( HitboxControl entry ) {
+							    return entry.x == control.x&& entry.y == control.y;
+							} ) ) {
+							view->selectedFeature =
+							    ( AnimatorEditorHitboxFeature )( it.get() + 1 );
+						}
+					}
+					break;
+				}
+			}
+		} else {
+			switch( editor->mouseMode ) {
+				case AnimatorMouseMode::Select: {
+					break;
+				}
+				case AnimatorMouseMode::Translate: {
+					assert( node->asset );
+					auto hitbox = getHitboxRect( node->asset );
+					*hitbox     = translate( *hitbox, destination.xy - editor->clickedPlanePos.xy );
+					editor->clickedPlanePos.xy = destination.xy;
+					break;
+				}
+			}
+		}
+	}
+
+	setRenderState( renderer, RenderStateType::Scissor, false );
 }
 
 void doEditor( AppData* app, GameInputs* inputs, rectfarg rect )
 {
 	auto animator = &app->animatorState;
 	auto editor   = &animator->editor;
-	switch( editor->viewType ) {
-		case AnimatorEditorViewType::Node: {
+	switch( editor->editType ) {
+		case AnimatorEditorEditType::Node: {
 			doNodeEditor( app, inputs, rect );
 			break;
 		}
-		case AnimatorEditorViewType::Hitbox: {
+		case AnimatorEditorEditType::Hitbox: {
 			doHitboxEditor( app, inputs, rect );
 			break;
 		}
@@ -2988,6 +3375,7 @@ void doAnimator( AppData* app, GameInputs* inputs, bool focus, float dt )
 		animator->editor.contextMenu   = imguiGenerateContainer( gui, {}, true );
 		animator->fileMenu             = imguiGenerateContainer( gui, {}, true );
 		animator->viewMenu             = imguiGenerateContainer( gui, {}, true );
+		animator->editMenu             = imguiGenerateContainer( gui, {}, true );
 		animator->messageBox.container = imguiGenerateContainer( gui, {0, 0, 300, 10}, true );
 
 		auto allocator           = &app->stackAllocator;
@@ -3000,6 +3388,7 @@ void doAnimator( AppData* app, GameInputs* inputs, bool focus, float dt )
 		animator->fieldNames[1] = pushString( &animator->stringPool, "Rotation" );
 		animator->fieldNames[2] = pushString( &animator->stringPool, "Scale" );
 		animator->fieldNames[3] = pushString( &animator->stringPool, "Frame" );
+		animator->fieldNames[4] = pushString( &animator->stringPool, "Active" );
 
 		animator->editor.view.rotation = AnimatorInitialRotation;
 		animator->editor.view.scale    = 1;
@@ -3055,11 +3444,12 @@ void doAnimator( AppData* app, GameInputs* inputs, bool focus, float dt )
 	auto layout        = imguiBeginColumn( app->width );
 
 	if( imguiMenu( true ) ) {
-		imguiMenuItem( "File", animator->fileMenu );
-		imguiMenuItem( "Edit" );
-		imguiMenuItem( "View", animator->viewMenu );
-		imguiMenuItem( "Preferences" );
-		imguiMenuItem( "Help" );
+		auto itemHandle = imguiMakeHandle( &animator->fileMenu );
+		imguiMenuItem( itemHandle, "File", animator->fileMenu );
+		imguiMenuItem( itemHandle, "Edit", animator->editMenu );
+		imguiMenuItem( itemHandle, "View", animator->viewMenu );
+		imguiMenuItem( itemHandle, "Preferences" );
+		imguiMenuItem( itemHandle, "Help" );
 	}
 
 	imguiEndColumn( &layout );
@@ -3120,8 +3510,15 @@ void doAnimator( AppData* app, GameInputs* inputs, bool focus, float dt )
 
 	if( imguiContextMenu( animator->viewMenu ) ) {
 		auto editor = &animator->editor;
-		imguiCheckbox( "Node View", &editor->viewType, AnimatorEditorViewType::Node );
-		imguiCheckbox( "Hitbox View", &editor->viewType, AnimatorEditorViewType::Hitbox );
+		imguiRadiobox( "Perspective", &editor->viewType, AnimatorEditorViewType::Perspective );
+		imguiRadiobox( "Orthogonal", &editor->viewType, AnimatorEditorViewType::Orthogonal );
+		imguiEndContainer();
+	}
+
+	if( imguiContextMenu( animator->editMenu ) ) {
+		auto editor = &animator->editor;
+		imguiRadiobox( "Node Mode", &editor->editType, AnimatorEditorEditType::Node );
+		imguiRadiobox( "Hitbox Mode", &editor->editType, AnimatorEditorEditType::Hitbox );
 		imguiEndContainer();
 	}
 

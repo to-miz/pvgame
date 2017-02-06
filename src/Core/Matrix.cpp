@@ -177,6 +177,7 @@ mat4 matrixOrthogonalProjection( float width, float height, float nearPlane, flo
 
 	return result;
 }
+
 mat4 matrixPerspectiveProjection( float width, float height, float nearPlane, float farPlane )
 {
 	/*2*nearPlane/w    0                0                                        0

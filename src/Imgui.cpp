@@ -1,8 +1,11 @@
 /*
 TODO:
     - when dragging a container, the titlebar lags behind
-	- make specifying widths/heights more unified and allow for percentage based widths/heights
-		see imguiButton and ImGuiSize
+    - make specifying widths/heights more unified and allow for percentage based widths/heights
+        see imguiButton and ImGuiSize
+    - imguiContextMenu entries do not work that well if other types of controls are used like radio
+	boxes, they do not close the context menu and do not give back focus to the menu if the context menu
+	was spawned from a menu
 */
 
 static const constexpr int8 ImGuiMaxValidZ = 120;
@@ -24,6 +27,7 @@ enum class ImGuiControlType : uint8 {
 	Rect,
 	Scrollable,
 	ScrollableRegion,
+	MenuItem,
 
 	Custom
 };
@@ -448,11 +452,11 @@ void imguiBind( ImmediateModeGui* guiState, RenderCommands* renderer, Font* font
 	imguiClear();
 }
 
-ImGuiHandle imguiMakeHandle( void* ptr, ImGuiControlType type = ImGuiControlType::None )
+ImGuiHandle imguiMakeHandle( const void* ptr, ImGuiControlType type = ImGuiControlType::None )
 {
 	return {( uint32 )( (uintptr)ptr - (uintptr)ImGui->base ), 0, type, ImGui->container};
 }
-ImGuiHandle imguiMakeHandle( void* ptr, ImGuiControlType type, int32 index )
+ImGuiHandle imguiMakeHandle( const void* ptr, ImGuiControlType type, int32 index )
 {
 	ImGuiHandle result = imguiMakeHandle( ptr, type );
 	result.shortIndex = (uint8)index;
@@ -1150,12 +1154,6 @@ bool imguiMenuItem( ImGuiHandle handle, StringView text, int32 containerIndex = 
 
 	return false;
 }
-bool imguiMenuItem( StringView text, int32 containerIndex = -1 )
-{
-	auto sh = imguiMakeStringHandle( text );
-	return imguiMenuItem( sh.handle, sh.string, containerIndex );
-}
-
 bool imguiContextMenu( int32 containerIndex )
 {
 	auto container = imguiGetContainer( containerIndex );

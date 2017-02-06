@@ -12,6 +12,8 @@ enum VectorComponentValues : int32 {
 
 template < class T >
 union tvec2 {
+	typedef T value_type;
+
 	struct {
 		T x;
 		T y;
@@ -83,6 +85,8 @@ tvec2< T > clamp( tvec2arg< T > v, tvec2arg< T > min, tvec2arg< T > max )
 // vec3
 template < class T >
 union tvec3 {
+	typedef T value_type;
+
 	struct {
 		T x;
 		T y;
@@ -157,6 +161,8 @@ vec3 round( vec3arg v );
 // vec4
 template < class T >
 union tvec4 {
+	typedef T value_type;
+
 	struct {
 		T x;
 		T y;

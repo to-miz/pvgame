@@ -172,6 +172,12 @@ struct string_builder {
 	}
 };
 
+// custom operator <<
+string_builder& operator <<( string_builder& builder, bool8 value )
+{
+	return builder.operator<<( (bool)value );
+}
+
 template < size_t N >
 struct static_string_builder : string_builder {
 	char buffer[N];

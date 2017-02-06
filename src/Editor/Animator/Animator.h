@@ -71,6 +71,9 @@ struct AnimatorNode {
 		int16 animation;
 		int16 frame;
 	} voxel = {-1, 0};
+	struct {
+		bool8 active;
+	} hitbox = {1};
 
 	mat4 base  = {};
 	mat4 world = {};
@@ -85,7 +88,16 @@ struct AnimatorCurveData {
 	BezierForwardDifferencerData differencer;
 };
 struct AnimatorKeyframeData {
-	enum : int8 { type_none, type_translation, type_rotation, type_scale, type_frame } type;
+	enum Type : int8 {
+		type_none,
+		type_translation,
+		type_rotation,
+		type_scale,
+		type_frame,
+		type_active,
+
+		type_count
+	} type;
 	enum EaseType : int8 { Lerp, Step, Smoothstep, EaseOutBounce, EaseOutElastic, Curve } easeType;
 	int16 curveIndex; // index to curve data or -1
 	union {
@@ -93,6 +105,7 @@ struct AnimatorKeyframeData {
 		vec3 rotation;
 		vec3 scale;
 		int16 frame;
+		bool8 active;
 	};
 };
 
@@ -106,12 +119,10 @@ struct AnimatorKeyframe {
 struct AnimatorGroup {
 	StringView name;
 	GroupId id;
-	GroupChildren children;
 	bool8 expanded;
 };
 struct AnimatorGroupDisplay {
 	GroupId group;
-	GroupChildren children;
 };
 
 enum class AnimatorMouseMode : int8 {
@@ -127,11 +138,25 @@ enum class AnimatorTranslateOptions : int8 {
 	ParentPerpendicular
 };
 enum class AnimatorMousePlane : int8 { XY, YZ, XZ };
-enum class AnimatorEditorViewType { Node, Hitbox };
+enum class AnimatorEditorViewType { Perspective, Orthogonal };
+enum class AnimatorEditorEditType { Node, Hitbox };
+
+enum class AnimatorEditorHitboxFeature {
+	None,
+	LeftTop,
+	Top,
+	RightTop,
+	Right,
+	RightBottom,
+	Bottom,
+	LeftBottom,
+	Left
+};
 
 struct AnimatorEditor {
 	EditorView view;
 	AnimatorEditorViewType viewType;
+	AnimatorEditorEditType editType;
 
 	enum : uint32 {
 		EditorSettings = BITFIELD( 0 ),
@@ -160,6 +185,10 @@ struct AnimatorEditor {
 	vec2 rightClickedPos;
 	float nodesListboxScroll;
 	float assetsScrollPos;
+
+	struct {
+		AnimatorEditorHitboxFeature selectedFeature;
+	} hitboxView;
 };
 
 struct AnimatorAnimation {
@@ -183,6 +212,7 @@ struct AnimatorState {
 
 	int32 fileMenu;
 	int32 viewMenu;
+	int32 editMenu;
 	TextureId controlIcons;
 
 	ImGuiScrollableRegion scrollableRegion;
@@ -231,7 +261,7 @@ struct AnimatorState {
 	AnimatorEditor editor;
 
 	StringPool stringPool;
-	StringView fieldNames[4];
+	StringView fieldNames[5];
 
 	FilenameString filename;
 

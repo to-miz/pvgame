@@ -69,6 +69,7 @@
 #include "Profiling.cpp"
 
 #include "QuadTexCoords.cpp"
+#include "Quad.cpp"
 #include "Graphics.h"
 #include "Graphics/Font.h"
 #include "TextureMap.cpp"
