@@ -1,3 +1,21 @@
+int32 win32GetTimeStampString( char* buffer, int32 size )
+{
+	int32 ret = -1;
+
+	const int32 MAX_LEN = 200;
+	char timeStr[MAX_LEN];
+	if( GetTimeFormatA( LOCALE_USER_DEFAULT, 0, 0, "HH':'mm':'ss", timeStr, MAX_LEN ) > 0 ) {
+		static DWORD first = GetTickCount();
+		ret =
+		    _snprintf( buffer, size, "%s.%03ld", timeStr, (long)( GetTickCount() - first ) % 1000 );
+		if( ret >= size ) {
+			buffer[size - 1] = 0;
+		}
+	}
+
+	return ret;
+}
+
 // textures
 
 TextureId win32LoadTexture( StringView filename )

@@ -6,6 +6,11 @@
 typedef int32 GroupId;
 typedef trange< GroupId > GroupChildren;
 
+struct AnimatorParticleEmitter {
+	ParticleEmitter emitter;
+	float interval;
+};
+
 struct AnimatorAsset {
 	ImGuiListboxItem item = {};
 
@@ -14,7 +19,8 @@ struct AnimatorAsset {
 		type_collection,
 		type_collision,
 		type_hitbox,
-		type_hurtbox
+		type_hurtbox,
+		type_emitter,
 	} type = type_none;
 
 	union {
@@ -22,6 +28,7 @@ struct AnimatorAsset {
 		rectf collision;
 		rectf hitbox;
 		rectf hurtbox;
+		AnimatorParticleEmitter emitter;
 	};
 	int16 id = -1;
 	char name[10];
@@ -71,9 +78,10 @@ struct AnimatorNode {
 		int16 animation;
 		int16 frame;
 	} voxel = {-1, 0};
+	bool8 active = {1}; // whether asset is active (valid for hitboxes and emitters)
 	struct {
-		bool8 active;
-	} hitbox = {1};
+		float time;
+	} emitter = {};
 
 	mat4 base  = {};
 	mat4 world = {};
@@ -225,6 +233,7 @@ struct AnimatorState {
 	AnimatorNodes baseNodes;
 	AnimatorNodes nodes;
 	AnimatorAnimations animations;
+	ParticleSystem particleSystem;
 
 	AnimatorAnimation* currentAnimation;
 

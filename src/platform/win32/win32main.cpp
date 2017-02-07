@@ -69,6 +69,20 @@
 #include <VirtualKeys.h>
 #include <Inputs.cpp>
 
+#include <string_logger.cpp>
+global_var string_logger* GlobalDebugLogger   = nullptr;
+#if defined( GAME_DEBUG ) || ( GAME_DEBUG_PRINTING )
+	#define debugLog( ... ) GlobalDebugLogger->log( __VA_ARGS__ );
+	#define debugLogln( ... ) GlobalDebugLogger->logln( __VA_ARGS__ );
+	#define debugLogClear() GlobalDebugLogger->clear()
+	#define debugLogGetString() asStringView( *GlobalDebugLogger )
+#else
+	#define debugLog( ... ) ( (void)0 )
+	#define debugLogln( ... ) ( (void)0 )
+	#define debugLogClear() ( (void)0 )
+	#define debugLogGetString() ( StringView{} )
+#endif
+
 struct WindowData {
 	HWND hwnd;
 	LONG width;
@@ -108,6 +122,17 @@ extern global_var Win32AppContextData Win32AppContext;
 
 extern global_var TextureMap* GlobalTextureMap;
 #include "win32PlatformServices.cpp"
+
+int32 getTimeStampString( char* buffer, int32 size )
+{
+	return win32GetTimeStampString( buffer, size );
+}
+
+// logging needs some definitions to exists, but those definitions may need to log
+// this could be solved by splitting everything into .h/.cpp pairs, but instead its easier to only
+// split log.h
+#define _LOG_IMPLEMENTATION_
+#include "Core/Log.h"
 
 // globals
 global_var IngameLog* GlobalIngameLog          = nullptr;
@@ -431,8 +456,9 @@ struct Win32InputRecording {
 
 void win32Remap( PlatformRemapInfo* info )
 {
-	GlobalIngameLog  = info->logStorage;
-	GlobalTextureMap = info->textureMap;
+	GlobalIngameLog   = info->logStorage;
+	GlobalTextureMap  = info->textureMap;
+	GlobalDebugLogger = info->debugLogger;
 }
 
 int CALLBACK WinMain( HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine, int nCmdShow )
@@ -465,7 +491,7 @@ int CALLBACK WinMain( HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdL
 	    &win32LoadTexture, &win32LoadTextureFromMemory, &win32DeleteTexture, &loadImageToMemory,
 	    &freeImageData, &win32LoadFont, &win32WriteBufferToFile, &win32ReadFileToBuffer,
 	    &win32UploadMeshToGpu, &win32GetOpenFilename, &win32GetSaveFilename,
-	    &win32GetKeyboardKeyName,
+	    &win32GetKeyboardKeyName, &win32GetTimeStampString,
 
 	    // malloc
 	    &win32DlmallocMalloc, &win32DlmallocRealloc, &win32DlmallocReallocInPlace,

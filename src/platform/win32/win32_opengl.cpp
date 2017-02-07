@@ -537,11 +537,18 @@ static void win32MapBuffersRange( OpenGlVertexBuffer* vb )
 	GLsizeiptr vertexBufferSize =
 	    ( vb->verticesCapacity - vb->lastVerticesCount ) * sizeof( Vertex );
 	GLintptr vertexBufferOffset = vb->lastVerticesCount * sizeof( Vertex );
+
+	GLsizeiptr indexBufferSize = ( vb->indicesCapacity - vb->lastIndicesCount ) * sizeof( uint16 );
+
+	if( !vertexBufferSize || !indexBufferSize ) {
+		// reset mapping instead
+		win32MapBuffers( vb );
+		return;
+	}
 	vb->vertices =
 	    (Vertex*)glMapBufferRange( GL_ARRAY_BUFFER, vertexBufferOffset, vertexBufferSize, access );
 
 	glBindBuffer( GL_ELEMENT_ARRAY_BUFFER, vb->indexBufferId );
-	GLsizeiptr indexBufferSize = ( vb->indicesCapacity - vb->lastIndicesCount ) * sizeof( uint16 );
 	GLintptr indexBufferOffset = vb->lastIndicesCount * sizeof( uint16 );
 	vb->indices = (uint16*)glMapBufferRange( GL_ELEMENT_ARRAY_BUFFER, indexBufferOffset,
 	                                         indexBufferSize, access );

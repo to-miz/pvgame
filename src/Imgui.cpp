@@ -891,7 +891,7 @@ void imguiText( StringView text, float width, float height )
 void imguiText( StringView text )
 {
 	auto font      = ImGui->font;
-	auto width     = stringWidth( font, text ) + ImGui->style.innerPadding * 2;
+	auto width     = maxLineWidth( font, text ) + ImGui->style.innerPadding * 2;
 	imguiText( text, width, stringHeight( font, text, width ) );
 }
 
@@ -2655,6 +2655,7 @@ struct ImGuiScrollableRegion {
 struct ImGuiScrollableRegionResult {
 	rectf inner;
 	rectf prevRect;
+	vec2 prevAddPosition;
 	char* clippingStart;
 	bool8 wasProcessingInputs;
 	bool8 wasGrowingHorizontal;
@@ -2683,6 +2684,7 @@ ImGuiScrollableRegionResult imguiBeginScrollableRegion( ImGuiScrollableRegion* r
 	auto rect                  = imguiAddItem( clipWidth, clipHeight );
 	result.inner               = imguiInnerRect( rect );
 	result.prevRect            = container->rect;
+	result.prevAddPosition     = container->addPosition;
 	result.clippingStart       = back( ImGui->renderer );
 	result.wasProcessingInputs = ImGui->processInputs;
 	result.wasGrowingHorizontal =
@@ -2736,7 +2738,7 @@ void imguiEndScrollableRegion( ImGuiScrollableRegion* region, ImGuiScrollableReg
 		imguiScrollbar( &region->scrollPos.x, 0, containerWidth, innerWidth, stepSize, scrollRect,
 		                false );
 	} else {
-		region->scrollPos.y = 0;
+		region->scrollPos.x = 0;
 	}
 	if( containerHeight > innerHeight ) {
 		rectf scrollRect = state->inner;
@@ -2750,7 +2752,12 @@ void imguiEndScrollableRegion( ImGuiScrollableRegion* region, ImGuiScrollableReg
 	region->dim.x          = width( container->rect );
 	region->dim.y          = containerHeight;
 	container->rect        = state->prevRect;
-	container->addPosition = container->rect.leftTop;
+	container->addPosition = state->prevAddPosition;
+
+	if( auto mesh = container->bgMesh ) {
+		assert( mesh->verticesCount == 4 );
+		mesh->vertices[3].position.y = mesh->vertices[2].position.y = container->rect.bottom;
+	}
 }
 
 void imguiSeperator()

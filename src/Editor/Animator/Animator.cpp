@@ -13,7 +13,7 @@ static const StringView EaseTypeNames[] = {
     "Lerp", "Step", "Smoothstep", "EaseOutBounce", "EaseOutElastic", "Curve",
 };
 static const StringView AnimatorAssetTypeNames[] = {
-    "None", "VoxelCollection", "Collision", "Hitbox", "Hurtbox",
+    "None", "VoxelCollection", "Collision", "Hitbox", "Hurtbox", "Particle Emitter",
 };
 StringView to_string( AnimatorKeyframeData::EaseType type )
 {
@@ -27,6 +27,7 @@ StringView to_string( AnimatorAsset::Type type )
 }
 StringView to_string( AnimatorState* animator, AnimatorKeyframeData::Type type )
 {
+	type = (AnimatorKeyframeData::Type)( type - 1 );
 	assert( type >= 0 && type < countof( animator->fieldNames ) );
 	return animator->fieldNames[type];
 }
@@ -79,16 +80,53 @@ AnimatorAsset::Type convert_to< AnimatorAsset::Type >( StringView str,
                                                        AnimatorAsset::Type def )
 {
 	AnimatorAsset::Type result = def;
-	if( str.size() ) {
+	if( str.size() > 2 ) {
 		switch( str[0] ) {
 			case 'v':
 			case 'V': {
 				result = AnimatorAsset::type_collection;
 				break;
 			}
+			case 'c':
+			case 'C': {
+				result = AnimatorAsset::type_collision;
+				break;
+			}
+			case 'h':
+			case 'H': {
+				if( str[1] == 'i' || str[1] == 'I' ) {
+					result = AnimatorAsset::type_hitbox;
+				} else {
+					result = AnimatorAsset::type_hurtbox;
+				}
+				break;
+			}
 		}
 	}
 	return result;
+}
+
+void writeValue( JsonWriter* writer, const AnimatorParticleEmitter& value )
+{
+	auto emitter = &value.emitter;
+	writeStartObject( writer );
+		writeProperty( writer, "count", emitter->count );
+		writeProperty( writer, "maxAlive", emitter->maxAlive );
+		writeProperty( writer, "velocity", emitter->velocity );
+		writeProperty( writer, "textureId", valueof( emitter->textureId ) );
+		writeProperty( writer, "flags", emitter->flags );
+		writeProperty( writer, "interval", value.interval );
+	writeEndObject( writer );
+}
+void deserialize( const JsonValue& value, AnimatorParticleEmitter& out )
+{
+	auto attr = value.getObject();
+	deserialize( attr["count"], out.emitter.count );
+	deserialize( attr["maxAlive"], out.emitter.maxAlive );
+	deserialize( attr["velocity"], out.emitter.velocity );
+	deserialize( attr["textureId"], out.emitter.textureId );
+	deserialize( attr["flags"], out.emitter.flags );
+	deserialize( attr["interval"], out.interval );
 }
 
 // AnimatorAsset
@@ -121,6 +159,8 @@ rectf* getHitboxRect( AnimatorAsset* asset )
 AnimatorAsset animatorHitboxAsset( AnimatorAsset::Type type, int16 id )
 {
 	AnimatorAsset result;
+	result.id = id;
+	result.setName( "Unnamed" );
 	switch( type ) {
 		case AnimatorAsset::type_collision: {
 			result.type      = AnimatorAsset::type_collision;
@@ -139,6 +179,17 @@ AnimatorAsset animatorHitboxAsset( AnimatorAsset::Type type, int16 id )
 		}
 		InvalidDefaultCase;
 	}
+	return result;
+}
+AnimatorAsset animatorEmitterAsset( int16 id )
+{
+	AnimatorAsset result;
+	result.id = id;
+	result.setName( "Unnamed" );
+	result.type    = AnimatorAsset::type_emitter;
+	result.emitter = {};
+	result.emitter.emitter = ParticleEmitters[0];
+	result.emitter.interval = 30;
 	return result;
 }
 
@@ -241,7 +292,8 @@ void addAnimatorGroups( AnimatorState* animator, StringView parentName, int16 ow
 			}
 			case AnimatorAsset::type_collision:
 			case AnimatorAsset::type_hitbox:
-			case AnimatorAsset::type_hurtbox: {
+			case AnimatorAsset::type_hurtbox:
+			case AnimatorAsset::type_emitter: {
 				propertyType = AnimatorKeyframeData::type_active;
 				break;
 			}
@@ -342,13 +394,7 @@ AnimatorKeyframeData lerp( Array< AnimatorCurveData > curves, float t,
 		}
 		case AnimatorKeyframeData::type_active: {
 			result.type = AnimatorKeyframeData::type_active;
-			// TODO: experiment with lerping even if active is a bool
-#if 1
-			result.active =
-			    lerp( t, (float)a.active.value, (float)b.active.value ) >= Float::BigEpsilon;
-#else
 			result.active = a.active;
-#endif
 			break;
 		}
 		InvalidDefaultCase;
@@ -360,8 +406,8 @@ AnimatorKeyframes::iterator lowerBoundKeyframeIt( AnimatorState* animator, float
 	auto first = animator->keyframes.begin();
 	auto last  = animator->keyframes.end();
 	if( first != last ) {
-		auto it = lower_bound( first, last, t, []( const AnimatorKeyframes::value_type& keyframe,
-		                                           float t ) { return keyframe->t < t; } );
+		auto it = lower_bound( first, last, t,
+		                       []( const auto& keyframe, float t ) { return keyframe->t < t; } );
 		if( it == last ) {
 			--it;
 		}
@@ -425,15 +471,14 @@ AnimatorKeyframeData getInterpolatedKeyframe( AnimatorState* animator, float t, 
 
 AnimatorNode getCurrentFrameNode( AnimatorState* animator, AnimatorNode* node )
 {
-	auto base   = find_first_where( animator->nodes, entry->id == node->id )->get();
-	auto result = *base;
+	auto result = *node;
 
-	auto baseGroup = makeAnimatorGroup( node->id );
+	auto baseGroup        = makeAnimatorGroup( node->id );
 	GroupId translationId = baseGroup + AnimatorKeyframeData::type_translation;
 	GroupId rotationId    = baseGroup + AnimatorKeyframeData::type_rotation;
 	GroupId scaleId       = baseGroup + AnimatorKeyframeData::type_scale;
 	GroupId frameId       = baseGroup + AnimatorKeyframeData::type_frame;
-	GroupId activeId       = baseGroup + AnimatorKeyframeData::type_active;
+	GroupId activeId      = baseGroup + AnimatorKeyframeData::type_active;
 
 	auto translationKeyframe =
 	    getInterpolatedKeyframe( animator, animator->currentFrame, translationId );
@@ -441,23 +486,27 @@ AnimatorNode getCurrentFrameNode( AnimatorState* animator, AnimatorNode* node )
 	auto scaleKeyframe    = getInterpolatedKeyframe( animator, animator->currentFrame, scaleId );
 
 	result.translation =
-	    get_variant_or_default( translationKeyframe, translation, base->translation );
-	result.rotation = get_variant_or_default( rotationKeyframe, rotation, base->rotation );
-	result.scale    = get_variant_or_default( scaleKeyframe, scale, base->scale );
-	switch( base->assetType ) {
+	    get_variant_or_default( translationKeyframe, translation, node->translation );
+	result.rotation = get_variant_or_default( rotationKeyframe, rotation, node->rotation );
+	result.scale    = get_variant_or_default( scaleKeyframe, scale, node->scale );
+	switch( node->assetType ) {
 		case AnimatorAsset::type_collection: {
 			auto frameKeyframe =
 			    getInterpolatedKeyframe( animator, animator->currentFrame, frameId );
-			result.voxel.frame = get_variant_or_default( frameKeyframe, frame, base->voxel.frame );
+			result.voxel.frame = get_variant_or_default( frameKeyframe, frame, node->voxel.frame );
 			break;
 		}
 		case AnimatorAsset::type_collision:
 		case AnimatorAsset::type_hitbox:
-		case AnimatorAsset::type_hurtbox: {
+		case AnimatorAsset::type_hurtbox:
+		case AnimatorAsset::type_emitter: {
+			auto wasActive = node->active;
 			auto activeKeyframe =
 			    getInterpolatedKeyframe( animator, animator->currentFrame, activeId );
-			result.hitbox.active =
-			    get_variant_or_default( activeKeyframe, active, base->hitbox.active );
+			result.active = get_variant_or_default( activeKeyframe, active, node->active );
+			if( !result.active ) {
+				result.emitter.time = 0;
+			}
 			break;
 		}
 	}
@@ -476,10 +525,12 @@ AnimatorNode toAbsoluteNode( const AnimatorNode* base, const AnimatorNode* rel )
 		result.voxel.frame += rel->voxel.frame;
 	}
 
-	result.parent    = rel->parent;
-	result.assetId   = rel->assetId;
-	result.asset     = rel->asset;
-	result.assetType = rel->assetType;
+	result.active       = rel->active;
+	result.emitter.time = rel->emitter.time;
+	result.parent       = rel->parent;
+	result.assetId      = rel->assetId;
+	result.asset        = rel->asset;
+	result.assetType    = rel->assetType;
 	return result;
 }
 AnimatorNode toRelativeNode( const AnimatorNode* base, const AnimatorNode* abs )
@@ -494,10 +545,12 @@ AnimatorNode toRelativeNode( const AnimatorNode* base, const AnimatorNode* abs )
 		result.voxel.frame = abs->voxel.frame - base->voxel.frame;
 	}
 
-	result.parent    = abs->parent;
-	result.assetId   = abs->assetId;
-	result.asset     = abs->asset;
-	result.assetType = abs->assetType;
+	result.active       = abs->active;
+	result.emitter.time = abs->emitter.time;
+	result.parent       = abs->parent;
+	result.assetId      = abs->assetId;
+	result.asset        = abs->asset;
+	result.assetType    = abs->assetType;
 	return result;
 }
 AnimatorKeyframe toAbsoluteKeyframe( const AnimatorNode* base, const AnimatorKeyframe* keyframe )
@@ -518,6 +571,10 @@ AnimatorKeyframe toAbsoluteKeyframe( const AnimatorNode* base, const AnimatorKey
 		}
 		case AnimatorKeyframeData::type_frame: {
 			result.data.frame += base->voxel.frame;
+			break;
+		}
+		case AnimatorKeyframeData::type_active: {
+			// TODO: what is the absolute value of active (a bool)?
 			break;
 		}
 		InvalidDefaultCase;
@@ -544,6 +601,10 @@ AnimatorKeyframe toRelativeKeyframe( const AnimatorNode* base, const AnimatorKey
 		}
 		case AnimatorKeyframeData::type_frame: {
 			result.data.frame -= base->voxel.frame;
+			break;
+		}
+		case AnimatorKeyframeData::type_active: {
+			// TODO: what is the relative value of active (a bool)?
 			break;
 		}
 		InvalidDefaultCase;
@@ -621,6 +682,16 @@ AnimatorAsset* addNewAsset( AnimatorState* animator, AnimatorAsset::Type type,
 			}
 			break;
 		}
+		case AnimatorAsset::type_emitter: {
+			auto asset =
+			    std::make_unique< AnimatorAsset >( animatorEmitterAsset( animator->assetIds ) );
+			if( asset && *asset ) {
+				animator->assets.emplace_back( std::move( asset ) );
+				++animator->assetIds;
+				result = animator->assets.back().get();
+			}
+			break;
+		}
 	}
 	return result;
 }
@@ -628,9 +699,7 @@ AnimatorAsset* addNewAsset( AnimatorState* animator, AnimatorAsset::Type type,
 void sortNodes( AnimatorState* animator )
 {
 	sort( animator->nodes.begin(), animator->nodes.end(),
-	      []( const UniqueAnimatorNode& a, const UniqueAnimatorNode& b ) {
-		      return a->childrenCount > b->childrenCount;
-		  } );
+	      []( const auto& a, const auto& b ) { return a->childrenCount > b->childrenCount; } );
 }
 void sortKeyframes( AnimatorState* animator )
 {
@@ -654,8 +723,8 @@ void setKeyframeEaseType( AnimatorState* animator, AnimatorKeyframe* keyframe,
 		if( keyframe->data.easeType == AnimatorKeyframeData::Curve ) {
 			freeCurveData( animator, keyframe );
 		} else if( type == AnimatorKeyframeData::Curve ) {
-			auto index = find_index_if(
-			    animator->curves, []( const AnimatorCurveData& entry ) { return !entry.used; } );
+			auto index =
+			    find_index_if( animator->curves, []( const auto& entry ) { return !entry.used; } );
 			if( !index ) {
 				index = ::size( animator->curves );
 				animator->curves.emplace_back();
@@ -914,33 +983,6 @@ void animatorClear( AnimatorState* animator )
 }
 void animatorSave( StackAllocator* allocator, AnimatorState* animator, StringView filename )
 {
-	auto writeNode = []( JsonWriter* writer, AnimatorNode* node ) {
-		writeStartObject( writer );
-			writeProperty( writer, "translation", node->translation );
-			writeProperty( writer, "rotation", node->rotation );
-			writeProperty( writer, "scale", node->scale );
-			writeProperty( writer, "length", node->length );
-			writeProperty( writer, "id", node->id );
-			writeProperty( writer, "parentId", NullableInt32{node->parentId} );
-			writeProperty( writer, "assetId", NullableInt32{node->assetId} );
-			switch( node->assetType ) {
-				case AnimatorAsset::type_none: {
-					break;
-				}
-				case AnimatorAsset::type_collection: {
-					writePropertyName( writer, "voxel" );
-					writeStartObject( writer );
-						writeProperty( writer, "animation", NullableInt32{node->voxel.animation} );
-						writeProperty( writer, "frame", node->voxel.frame );
-					writeEndObject( writer );
-					break;
-				}
-				InvalidDefaultCase;
-			}
-			writeProperty( writer, "name", StringView{node->name} );
-		writeEndObject( writer );
-	};
-
 	auto writeNodeKeyableProperties = []( JsonWriter* writer, AnimatorNode* node ) {
 		writeProperty( writer, "translation", node->translation );
 		writeProperty( writer, "rotation", node->rotation );
@@ -960,14 +1002,30 @@ void animatorSave( StackAllocator* allocator, AnimatorState* animator, StringVie
 			}
 			case AnimatorAsset::type_collision:
 			case AnimatorAsset::type_hitbox:
-			case AnimatorAsset::type_hurtbox: {
-				writePropertyName( writer, "hitbox" );
-					writeProperty( writer, "active", node->hitbox.active );
+			case AnimatorAsset::type_hurtbox:
+			case AnimatorAsset::type_emitter: {
+				if( node->assetType == AnimatorAsset::type_emitter ) {
+					writePropertyName( writer, "emitter" );
+				} else {
+					writePropertyName( writer, "hitbox" );
+				}
+				writeStartObject( writer );
+					writeProperty( writer, "active", (bool)node->active );
 				writeEndObject( writer );
 				break;
 			}
 			InvalidDefaultCase;
 		}
+	};
+
+	auto writeNode = [&writeNodeKeyableProperties]( JsonWriter* writer, AnimatorNode* node ) {
+		writeStartObject( writer );
+			writeNodeKeyableProperties( writer, node );
+			writeProperty( writer, "length", node->length );
+			writeProperty( writer, "parentId", NullableInt32{node->parentId} );
+			writeProperty( writer, "assetId", NullableInt32{node->assetId} );
+			writeProperty( writer, "name", StringView{node->name} );
+		writeEndObject( writer );
 	};
 
 	auto writeKeyframes = []( JsonWriter* writer, Array< AnimatorKeyframe > keyframes,
@@ -1017,6 +1075,22 @@ void animatorSave( StackAllocator* allocator, AnimatorState* animator, StringVie
 				case AnimatorAsset::type_collection: {
 					assert( asset->collection );
 					writeProperty( writer, "filename", asset->collection->voxels.filename );
+					break;
+				}
+				case AnimatorAsset::type_collision: {
+					writeProperty( writer, "collision", asset->collision );
+					break;
+				}
+				case AnimatorAsset::type_hitbox: {
+					writeProperty( writer, "hitbox", asset->hitbox );
+					break;
+				}
+				case AnimatorAsset::type_hurtbox: {
+					writeProperty( writer, "hurtbox", asset->hurtbox );
+					break;
+				}
+				case AnimatorAsset::type_emitter: {
+					writeProperty( writer, "emitter", asset->emitter );
 					break;
 				}
 				InvalidDefaultCase;
@@ -1087,7 +1161,8 @@ void animatorSave( StackAllocator* allocator, AnimatorState* animator, StringVie
 					            }
 					            case AnimatorAsset::type_collision:
 					            case AnimatorAsset::type_hitbox:
-					            case AnimatorAsset::type_hurtbox: {
+					            case AnimatorAsset::type_hurtbox:
+					            case AnimatorAsset::type_emitter: {
 					            	writeKeyframes( writer, keyframes, "active",
 					            	                group + AnimatorKeyframeData::type_active );
 					            	break;
@@ -1155,7 +1230,7 @@ void loadKeyframes( JsonObjectArray array, GroupId group, Tag tag,
 		out->emplace_back( AnimatorKeyframe{} );
 		auto added   = &out->back();
 		added->group = group;
-		serialize( keyframe["t"], added->t );
+		deserialize( keyframe["t"], added->t );
 		auto easeType = keyframe["easeType"];
 		if( jsonIsString( easeType ) ) {
 			from_string( easeType.getString(), &added->data.easeType );
@@ -1163,7 +1238,7 @@ void loadKeyframes( JsonObjectArray array, GroupId group, Tag tag,
 			added->data.easeType = (AnimatorKeyframeData::EaseType)clamp(
 			    easeType.getInt(), AnimatorKeyframeData::Lerp, AnimatorKeyframeData::Curve );
 		}
-		serialize( keyframe["value"], getValue( added->data, tag ) );
+		deserialize( keyframe["value"], getValue( added->data, tag ) );
 	}
 }
 
@@ -1198,24 +1273,42 @@ bool animatorOpen( StackAllocator* allocator, AnimatorState* animator, StringVie
 		FOR( asset : root["assets"].getObjectArray() ) {
 			auto type = convert_to< AnimatorAsset::Type >( asset["type"].getString() );
 			if( auto added = addNewAsset( animator, type, asset["filename"].getString() ) ) {
-				serialize( asset["id"], added->id, -1 );
+				deserialize( asset["id"], added->id, -1 );
 				added->setName( asset["name"].getString() );
+				switch( type ) {
+					case AnimatorAsset::type_collision: {
+						deserialize( asset["collision"], added->collision );
+						break;
+					}
+					case AnimatorAsset::type_hitbox: {
+						deserialize( asset["hitbox"], added->hitbox );
+						break;
+					}
+					case AnimatorAsset::type_hurtbox: {
+						deserialize( asset["hurtbox"], added->hurtbox );
+						break;
+					}
+					case AnimatorAsset::type_emitter: {
+						deserialize( asset["emitter"], added->emitter );
+						break;
+					}
+				}
 			}
 		}
 
 		FOR( node : root["nodes"].getObjectArray() ) {
 			auto addedContainer = std::make_unique< AnimatorNode >();
 			auto added          = addedContainer.get();
-			serialize( node["translation"], added->translation );
-			serialize( node["rotation"], added->rotation );
-			serialize( node["scale"], added->scale );
-			serialize( node["length"], added->length );
-			serialize( node["id"], added->id, -1 );
-			serialize( node["parentId"], added->parentId, -1 );
-			serialize( node["assetId"], added->assetId, -1 );
+			deserialize( node["translation"], added->translation );
+			deserialize( node["rotation"], added->rotation );
+			deserialize( node["scale"], added->scale );
+			deserialize( node["length"], added->length );
+			deserialize( node["id"], added->id, -1 );
+			deserialize( node["parentId"], added->parentId, -1 );
+			deserialize( node["assetId"], added->assetId, -1 );
 			auto voxel = node["voxel"].getObject();
-			serialize( voxel["animation"], added->voxel.animation, -1 );
-			serialize( voxel["frame"], added->voxel.frame );
+			deserialize( voxel["animation"], added->voxel.animation, -1 );
+			deserialize( voxel["frame"], added->voxel.frame );
 			added->name = node["name"].getString();
 			animator->nodes.push_back( std::move( addedContainer ) );
 		}
@@ -1237,13 +1330,13 @@ bool animatorOpen( StackAllocator* allocator, AnimatorState* animator, StringVie
 			FOR( node : nodes ) {
 				added->nodes.emplace_back();
 				auto addedNode = &added->nodes.back();
-				serialize( node["id"], addedNode->id, -1 );
-				serialize( node["translation"], addedNode->translation );
-				serialize( node["rotation"], addedNode->rotation );
-				serialize( node["scale"], addedNode->scale );
+				deserialize( node["id"], addedNode->id, -1 );
+				deserialize( node["translation"], addedNode->translation );
+				deserialize( node["rotation"], addedNode->rotation );
+				deserialize( node["scale"], addedNode->scale );
 				if( auto voxel = node["voxel"].getObject() ) {
-					serialize( voxel["animation"], addedNode->voxel.animation );
-					serialize( voxel["frame"], addedNode->voxel.frame );
+					deserialize( voxel["animation"], addedNode->voxel.animation );
+					deserialize( voxel["frame"], addedNode->voxel.frame );
 				}
 
 				auto keyframes = node["keyframes"].getObject();
@@ -1637,6 +1730,7 @@ void doKeyframesSelection( ImGuiHandle handle, AppData* app, GameInputs* inputs,
 										append_unique( groups, visible.group + 2 );
 										append_unique( groups, visible.group + 3 );
 										append_unique( groups, visible.group + 4 );
+										append_unique( groups, visible.group + 5 );
 									}
 								}
 							} else {
@@ -1648,6 +1742,7 @@ void doKeyframesSelection( ImGuiHandle handle, AppData* app, GameInputs* inputs,
 										append_unique( groups, visible->group + 2 );
 										append_unique( groups, visible->group + 3 );
 										append_unique( groups, visible->group + 4 );
+										append_unique( groups, visible->group + 5 );
 									}
 								}
 							}
@@ -2148,6 +2243,9 @@ void doAnimatorMenu( AppData* app, GameInputs* inputs, rectfarg rect )
 		if( imguiButton( "Add Hurtbox", imguiRelative() ) ) {
 			addNewAsset( animator, AnimatorAsset::type_hurtbox );
 		}
+		if( imguiButton( "Add Particle Emitter", imguiRelative() ) ) {
+			addNewAsset( animator, AnimatorAsset::type_emitter );
+		}
 		if( imguiButton( "Remove Selected", imguiRelative() ) ) {
 			if( first ) {
 				animatorMessageBox(
@@ -2317,33 +2415,41 @@ void doAnimatorMenu( AppData* app, GameInputs* inputs, rectfarg rect )
 					}
 				}
 			}
-			if( node.assetType == AnimatorAsset::type_collection ) {
-				auto collection = get_variant( *node.asset, collection );
-				imguiSameLine( 2 );
-				imguiText( "Voxel" );
-				auto comboHandle = imguiMakeHandle( &node.voxel );
-				int32 index      = node.voxel.animation;
-				if( imguiCombo( comboHandle, &index, collection->names, true ) ) {
-					node.voxel.animation = safe_truncate< int16 >( index );
-					setUnsavedChanges( animator );
-				}
-
-				if( node.voxel.animation >= 0 ) {
+			switch( node.assetType ) {
+				case AnimatorAsset::type_collection: {
+					auto collection = get_variant( *node.asset, collection );
 					imguiSameLine( 2 );
-				}
-				if( imguiEditbox( "Frame", &node.voxel.frame ) ) {
-					setUnsavedChanges( animator );
-				}
-				if( node.assetType == AnimatorAsset::type_collection
-				    && node.voxel.animation >= 0 ) {
-
-					auto frames = collection->voxels.animations[node.voxel.animation].range;
-					float val = (float)( node.voxel.frame );
-					if( imguiSlider( imguiMakeHandle( &node.voxel.frame ), &val, 0,
-					                 (float)width( frames ) - 1 ) ) {
-						node.voxel.frame = (uint16)val;
+					imguiText( "Voxel" );
+					auto comboHandle = imguiMakeHandle( &node.voxel );
+					int32 index      = node.voxel.animation;
+					if( imguiCombo( comboHandle, &index, collection->names, true ) ) {
+						node.voxel.animation = safe_truncate< int16 >( index );
 						setUnsavedChanges( animator );
 					}
+
+					if( node.voxel.animation >= 0 ) {
+						imguiSameLine( 2 );
+					}
+					if( imguiEditbox( "Frame", &node.voxel.frame ) ) {
+						setUnsavedChanges( animator );
+					}
+					if( node.voxel.animation >= 0 ) {
+						auto frames = collection->voxels.animations[node.voxel.animation].range;
+						float val = (float)( node.voxel.frame );
+						if( imguiSlider( imguiMakeHandle( &node.voxel.frame ), &val, 0,
+						                 (float)width( frames ) - 1 ) ) {
+							node.voxel.frame = (uint16)val;
+							setUnsavedChanges( animator );
+						}
+					}
+					break;
+				}
+				case AnimatorAsset::type_collision:
+				case AnimatorAsset::type_hitbox:
+				case AnimatorAsset::type_hurtbox:
+				case AnimatorAsset::type_emitter: {
+					node.active = imguiCheckbox( "Active", (bool)node.active );
+					break;
 				}
 			}
 
@@ -2500,7 +2606,7 @@ void doAnimatorMenu( AppData* app, GameInputs* inputs, rectfarg rect )
 		if( current.voxel.frame == node->voxel.frame ) {
 			frame.pop_back();
 		}
-		if( current.hitbox.active == node->hitbox.active ) {
+		if( current.active == node->active ) {
 			active.pop_back();
 		}
 		if( imguiButton( translation ) ) {
@@ -2534,11 +2640,13 @@ void doAnimatorMenu( AppData* app, GameInputs* inputs, rectfarg rect )
 			}
 		}
 		if( imguiButton( active ) ) {
-			if( isHitboxType( node->assetType ) ) {
+			if( isHitboxType( node->assetType )
+			    || node->assetType == AnimatorAsset::type_emitter ) {
+
 				AnimatorKeyframe key = {};
 				key.t                = animator->currentFrame;
 				key.group = makeAnimatorGroup( node->id, AnimatorKeyframeData::type_active );
-				set_variant( key.data, active ) = (bool)node->hitbox.active;
+				set_variant( key.data, active ) = (bool)node->active;
 				addKeyframe( animator, key );
 			}
 		}
@@ -2831,12 +2939,12 @@ void animatorUpdateAndRenderNodes( RenderCommands* renderer, AnimatorState* anim
 		node->world = matrixTranslation( node->length, 0, 0 ) * node->base;
 	}
 
-	// render voxels
 	setRenderState( renderer, RenderStateType::DepthTest, true );
 	auto stack = renderer->matrixStack;
 	pushMatrix( stack );
 	FOR( entry : animator->nodes ) {
 		auto node = entry.get();
+		// render voxels
 		if( node->assetType == AnimatorAsset::type_collection && node->voxel.animation >= 0 ) {
 			auto collection = get_variant( *node->asset, collection );
 			setTexture( renderer, 0, collection->voxels.texture );
@@ -2851,6 +2959,9 @@ void animatorUpdateAndRenderNodes( RenderCommands* renderer, AnimatorState* anim
 		}
 	}
 	popMatrix( stack );
+
+	// render particles
+	renderParticles( renderer, &animator->particleSystem );
 
 	setRenderState( renderer, RenderStateType::DepthTest, false );
 	// render skeleton
@@ -3378,11 +3489,13 @@ void doAnimator( AppData* app, GameInputs* inputs, bool focus, float dt )
 		animator->editMenu             = imguiGenerateContainer( gui, {}, true );
 		animator->messageBox.container = imguiGenerateContainer( gui, {0, 0, 300, 10}, true );
 
-		auto allocator           = &app->stackAllocator;
-		const auto MaxNodes      = 10;
-		const auto MaxKeyframes  = 50;
-		const auto MaxAnimations = 20;
-		animator->stringPool     = makeStringPool( allocator, 100 );
+		auto allocator                   = &app->stackAllocator;
+		const auto MaxNodes              = 10;
+		const auto MaxKeyframes          = 50;
+		const auto MaxAnimations         = 20;
+		animator->stringPool             = makeStringPool( allocator, 100 );
+		animator->particleSystem         = makeParticleSystem( allocator, 200 );
+		animator->particleSystem.texture = app->platform.loadTexture( "Data/Images/dust.png" );
 
 		animator->fieldNames[0] = pushString( &animator->stringPool, "Translation" );
 		animator->fieldNames[1] = pushString( &animator->stringPool, "Rotation" );
@@ -3406,6 +3519,8 @@ void doAnimator( AppData* app, GameInputs* inputs, bool focus, float dt )
 		populateVisibleGroups( animator );
 
 		addNewAsset( animator, AnimatorAsset::type_collection, "Data/voxels/hero.json" );
+		animator->flags.unsavedChanges     = false;
+		animator->flags.uncommittedChanges = false;
 #endif
 
 		animator->initialized = true;
@@ -3417,13 +3532,26 @@ void doAnimator( AppData* app, GameInputs* inputs, bool focus, float dt )
 	setProjection( renderer, ProjectionType::Orthogonal );
 	setRenderState( renderer, RenderStateType::DepthTest, false );
 
+	auto t = dt * ( 60.0f / 1000.0f );
+	processParticles( &animator->particleSystem, t );
+
 	if( animator->currentAnimation && animator->flags.playing ) {
-		animator->currentFrame += dt * ( 60.0f / 1000.0f );
+		animator->currentFrame += t;
 		if( animator->currentFrame > animator->duration ) {
 			animator->currentFrame = animator->duration;
 		}
 		FOR( node : animator->nodes ) {
 			*node = getCurrentFrameNode( animator, node.get() );
+			if( node->assetType == AnimatorAsset::type_emitter && node->active ) {
+				auto emitter = &get_variant( *node->asset, emitter );
+				node->emitter.time -= t;
+				if( node->emitter.time <= 0.0f ) {
+					node->emitter.time += emitter->interval;
+					auto pos = transformVector3( node->world, {} );
+					pos.y = -pos.y;
+					emitParticles( &animator->particleSystem, pos.xy, emitter->emitter );
+				}
+			}
 		}
 		if( animator->currentFrame >= animator->duration ) {
 			if( animator->flags.repeat ) {
@@ -3577,6 +3705,11 @@ void doAnimator( AppData* app, GameInputs* inputs, bool focus, float dt )
 #if 1
 	// debug
 	debugPrintln( "AnimatorKeyframes Count: {}", animator->keyframes.size() );
+
+	FOR( entry : animator->assets ) {
+		auto asset = entry.get();
+		debugPrintln( "Asset {}: {}", asset->item.text, asset->id );
+	}
 #endif
 }
 
@@ -3657,6 +3790,11 @@ void AnimatorAsset::assign( const AnimatorAsset& other )
 			hurtbox = other.hurtbox;
 			break;
 		}
+		case type_emitter: {
+			type    = type_emitter;
+			emitter = other.emitter;
+			break;
+		}
 		InvalidDefaultCase;
 	}
 	setName( {other.name, other.nameLength} );
@@ -3689,6 +3827,11 @@ void AnimatorAsset::assign( AnimatorAsset&& other )
 			hurtbox = other.hurtbox;
 			break;
 		}
+		case type_emitter: {
+			type    = type_emitter;
+			emitter = other.emitter;
+			break;
+		}
 		InvalidDefaultCase;
 	}
 	setName( {other.name, other.nameLength} );
@@ -3700,7 +3843,8 @@ void AnimatorAsset::destroy()
 		case type_none:
 		case type_collision:
 		case type_hitbox:
-		case type_hurtbox: {
+		case type_hurtbox:
+		case type_emitter: {
 			break;
 		}
 		case type_collection: {

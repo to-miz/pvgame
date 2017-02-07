@@ -29,6 +29,7 @@ typedef int32 GetOpenFilenameType( const char* filter, const char* initialDir, b
                                    char* filenameBuffer, int32 filenameBufferSize );
 typedef int32 GetSaveFilenameType( const char* filter, const char* initialDir, char* filenameBuffer,
                                    int32 filenameBufferSize );
+typedef int32 GetTimeStampStringType( char* buffer, int32 size );
 
 typedef StringView GetKeyboardKeyNameType( VirtualKeyEnumValues key );
 
@@ -57,6 +58,7 @@ struct PlatformServices {
 	GetSaveFilenameType* getSaveFilename;
 
 	GetKeyboardKeyNameType* getKeyboardKeyName;
+	GetTimeStampStringType* getTimeStampString;
 
 	// malloc
 	MallocType* malloc;
@@ -77,7 +79,8 @@ struct PlatformServices {
 // structures that get passed into the platform layer, get filled and passed back
 struct PlatformRemapInfo {
 	bool success;
-	IngameLog* logStorage;   // log structure for the platform layer to fill
+	IngameLog* logStorage;  // log structure for the platform layer to fill
+	string_logger* debugLogger;
 	TextureMap* textureMap;  // textureMap for the platform layer to fill
 
 	int32 width;  // requested window size

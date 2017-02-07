@@ -195,7 +195,8 @@ void writeValue( JsonWriter* writer, vec3arg v )
 #endif
 }
 
-void writeValue( JsonWriter* writer, rectiarg rect )
+template< class T >
+void writeValue( JsonWriter* writer, trectarg< T > rect )
 {
 	writeStartObject( writer );
 	auto prev       = writer->minimal;

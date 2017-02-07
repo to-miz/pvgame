@@ -103,6 +103,7 @@ uint32 widen32( uint8 x ) { return x; }
 uint32 widen32( uint16 x ) { return x; }
 uint32 widen32( uint32 x ) { return x; }
 float widen32( float x ) { return x; }
+bool widen32( bool x ) { return x; }
 
 struct string_builder {
 	char* ptr;
@@ -155,13 +156,13 @@ struct string_builder {
 	}
 
 	template < class... Types >
-	string_builder& print( const char* format, Types... args )
+	string_builder& print( const char* format, const Types&... args )
 	{
 		sz += snprint( ptr + sz, cap - sz, format, args... );
 		return *this;
 	}
 	template < class... Types >
-	string_builder& println( const char* format, Types... args )
+	string_builder& println( const char* format, const Types&... args )
 	{
 		sz += snprint( ptr + sz, cap - sz, format, args... );
 		if( cap - sz ) {

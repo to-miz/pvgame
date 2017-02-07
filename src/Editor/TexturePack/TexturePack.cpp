@@ -707,7 +707,7 @@ void texturePackLoad( AppData* app )
 					destFrame->faces[j].orientation =
 					    (TexturePackOrientation)clamp( face["orientation"].getInt(), 0, 5 );
 				}
-				serialize( frame["offset"], destFrame->offset );
+				deserialize( frame["offset"], destFrame->offset );
 			}
 		}
 	}

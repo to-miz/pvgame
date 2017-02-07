@@ -395,6 +395,11 @@ StringView getFilenamePath( StringView file )
 	return substr( file, 0, findLast( file, '/' ) + 1 );
 }
 
+StringView getLine( StringView str, int32 pos )
+{
+	return substr( str, pos, find( str, '\n', pos ) + 1 );
+}
+
 /*StringView trim( StringView str, StringView whitespace )
 {
 	return trimLeft( trimRight( str, whitespace ), whitespace );
@@ -424,12 +429,6 @@ StringView getWord( StringView str, StringView delimeter )
 {
 	auto pos = str.find_first_of( delimeter );
 	return str.substr( 0, pos );
-}
-
-StringView getLine( StringView str, int32 pos )
-{
-	auto newline = str.find( '\n', pos );
-	return str.substr( pos, (newline != StringView::npos) ? ( newline + 1 ) : ( StringView::npos ) );
 }
 
 StringView trimLeftNonNumeric( StringView str )

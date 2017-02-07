@@ -278,6 +278,24 @@ float lineWidth( FontInfo* font, FontRenderOptions* options, bool kerning, Strin
 	}
 	return result;
 }
+float maxLineWidth( FontInfo* font, FontRenderOptions* options, bool kerning, StringView string )
+{
+	auto start = 0;
+	auto len = string.size();
+	float result = 0;
+	while( start < len ) {
+		auto width = lineWidth( font, options, kerning, string, start, &start );
+		if( width > result ) {
+			result = width;
+		}
+	}
+	return result;
+}
+float maxLineWidth( Font* font, StringView string )
+{
+	auto info = getFontInfo( font );
+	return maxLineWidth( info, &font->renderOptions, font->kerning != 0, string );
+}
 float stringHeight( FontInfo* font, FontRenderOptions* options, StringView string,
                     float textAreaWidth, float verticalPadding )
 {

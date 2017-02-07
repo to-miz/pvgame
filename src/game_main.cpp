@@ -74,17 +74,30 @@
 #include "Graphics/Font.h"
 #include "TextureMap.cpp"
 
+#include "string_logger.cpp"
+
 global_var string_builder* GlobalDebugPrinter = nullptr;
+global_var string_logger* GlobalDebugLogger   = nullptr;
 #if defined( GAME_DEBUG ) || ( GAME_DEBUG_PRINTING )
 	#define debugPrint( ... ) GlobalDebugPrinter->print( __VA_ARGS__ );
 	#define debugPrintln( ... ) GlobalDebugPrinter->println( __VA_ARGS__ );
 	#define debugPrintClear() GlobalDebugPrinter->clear()
 	#define debugPrintGetString() asStringView( *GlobalDebugPrinter )
+
+	#define debugLog( ... ) GlobalDebugLogger->log( __VA_ARGS__ );
+	#define debugLogln( ... ) GlobalDebugLogger->logln( __VA_ARGS__ );
+	#define debugLogClear() GlobalDebugLogger->clear()
+	#define debugLogGetString() asStringView( *GlobalDebugLogger )
 #else
-	#define debugPrint( ... )
-	#define debugPrintln( ... )
-	#define debugPrintClear()
+	#define debugPrint( ... ) ( (void)0 )
+	#define debugPrintln( ... ) ( (void)0 )
+	#define debugPrintClear() ( (void)0 )
 	#define debugPrintGetString() ( StringView{} )
+
+	#define debugLog( ... ) ( (void)0 )
+	#define debugLogln( ... ) ( (void)0 )
+	#define debugLogClear() ( (void)0 )
+	#define debugLogGetString() ( StringView{} )
 #endif
 
 #include "Core/BitTwiddlings.h"
@@ -131,6 +144,24 @@ global_var TextureMap* GlobalTextureMap             = nullptr;
 global_var IngameLog* GlobalIngameLog               = nullptr;
 global_var ImmediateModeGui* ImGui                  = nullptr;
 global_var ProfilingTable* GlobalProfilingTable     = nullptr;
+
+int32 getTimeStampString( char* buffer, int32 size )
+{
+	assert( GlobalPlatformServices );
+	return GlobalPlatformServices->getTimeStampString( buffer, size );
+}
+short_string< 50 > getTimeStampString()
+{
+	short_string< 50 > result;
+	result.resize( ::getTimeStampString( result.data(), result.capacity() ) );
+	return result;
+}
+
+// logging needs some definitions to exists, but those definitions may need to log
+// this could be solved by splitting everything into .h/.cpp pairs, but instead its easier to only
+// split log.h
+#define _LOG_IMPLEMENTATION_
+#include "Core/Log.h"
 
 // TODO: GlobalScrapSize can be 1 megabyte once VoxelGrids are dense
 constexpr const size_t GlobalScrapSize = megabytes( 3 );
@@ -752,7 +783,10 @@ struct GameDebugGuiState {
 	ImmediateModeGui debugGuiState;
 	int32 mainDialog;
 	int32 debugOutputDialog;
+	int32 debugLogDialog;
+	ImGuiScrollableRegion debugLogRegion;
 	bool show;
+	bool windowsExpanded;
 	float fadeProgress;
 	bool initialized;
 };
@@ -875,7 +909,7 @@ struct HeroVoxelCollection {
 	rangeu16 landing;
 };
 
-const char* HeroAnimationNames[] = {
+const char* const HeroAnimationNames[] = {
     "Idle",
     "IdleShoot",
     "Turn",
@@ -949,35 +983,40 @@ static const ParticleEmitter ParticleEmitters[] = {
      ParticleEmitterFlags::AlternateSignX},  // LandingDust
 };
 Array< ParticleSystem::Particle > emitParticles( ParticleSystem* system, vec2arg position,
-                                                 ParticleEmitterId emitterId )
+                                                 const ParticleEmitter& emitter )
 {
 	Array< ParticleSystem::Particle > result = {};
-	assert( system );
-	assert( valueof( emitterId ) < countof( ParticleEmitters ) );
-	auto emitter = &ParticleEmitters[valueof( emitterId )];
-	auto count   = min( system->particles.remaining(), emitter->count );
+	auto count = min( system->particles.remaining(), emitter.count );
 	if( count > 0 ) {
 		auto start = system->particles.size();
 		system->particles.resize( start + count );
 		result = makeRangeView( system->particles, start, start + count );
 		FOR( entry : result ) {
 			entry.position  = position;
-			entry.velocity  = emitter->velocity;
-			entry.alive     = emitter->maxAlive;
-			entry.invAlive  = 1.0f / emitter->maxAlive;
-			entry.textureId = emitter->textureId;
+			entry.velocity  = emitter.velocity;
+			entry.alive     = emitter.maxAlive;
+			entry.invAlive  = 1.0f / emitter.maxAlive;
+			entry.textureId = emitter.textureId;
 		}
-		if( emitter->flags & ParticleEmitterFlags::AlternateSignX ) {
+		if( emitter.flags & ParticleEmitterFlags::AlternateSignX ) {
 			bool sign = true;
 			FOR( entry : result ) {
 				if( sign ) {
 					entry.velocity.x = -entry.velocity.x;
-					sign = !sign;
+					sign             = !sign;
 				}
 			}
 		}
 	}
 	return result;
+}
+Array< ParticleSystem::Particle > emitParticles( ParticleSystem* system, vec2arg position,
+                                                 ParticleEmitterId emitterId )
+{
+	assert( system );
+	assert( valueof( emitterId ) < countof( ParticleEmitters ) );
+	auto& emitter = ParticleEmitters[valueof( emitterId )];
+	return emitParticles( system, position, emitter );
 }
 void processParticles( ParticleSystem* system, float dt )
 {
@@ -1205,6 +1244,7 @@ struct AppData {
 	TextureMap textureMap;
 	ImmediateModeGui guiState;
 	string_builder debugPrinter;
+	string_logger debugLogger;
 	ProfilingTable profilingTable;
 	DebugValues debugValues;
 
@@ -1328,6 +1368,7 @@ INITIALIZE_APP( initializeApp )
 	app->debugMeshStream = makeMeshStream( allocator, 4000, 12000, nullptr );
 	app->textureMap      = {makeUArray( allocator, TextureMapEntry, 100 )};
 	app->debugPrinter    = string_builder( allocateArray( allocator, char, 2048 ), 2048 );
+	app->debugLogger     = string_logger( allocateArray( allocator, char, 2048 ), 2048, 200 );
 	app->scrapAllocator  = makeStackAllocator( &app->stackAllocator, GlobalScrapSize );
 	auto result          = reloadApp( memory, size );
 
@@ -1366,14 +1407,16 @@ RELOAD_APP( reloadApp )
 	GlobalTextureMap               = &app->textureMap;
 	GlobalScrap                    = &app->scrapAllocator;
 	GlobalDebugPrinter             = &app->debugPrinter;
+	GlobalDebugLogger              = &app->debugLogger;
 	GlobalProfilingTable           = &app->profilingTable;
 	debug_Values                   = &app->debugValues;
 	app->profilingTable.infosCount = 0;
 
-	result.success    = true;
-	result.logStorage = GlobalIngameLog;
-	result.textureMap = GlobalTextureMap;
-	ImGui             = &app->guiState;
+	result.success     = true;
+	result.logStorage  = GlobalIngameLog;
+	result.debugLogger = GlobalDebugLogger;
+	result.textureMap  = GlobalTextureMap;
+	ImGui              = &app->guiState;
 	return result;
 }
 
@@ -1442,8 +1485,8 @@ bool loadVoxelCollectionTextureMapping( StackAllocator* allocator, StringView fi
 					auto faceObject = frame[VoxelFaceStrings[face]].getObject();
 
 					destInfo->textureMap.texture = out->texture;
-					serialize( faceObject["rect"], destInfo->textureRegion[face] );
-					serialize( faceObject["texCoords"],
+					deserialize( faceObject["rect"], destInfo->textureRegion[face] );
+					deserialize( faceObject["texCoords"],
 					           destInfo->textureMap.entries[face].texCoords );
 					destInfo->frictionCoefficient = faceObject["frictionCoefficient"].getFloat( 1 );
 					FOR( vert : destInfo->textureMap.entries[face].texCoords.elements ) {
@@ -1451,7 +1494,7 @@ bool loadVoxelCollectionTextureMapping( StackAllocator* allocator, StringView fi
 						vert.y *= ith;
 					}
 				}
-				serialize( frame["offset"], destFrame->offset );
+				deserialize( frame["offset"], destFrame->offset );
 			}
 
 			dest->range.max = safe_truncate< uint16 >( currentFrame );
@@ -1531,7 +1574,7 @@ bool loadVoxelCollection( StackAllocator* allocator, StringView filename, VoxelC
 }
 
 bool loadAnimatedVoxelCollection( StackAllocator* allocator, StringView filename,
-                                  VoxelCollection* out, Array< const char* > animationNames,
+                                  VoxelCollection* out, Array< const char* const > animationNames,
                                   Array< rangeu16 > indices )
 {
 	assert( animationNames.size() == indices.size() );
@@ -2333,6 +2376,7 @@ static void showGameDebugGui( AppData* app, GameInputs* inputs, bool focus, floa
 		imguiLoadDefaultStyle( imgui, &app->platform );
 		gui->mainDialog        = imguiGenerateContainer( &gui->debugGuiState );
 		gui->debugOutputDialog = imguiGenerateContainer( &gui->debugGuiState, {200, 0, 600, 100} );
+		gui->debugLogDialog    = imguiGenerateContainer( &gui->debugGuiState, {600, 0, 1000, 100} );
 		gui->initialized       = true;
 	}
 	setProjection( renderer, ProjectionType::Orthogonal );
@@ -2363,10 +2407,40 @@ static void showGameDebugGui( AppData* app, GameInputs* inputs, bool focus, floa
 		if( imguiButton( "Reset Player Position" ) ) {
 			game->player->position = {};
 		}
+		if( imguiBeginDropGroup( "Debug Windows", &gui->windowsExpanded ) ) {
+			auto debugOutputDialog = imguiGetContainer( gui->debugOutputDialog );
+			auto showOutput = imguiCheckbox( "Debug Output", !debugOutputDialog->isHidden() );
+			debugOutputDialog->setHidden( !showOutput );
+
+			auto debugLogDialog = imguiGetContainer( gui->debugLogDialog );
+			auto showLog = imguiCheckbox( "Debug Log", !debugLogDialog->isHidden() );
+			debugLogDialog->setHidden( !showLog );
+			imguiEndDropGroup();
+		}
 		imguiCheckbox( "Lighting", &game->lighting );
 		imguiCheckbox( "Camera turning", &app->settings.cameraTurning );
 		imguiCheckbox( "View collision boxes", &app->gameState.debugCollisionBoxes );
 	}
+
+	if( imguiDialog( "Debug Log", gui->debugLogDialog ) ) {
+		imguiSameLine( 2 );
+		if( imguiButton( "Clear Debug Log" ) ) {
+			debugLogClear();
+		}
+		imguiText( getTimeStampString() );
+		const float LogHeight = 400;
+		bool wasAtEnd   = gui->debugLogRegion.scrollPos.y >= gui->debugLogRegion.dim.y - LogHeight;
+		auto scrollable = imguiBeginScrollableRegion( &gui->debugLogRegion, 400, LogHeight, true );
+
+		imguiText( debugLogGetString() );
+
+		if( wasAtEnd ) {
+			auto container = imguiCurrentContainer();
+			gui->debugLogRegion.scrollPos.y = height( container->rect );
+		}
+		imguiEndScrollableRegion( &gui->debugLogRegion, &scrollable );
+	}
+
 	if( imguiDialog( "Debug Output", gui->debugOutputDialog ) ) {
 		imguiCheckbox( "Detailed Debug Output", &app->displayDebug );
 		if( app->displayDebug ) {
