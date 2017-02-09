@@ -67,7 +67,7 @@ struct AnimatorNode {
 	int16 parentId       = -1;
 	AnimatorNode* parent = nullptr;
 
-	int32 childrenCount = {};
+	int16 childrenCount = {};
 
 	bool8 selected                = {};
 	bool8 marked                  = {};
@@ -167,16 +167,23 @@ struct AnimatorEditor {
 	AnimatorEditorEditType editType;
 
 	enum : uint32 {
-		EditorSettings = BITFIELD( 0 ),
-		Properties     = BITFIELD( 1 ),
-		Options        = BITFIELD( 2 ),
-		Plane          = BITFIELD( 3 ),
-		Animations     = BITFIELD( 4 ),
-		Keying         = BITFIELD( 5 ),
-		Nodes          = BITFIELD( 6 ),
-		Assets         = BITFIELD( 7 ),
+		EditorSettings   = BITFIELD( 0 ),
+		Properties       = BITFIELD( 1 ),
+		Options          = BITFIELD( 2 ),
+		Plane            = BITFIELD( 3 ),
+		Animations       = BITFIELD( 4 ),
+		Keying           = BITFIELD( 5 ),
+		Nodes            = BITFIELD( 6 ),
+		Assets           = BITFIELD( 7 ),
+		AssetsAdd        = BITFIELD( 8 ),
+		AssetsProperties = BITFIELD( 9 )
 	};
 	uint32 expandedFlags;
+
+	enum : uint32 {
+		DrawNodes = BITFIELD( 0 ),
+	};
+	uint32 viewFlags = DrawNodes;
 
 	AnimatorMouseMode mouseMode;
 	AnimatorTranslateOptions translateOptions;
@@ -202,6 +209,7 @@ struct AnimatorEditor {
 struct AnimatorAnimation {
 	std::vector< AnimatorNode > nodes;
 	std::vector< AnimatorKeyframe > keyframes;
+	std::vector< AnimatorCurveData > curves;
 	short_string< 10 > name;
 };
 
@@ -222,6 +230,7 @@ struct AnimatorState {
 	int32 viewMenu;
 	int32 editMenu;
 	TextureId controlIcons;
+	int32 assetContextMenu;
 
 	ImGuiScrollableRegion scrollableRegion;
 	AnimatorKeyframes keyframes;

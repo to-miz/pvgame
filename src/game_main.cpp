@@ -957,10 +957,10 @@ struct ParticleEmitter {
 
 struct ParticleSystem {
 	struct Particle {
-		vec2 position;
+		vec3 position;
 		vec2 velocity;
 		float alive;
-		float invAlive;
+		float maxAlive;
 		ParticleTexture textureId;
 	};
 	UArray< Particle > particles;
@@ -982,7 +982,7 @@ static const ParticleEmitter ParticleEmitters[] = {
      ParticleTexture::Dust,
      ParticleEmitterFlags::AlternateSignX},  // LandingDust
 };
-Array< ParticleSystem::Particle > emitParticles( ParticleSystem* system, vec2arg position,
+Array< ParticleSystem::Particle > emitParticles( ParticleSystem* system, vec3arg position,
                                                  const ParticleEmitter& emitter )
 {
 	Array< ParticleSystem::Particle > result = {};
@@ -995,7 +995,7 @@ Array< ParticleSystem::Particle > emitParticles( ParticleSystem* system, vec2arg
 			entry.position  = position;
 			entry.velocity  = emitter.velocity;
 			entry.alive     = emitter.maxAlive;
-			entry.invAlive  = 1.0f / emitter.maxAlive;
+			entry.maxAlive  = emitter.maxAlive;
 			entry.textureId = emitter.textureId;
 		}
 		if( emitter.flags & ParticleEmitterFlags::AlternateSignX ) {
@@ -1016,13 +1016,13 @@ Array< ParticleSystem::Particle > emitParticles( ParticleSystem* system, vec2arg
 	assert( system );
 	assert( valueof( emitterId ) < countof( ParticleEmitters ) );
 	auto& emitter = ParticleEmitters[valueof( emitterId )];
-	return emitParticles( system, position, emitter );
+	return emitParticles( system, Vec3( position, 0 ), emitter );
 }
 void processParticles( ParticleSystem* system, float dt )
 {
 	auto end = system->particles.end();
 	for( auto it = system->particles.begin(); it != end; ) {
-		it->position += it->velocity * dt;
+		it->position.xy += it->velocity * dt;
 		it->alive -= dt;
 		if( it->alive <= 0 ) {
 			it  = unordered_erase( system->particles, it );
@@ -1036,6 +1036,7 @@ void renderParticles( RenderCommands* renderer, ParticleSystem* system )
 {
 	setRenderState( renderer, RenderStateType::DepthTest, false );
 	setTexture( renderer, 0, system->texture );
+	// TODO: use a texture map/atlas instead of hardcoding
 	static const QuadTexCoords texCoords[] = {
 		makeQuadTexCoords( scale( RectWH(  0.0f, 0, 9, 9 ), 1 / 39.0f, 1 / 9.0f ) ),
 		makeQuadTexCoords( scale( RectWH( 10.0f, 0, 9, 9 ), 1 / 39.0f, 1 / 9.0f ) ),
@@ -1044,29 +1045,164 @@ void renderParticles( RenderCommands* renderer, ParticleSystem* system )
 	};
 	MESH_STREAM_BLOCK( stream, renderer ) {
 		FOR( particle : system->particles ) {
-			auto t = particle.alive * particle.invAlive;
-			stream->color = Color::White;
+			auto t            = particle.alive / particle.maxAlive;
+			auto beenAliveFor = particle.maxAlive - particle.alive;
+			stream->color     = Color::White;
 			// alpha blend between first and last couple of frames of the particles life time
-			if( t < 0.1f ) {
-				stream->color = setAlpha( Color::White, remap( t, 0, 0.1f, 0.0f, 1.0f ) );
-			} else if( t >= 0.9f ) {
-				stream->color = setAlpha( Color::White, remap( t, 0.9f, 1.0f, 1.0f, 0.0f ) );
+			constexpr const float FadeDuration = 3;
+			constexpr const float InvFadeDuration = 1 / FadeDuration;
+			if( beenAliveFor < FadeDuration ) {
+				stream->color = setAlpha( Color::White, beenAliveFor * InvFadeDuration );
+			} else if( beenAliveFor > particle.maxAlive - FadeDuration ) {
+				beenAliveFor -= particle.maxAlive - FadeDuration;
+				stream->color = setAlpha( Color::White, 1 - beenAliveFor * InvFadeDuration );
 			}
 			rectf rect = {-4, -4, 5, 5};
-			rect = gameToScreen( translate( rect, particle.position ) );
+			rect = gameToScreen( translate( rect, particle.position.xy ) );
 			auto index = clamp( (int32)lerp( 1.0f - t, 0.0f, 4.0f ), 0, 3 );
 			// TODO: use a texture atlas for particles and a lookup table
 			assert( particle.textureId == ParticleTexture::Dust );
-			pushQuad( stream, rect, 0, texCoords[index] );
+			pushQuad( stream, rect, particle.position.z, texCoords[index] );
 		}
 	}
 	setRenderState( renderer, RenderStateType::DepthTest, true );
+}
+
+struct SkeletonTransform {
+	vec3 translation;
+	vec3 rotation;
+	vec3 scale;
+	float length;
+	int16 parent;
+};
+enum class SkeletonVisualType : int8 { None, Voxel };
+struct SkeletonVisuals {
+	SkeletonVisualType type;
+	int8 voxelIndex;
+	int16 index;
+	union {
+		struct {
+			int16 animation;
+			int16 frame;
+		} voxel;
+	};
+};
+struct Skeleton {
+	Array< SkeletonTransform > transforms;
+	Array< mat4 > worldTransforms;
+	Array< SkeletonVisuals > visuals;
+	Array< VoxelCollection* > voxels;
+};
+struct SkeletonSystem {
+	Array< Skeleton > skeletons;
+};
+
+struct SkeletonTest {
+	Skeleton skeleton;
+	bool initialized;
+};
+
+void update( Skeleton* skeleton )
+{
+	assert( skeleton );
+	assert( skeleton->transforms.size() == skeleton->worldTransforms.size() );
+
+	auto transforms      = skeleton->transforms;
+	auto worldTransforms = skeleton->worldTransforms;
+
+	TEMPORARY_MEMORY_BLOCK( GlobalScrap ) {
+		auto allocator = GlobalScrap;
+
+		struct Local {
+			int16 parent;
+			mat4 transform;
+		};
+		auto count = skeleton->transforms.size();
+		auto localTransforms = makeArray( allocator, Local, count );
+		if( !localTransforms.size() ) {
+			return;
+		}
+
+		// update local transforms
+		for( auto i = 0; i < count; ++i ) {
+			auto transform = &transforms[i];
+			auto local     = &localTransforms[i];
+
+			assert( transform->parent < i );
+			local->parent    = transform->parent;
+			local->transform = matrixTranslation( transform->length, 0, 0 )
+			                   * matrixScale( transform->scale )
+			                   * matrixRotation( transform->rotation )
+			                   * matrixTranslation( transform->translation );
+		}
+
+		// update world transforms
+		for( auto i = 0; i < count; ++i ) {
+			auto local = &localTransforms[i];
+			auto world = &worldTransforms[i];
+
+			if( local->parent >= 0 ) {
+				*world = local->transform * worldTransforms[local->parent];
+			} else {
+				*world = local->transform;
+			}
+		}
+	}
+}
+
+void render( RenderCommands* renderer, const Skeleton* skeleton )
+{
+	assert( renderer );
+	assert( skeleton );
+
+#if 1
+	// debug
+	setTexture( renderer, 0, null );
+	MESH_STREAM_BLOCK( stream, renderer ) {
+		stream->color = Color::White;
+		FOR( world : skeleton->worldTransforms ) {
+			auto pos = transformVector3( world, {} );
+			pushAabb( stream, AabbHalfSize( pos, 1, 1, 1 ) );
+		}
+	}
+#endif
+
+	auto worldTransforms = skeleton->worldTransforms;
+	auto voxels          = skeleton->voxels;
+
+	auto stack = renderer->matrixStack;
+	pushMatrix( stack );
+	FOR( visual : skeleton->visuals ) {
+		switch( visual.type ) {
+			case SkeletonVisualType::Voxel: {
+				if( visual.voxel.animation >= 0 ) {
+					auto& world     = worldTransforms[visual.index];
+					auto collection = voxels[visual.voxelIndex];
+					setTexture( renderer, 0, collection->texture );
+					auto range = collection->animations[visual.voxel.animation].range;
+					if( range ) {
+						auto entry =
+						    &collection
+						         ->frames[range.min + ( visual.voxel.frame % width( range ) )];
+						currentMatrix( stack ) =
+						    matrixTranslation( Vec3( -entry->offset.x, entry->offset.y, 0 ) )
+						    * world;
+						addRenderCommandMesh( renderer, entry->mesh );
+					}
+				}
+				break;
+			}
+			InvalidDefaultCase;
+		}
+	}
+	popMatrix( stack );
 }
 
 struct GameState {
 	TileSet tileSet;
 	HeroVoxelCollection heroVoxelCollection;
 	ParticleSystem particleSystem;
+	SkeletonSystem skeletonSystem;
 	VoxelCollection projectile;
 
 	HandleManager entityHandles;
@@ -1085,6 +1221,7 @@ struct GameState {
 
 	// debug fields
 	GameDebugGuiState debugGui;
+	SkeletonTest skeletonTest;
 
 	bool paused;
 
@@ -2601,6 +2738,80 @@ void removeEntity( GameState* game, EntityHandle handle )
 	append_unique( game->entityRemovalQueue, handle );
 }
 
+void testSkeletonSystem( AppData* app, GameInputs* inputs, float dt, bool frameBoundary )
+{
+#if 1
+	auto renderer = &app->renderer;
+	auto game = &app->gameState;
+	auto test = &game->skeletonTest;
+	if( !test->initialized ) {
+		test->initialized = true;
+	}
+
+	auto skeleton = &test->skeleton;
+	if( isKeyPressed( inputs, KC_Space ) && !skeleton->transforms.size() ) {
+		// NOTE: only for testing/debug
+		auto allocator = GlobalScrap;
+		auto animator = &app->animatorState;
+		auto count = ::size( animator->nodes );
+		skeleton->transforms = makeArray( allocator, SkeletonTransform, count );
+		skeleton->worldTransforms = makeArray( allocator, mat4, count );
+
+		auto visualsCount = 0;
+		for( auto i = 0; i < count; ++i ) {
+			auto node = animator->nodes[i].get();
+			auto transform = &skeleton->transforms[i];
+			transform->translation = node->translation;
+			transform->rotation = node->rotation;
+			transform->scale = node->scale;
+			transform->length = node->length;
+			transform->parent =
+			    (int16)find_index_if( animator->nodes, [&]( const UniqueAnimatorNode& entry ) {
+				    return entry->id == node->parentId;
+				} ).value;
+			if( node->assetType == AnimatorAsset::type_collection ) {
+				++visualsCount;
+			}
+		}
+
+		auto voxelsCount = count_if( animator->assets, []( const auto& entry ) {
+			return entry->type == AnimatorAsset::type_collection;
+		} );
+		skeleton->voxels  = makeArray( allocator, VoxelCollection*, voxelsCount );
+		auto currentVoxel = 0;
+		FOR( entry : animator->assets ) {
+			auto asset = entry.get();
+			if( asset->type == AnimatorAsset::type_collection ) {
+				auto voxel = &skeleton->voxels[currentVoxel++];
+				*voxel = &asset->collection->voxels;
+			}
+		}
+		assert( currentVoxel == voxelsCount );
+
+		skeleton->visuals = makeArray( allocator, SkeletonVisuals, visualsCount );
+		auto cur          = 0;
+		for( auto i = 0; i < count; ++i ) {
+			auto node = animator->nodes[i].get();
+			if( node->assetType == AnimatorAsset::type_collection ) {
+				auto visual             = &skeleton->visuals[cur++];
+				visual->type            = SkeletonVisualType::Voxel;
+				visual->voxel.animation = node->voxel.animation;
+				visual->voxel.frame     = node->voxel.frame;
+				visual->index           = (int16)i;
+				visual->voxelIndex =
+				    (int8)find_index_if( skeleton->voxels, [&]( const auto& entry ) {
+					    return entry == &node->asset->collection->voxels;
+					} ).value;
+			}
+		}
+		assert( cur == visualsCount );
+	}
+
+	update( skeleton );
+	render( renderer, skeleton );
+#endif
+}
+
 static void doGame( AppData* app, GameInputs* inputs, bool focus, float dt, bool frameBoundary,
                     bool enableRender = true )
 {
@@ -2810,6 +3021,9 @@ static void doGame( AppData* app, GameInputs* inputs, bool focus, float dt, bool
 				pushQuad( stream, rectf{-500, 500, 500, -500} * TILE_WIDTH, 32 * CELL_DEPTH );
 			}
 		}
+
+		testSkeletonSystem( app, inputs, dt, frameBoundary );
+
 		// render entities
 		for( auto& entry : game->collidableSystem.entries ) {
 			VoxelCollection::Frame* currentFrame = nullptr;
@@ -3223,11 +3437,13 @@ UPDATE_AND_RENDER( updateAndRender )
 
 	END_PROFILING_BLOCK( "updateAndRender" );
 
+#ifndef NO_PROFILING
 	TEMPORARY_MEMORY_BLOCK( &app->stackAllocator ) {
 		auto state = processProfilingEvents( &app->stackAllocator, GlobalProfilingTable );
 		debugPrintln( "Infos: {}", state.infos.size() );
 		visitBlock( state.infos, state.blocks.head, 2 );
 	}
+#endif
 
 	showGameDebugGui( app, inputs, true, dt );
 

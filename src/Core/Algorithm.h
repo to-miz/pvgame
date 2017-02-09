@@ -175,6 +175,24 @@ void iota_n( Iterator first, int32 n, ValueType val )
 	}
 }
 
+template< class Container, class Pred >
+int32 count_if( const Container& container, Pred pred )
+{
+	using std::begin;
+	using std::end;
+	using std::count_if;
+	return safe_truncate< int32 >( count_if( begin( container ), end( container ), pred ) );
+}
+
+template< class Container, class Pred >
+bool any_of( const Container& container, Pred pred )
+{
+	using std::begin;
+	using std::end;
+	using std::any_of;
+	return any_of( begin( container ), end( container ), pred );
+}
+
 template < class Container, class T >
 inline bool exists( Container& container, const T& val )
 {

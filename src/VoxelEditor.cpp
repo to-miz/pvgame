@@ -683,12 +683,6 @@ static void doVoxelGui( AppData* app, GameInputs* inputs, bool focus, float dt )
 	}
 
 	setProjection( renderer, ProjectionType::Orthogonal );
-	/*setTexture( renderer, 0, voxel->textureMap );
-	MESH_STREAM_BLOCK( stream, renderer ) {
-	    stream->color    = 0xFFFFFFFF;
-	    vec3 vertices[4] = {{0, 0, 0}, {100, 0, 0}, {0, 100, 0}, {100, 100, 0}};
-	    pushQuad( stream, vertices );
-	}*/
 	renderer->color        = setAlpha( 0xFFFFFFFF, gui->fadeProgress );
 	auto generateVoxelMesh = false;
 
@@ -799,16 +793,6 @@ static void doVoxelGui( AppData* app, GameInputs* inputs, bool focus, float dt )
 		if( imguiButton( "Assign to current" ) ) {
 			voxelAssignToCurrent( voxel );
 		}
-		/*if( imguiBeginDropGroup( "Offset", &gui->collectionOffsetExpanded ) ) {
-		    auto collection = &voxel->collection;
-		    auto index      = voxel->currentFrame;
-		    if( collection->texture && index >= 0 && index < voxel->frameVoxels.size() ) {
-		        auto current = &collection->frames[index];
-		        imguiEditbox( "x", &current->offset.x );
-		        imguiEditbox( "y", &current->offset.y );
-		    }
-		    imguiEndDropGroup();
-		}*/
 		if( imguiButton( "Generate Grid" ) ) {
 			voxel->voxels     = getVoxelGridFromTextureMapTopLeftColorKey( &voxel->textureMap );
 			generateVoxelMesh = true;

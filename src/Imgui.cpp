@@ -167,6 +167,7 @@ struct ImGuiContainerState {
 	rectf lastRect;
 	float xMax;
 	int8 z;
+	int8 dropGroupDepth;
 	uint16 flags;
 	Mesh* bgMesh;
 
@@ -1197,7 +1198,7 @@ bool imguiContextMenu( int32 containerIndex )
 	container->addPosition = {rect.left, rect.top + style->innerPadding};
 	return true;
 }
-bool imguiContextMenuEntry( StringView text )
+bool imguiContextMenuEntry( StringView text, bool enabled = true )
 {
 	auto handle    = imguiMakeStringHandle( text );
 	auto container = imguiCurrentContainer();
@@ -1224,9 +1225,12 @@ bool imguiContextMenuEntry( StringView text )
 	}
 
 	auto inner = imguiInnerRect( rect );
-	renderTextVCenteredClipped( renderer, font, handle.string, inner );
+	RENDER_COMMANDS_STATE_BLOCK( renderer ) {
+		renderer->color = ( enabled ) ? ( renderer->color ) : ( setAlpha( renderer->color, 0x80 ) );
+		renderTextVCenteredClipped( renderer, font, handle.string, inner );
+	}
 
-	if( imguiKeypressButton( handle.handle, rect ) ) {
+	if( enabled && imguiKeypressButton( handle.handle, rect ) ) {
 		container->setHidden( true );
 		return true;
 	}
@@ -1624,6 +1628,14 @@ bool imguiCheckbox( StringView name, T* value, T cmp )
 	}
 	return false;
 }
+bool imguiCheckboxFlag( StringView name, uint32* flags, uint32 flag )
+{
+	assert( flags );
+	auto handle       = imguiMakeHandle( flags, ImGuiControlType::Checkbox );
+	handle.shortIndex = (uint8)bitScanForward( flag );
+	setFlagCond( *flags, flag, imguiCheckbox( handle, name, ( *flags & flag ) != 0 ) );
+	return ( *flags & flag ) != 0;
+}
 
 bool imguiRadiobox( ImGuiHandle handle, StringView name )
 {
@@ -1736,24 +1748,26 @@ bool imguiBeginDropGroup( ImGuiHandle handle, StringView name, bool expanded )
 	if( imguiKeypressButton( handle, inner ) ) {
 		expanded = !expanded;
 	}
+	static const Color Colors[] = {0x80544C9A, 0x8010B948, 0x80CE1289};
+	auto colorIndex = clamp( (int32)container->dropGroupDepth, 0, countof( Colors ) - 1 );
+	auto color      = Colors[colorIndex];
 	if( expanded ) {
 		container->rect.left += style->innerPadding;
 		container->addPosition.x = container->rect.left;
 		container->horizontalCount = 0;
+		++container->dropGroupDepth;
 	}
 
 	RENDER_COMMANDS_STATE_BLOCK( renderer ) {
-		renderer->color = multiply( renderer->color, Color::White );
+		auto rendererColor = renderer->color;
 		setTexture( renderer, 0, null );
-		MESH_STREAM_BLOCK( stream, renderer ) {
-			stream->color = multiply( renderer->color, 0x80544C9A );
-			pushQuad( stream, inner );
-		}
+		renderer->color = multiply( rendererColor, color );
+		addRenderCommandSingleQuad( renderer, inner );
+		renderer->color = multiply( rendererColor, Color::White );
 		setTexture( renderer, 0, style->atlas );
-		MESH_STREAM_BLOCK( stream, renderer ) {
-			pushQuad( stream, buttonRect, 0, makeQuadTexCoords( style->texCoords[index] ) );
-		}
-		auto textArea   = inner;
+		addRenderCommandSingleQuad( renderer, buttonRect, 0,
+		                            makeQuadTexCoords( style->texCoords[index] ) );
+		auto textArea = inner;
 		textArea.left += ::width( buttonRect ) + style->innerPadding;
 		renderTextCenteredClipped( renderer, font, name, textArea );
 	}
@@ -1782,6 +1796,7 @@ void imguiEndDropGroup()
 	container->rect.left -= style->innerPadding;
 	container->addPosition.x = container->rect.left;
 	container->horizontalCount = 0;
+	--container->dropGroupDepth;
 }
 
 static bool imguiPaddle( ImGuiHandle handle, float* value, float min, float max, float* innerValue,
@@ -2532,10 +2547,10 @@ struct ImGuiListboxItemView {
 
 	int32 size() const { return sz; }
 };
-int32 imguiListboxIntrusive( float* scrollPos, const ImGuiListboxItemView& items, float width,
-                             float height, bool multiselect = true )
+int32 imguiListboxIntrusive( ImGuiHandle handle, float* scrollPos,
+                             const ImGuiListboxItemView& items, float width, float height,
+                             bool multiselect = true )
 {
-	auto handle   = imguiMakeHandle( scrollPos, ImGuiControlType::Listbox );
 	auto renderer = ImGui->renderer;
 	auto font     = ImGui->font;
 	auto inputs   = ImGui->inputs;
@@ -2554,8 +2569,11 @@ int32 imguiListboxIntrusive( float* scrollPos, const ImGuiListboxItemView& items
 	} else {
 		*scrollPos = 0;
 	}
-	if( isKeyPressed( inputs, KC_LButton ) && imguiIsHover( handle )
+	auto leftButton  = isKeyPressed( inputs, KC_LButton );
+	auto rightButton = isKeyPressed( inputs, KC_RButton );
+	if( ( leftButton || rightButton ) && imguiIsHover( handle )
 	    && isPointInside( rect, inputs->mouse.position ) ) {
+
 		imguiFocus( handle );
 		imguiCapture( handle );
 		// handle selection
@@ -2608,10 +2626,17 @@ int32 imguiListboxIntrusive( float* scrollPos, const ImGuiListboxItemView& items
 
 	return selectedIndex;
 }
+int32 imguiListboxIntrusive( float* scrollPos, const ImGuiListboxItemView& items, float width,
+                             float height, bool multiselect = true )
+{
+	auto handle = imguiMakeHandle( scrollPos, ImGuiControlType::Listbox );
+	return imguiListboxIntrusive( handle, scrollPos, items, width, height, multiselect );
+}
 int32 imguiListbox( float* scrollPos, Array< ImGuiListboxItem > items, float width, float height,
                     bool multiselect = true )
 {
-	return imguiListboxIntrusive( scrollPos, items, width, height, multiselect );
+	auto handle = imguiMakeHandle( scrollPos, ImGuiControlType::Listbox );
+	return imguiListboxIntrusive( handle, scrollPos, items, width, height, multiselect );
 }
 
 rectf imguiScrollable( vec2* scrollPos, rectfarg scrollDomain, float width, float height,

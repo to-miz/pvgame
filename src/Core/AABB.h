@@ -57,7 +57,8 @@ template< class T > taabb< T > Aabb( T left, T bottom, T near, T right, T top, T
 template< class T > taabb< T > AabbWHD( T left, T bottom, T near, T width, T height, T depth );
 template< class T > taabb< T > AabbWHD( tvec3arg< T > xyz, T width, T height, T depth );
 template< class T > taabb< T > AabbWHD( tvec3arg< T > xyz, tvec3arg< T > whd );
-template< class T > taabb< T > AabbHalfSize( tvec3arg< T > xyz, T hw, T hh, T hd );
+template < class T, class W, class H, class D >
+taabb< T > AabbHalfSize( tvec3arg< T > xyz, W hw, H hh, D hd );
 template < class T, class U >
 auto AabbScaled( taabbarg< T > aabb, tvec3arg< U > xyz )
     -> taabb< typename typeof( aabb.left* xyz.x ) >;
@@ -97,9 +98,14 @@ template< class T > taabb< T > AabbWHD( tvec3arg< T > xyz, tvec3arg< T > whd )
 {
 	return {xyz.x, xyz.y, xyz.z, xyz.x + whd.x, xyz.y + whd.y, xyz.z + whd.z};
 }
-template< class T > taabb< T > AabbHalfSize( tvec3arg< T > xyz, T hw, T hh, T hd )
+template < class T, class W, class H, class D >
+taabb< T > AabbHalfSize( tvec3arg< T > xyz, W hw, H hh, D hd )
 {
-	return {xyz.x - hw, xyz.y - hh, xyz.z - hd, xyz.x + hw, xyz.y + hh, xyz.z + hd};
+	static_assert( std::is_convertible< W, T >::value, "Values not implicitly convertible" );
+	static_assert( std::is_convertible< H, T >::value, "Values not implicitly convertible" );
+	static_assert( std::is_convertible< D, T >::value, "Values not implicitly convertible" );
+	return {xyz.x - (T)hw, xyz.y - (T)hh, xyz.z - (T)hd,
+	        xyz.x + (T)hw, xyz.y + (T)hh, xyz.z + (T)hd};
 }
 template < class T, class U >
 auto AabbScaled( taabbarg< T > aabb, tvec3arg< U > xyz )
