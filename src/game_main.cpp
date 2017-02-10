@@ -259,6 +259,16 @@ FilenameString getSaveFilename( const char* filter, const char* initialDir )
 	return result;
 }
 
+StringView readFile( StackAllocator* allocator, StringView filename )
+{
+	assert( GlobalPlatformServices );
+	auto buffer = beginVector( allocator, char );
+	buffer.resize( (int32)GlobalPlatformServices->readFileToBuffer( filename, buffer.data(),
+	                                                                buffer.capacity() ) );
+	endVector( allocator, &buffer );
+	return {buffer.data(), buffer.size()};
+}
+
 void debug_Clear()
 {
 	debug_MeshStream->color = 0xFF00FFFF;
@@ -1068,135 +1078,15 @@ void renderParticles( RenderCommands* renderer, ParticleSystem* system )
 	setRenderState( renderer, RenderStateType::DepthTest, true );
 }
 
-struct SkeletonTransform {
-	vec3 translation;
-	vec3 rotation;
-	vec3 scale;
-	float length;
-	int16 parent;
-};
-enum class SkeletonVisualType : int8 { None, Voxel };
-struct SkeletonVisuals {
-	SkeletonVisualType type;
-	int8 voxelIndex;
-	int16 index;
-	union {
-		struct {
-			int16 animation;
-			int16 frame;
-		} voxel;
-	};
-};
-struct Skeleton {
-	Array< SkeletonTransform > transforms;
-	Array< mat4 > worldTransforms;
-	Array< SkeletonVisuals > visuals;
-	Array< VoxelCollection* > voxels;
-};
-struct SkeletonSystem {
-	Array< Skeleton > skeletons;
-};
+enum class AppFocus { Game, Voxel, TexturePack, Animator, Easing };
 
-struct SkeletonTest {
-	Skeleton skeleton;
-	bool initialized;
-};
+#include "PhysicsHitTest.cpp"
 
-void update( Skeleton* skeleton )
-{
-	assert( skeleton );
-	assert( skeleton->transforms.size() == skeleton->worldTransforms.size() );
+#include "Editor/TexturePack/TexturePack.h"
+#include "Editor/Animator/Animator.h"
 
-	auto transforms      = skeleton->transforms;
-	auto worldTransforms = skeleton->worldTransforms;
-
-	TEMPORARY_MEMORY_BLOCK( GlobalScrap ) {
-		auto allocator = GlobalScrap;
-
-		struct Local {
-			int16 parent;
-			mat4 transform;
-		};
-		auto count = skeleton->transforms.size();
-		auto localTransforms = makeArray( allocator, Local, count );
-		if( !localTransforms.size() ) {
-			return;
-		}
-
-		// update local transforms
-		for( auto i = 0; i < count; ++i ) {
-			auto transform = &transforms[i];
-			auto local     = &localTransforms[i];
-
-			assert( transform->parent < i );
-			local->parent    = transform->parent;
-			local->transform = matrixTranslation( transform->length, 0, 0 )
-			                   * matrixScale( transform->scale )
-			                   * matrixRotation( transform->rotation )
-			                   * matrixTranslation( transform->translation );
-		}
-
-		// update world transforms
-		for( auto i = 0; i < count; ++i ) {
-			auto local = &localTransforms[i];
-			auto world = &worldTransforms[i];
-
-			if( local->parent >= 0 ) {
-				*world = local->transform * worldTransforms[local->parent];
-			} else {
-				*world = local->transform;
-			}
-		}
-	}
-}
-
-void render( RenderCommands* renderer, const Skeleton* skeleton )
-{
-	assert( renderer );
-	assert( skeleton );
-
-#if 1
-	// debug
-	setTexture( renderer, 0, null );
-	MESH_STREAM_BLOCK( stream, renderer ) {
-		stream->color = Color::White;
-		FOR( world : skeleton->worldTransforms ) {
-			auto pos = transformVector3( world, {} );
-			pushAabb( stream, AabbHalfSize( pos, 1, 1, 1 ) );
-		}
-	}
-#endif
-
-	auto worldTransforms = skeleton->worldTransforms;
-	auto voxels          = skeleton->voxels;
-
-	auto stack = renderer->matrixStack;
-	pushMatrix( stack );
-	FOR( visual : skeleton->visuals ) {
-		switch( visual.type ) {
-			case SkeletonVisualType::Voxel: {
-				if( visual.voxel.animation >= 0 ) {
-					auto& world     = worldTransforms[visual.index];
-					auto collection = voxels[visual.voxelIndex];
-					setTexture( renderer, 0, collection->texture );
-					auto range = collection->animations[visual.voxel.animation].range;
-					if( range ) {
-						auto entry =
-						    &collection
-						         ->frames[range.min + ( visual.voxel.frame % width( range ) )];
-						currentMatrix( stack ) =
-						    matrixTranslation( Vec3( -entry->offset.x, entry->offset.y, 0 ) )
-						    * world;
-						addRenderCommandMesh( renderer, entry->mesh );
-					}
-				}
-				break;
-			}
-			InvalidDefaultCase;
-		}
-	}
-	popMatrix( stack );
-}
+#include "Skeleton.h"
+#include "Skeleton.cpp"
 
 struct GameState {
 	TileSet tileSet;
@@ -1347,13 +1237,6 @@ void processControlSystem( GameState* game, ControlSystem* control,
 		entry.shootInputBuffer = processTimer( entry.shootInputBuffer, dt );
 	}
 }
-
-enum class AppFocus { Game, Voxel, TexturePack, Animator, Easing };
-
-#include "PhysicsHitTest.cpp"
-
-#include "Editor/TexturePack/TexturePack.h"
-#include "Editor/Animator/Animator.h"
 
 struct EasingState {
 	bool initialized;
@@ -2745,12 +2628,17 @@ void testSkeletonSystem( AppData* app, GameInputs* inputs, float dt, bool frameB
 	auto game = &app->gameState;
 	auto test = &game->skeletonTest;
 	if( !test->initialized ) {
+		auto allocator = &app->stackAllocator;
+		test->definition =
+		    loadSkeletonDefinition( allocator, "Data/voxels/wheels_enemy_animations.json", 0 );
 		test->initialized = true;
 	}
 
 	auto skeleton = &test->skeleton;
+#if 0
 	if( isKeyPressed( inputs, KC_Space ) && !skeleton->transforms.size() ) {
 		// NOTE: only for testing/debug
+		// we are copying node information from the animation editor, very hacky!
 		auto allocator = GlobalScrap;
 		auto animator = &app->animatorState;
 		auto count = ::size( animator->nodes );
@@ -2805,7 +2693,10 @@ void testSkeletonSystem( AppData* app, GameInputs* inputs, float dt, bool frameB
 			}
 		}
 		assert( cur == visualsCount );
+
+		skeleton->dirty = true;
 	}
+#endif
 
 	update( skeleton );
 	render( renderer, skeleton );

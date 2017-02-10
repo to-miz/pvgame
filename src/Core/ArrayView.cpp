@@ -72,6 +72,11 @@ void endVector( StackAllocator* allocator, UninitializedArray< T >* v )
 	                         v->capacity() * sizeof( T ), alignof( T ) );
 	v->cap = v->sz;
 }
+template < class T >
+inline void fitToSize( StackAllocator* allocator, UninitializedArray< T >* v )
+{
+	endVector( allocator, v );
+}
 
 // small buffer based uarray
 template < class T, int32 N >

@@ -97,6 +97,17 @@ void* reallocate( StackAllocator* allocator, void* ptr, size_t newSize, size_t o
 		return result;
 	}
 }
+bool reallocateInPlace( StackAllocator* allocator, void* ptr, size_t newSize, size_t oldSize,
+                        uint32 alignment )
+{
+	assert( isValid( allocator ) );
+	assert( ptr );
+	if( isBack( allocator, ptr, oldSize ) ) {
+		allocator->size += newSize - oldSize;
+		return true;
+	}
+	return false;
+}
 void free( StackAllocator* allocator, void* ptr, size_t size, uint32 alignment )
 {
 	assert( isValid( allocator ) );

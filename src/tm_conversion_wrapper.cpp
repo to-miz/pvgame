@@ -298,3 +298,21 @@ template <> rectf convert_to< rectf >( StringView str, rectf def )
 	scan_values( str, makeArrayView( result.elements ) );
 	return result;
 }
+
+// auto deduces conversion
+// NOTE: still undecided about this, its an generic implicit conversion
+// there are 3 options for string to type conversions
+// 1.	int32 x = convert_to< int32 >( text ); // redundant int32
+// 2.	int32 x; from_string( text, x );       // from_string has an output parameter, ugly, two liner, should the output param be ref or ptr?
+// 3.	int32 x = auto_from_string( text );    // nice syntax, but maybe dangerous? Need to use it for a while and see if it bites me at some point
+struct auto_from_string {
+	StringView str = {};
+
+	inline explicit auto_from_string( StringView str ) : str( str ){};
+
+	template < class T >
+	inline operator T() const
+	{
+		return convert_to< T >( str );
+	};
+};

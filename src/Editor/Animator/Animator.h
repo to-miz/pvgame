@@ -3,6 +3,8 @@
 #ifndef _ANIMATOR_H_INCLUDED_
 #define _ANIMATOR_H_INCLUDED_
 
+constexpr const int32 SkeletonMaxParents = 1024;
+
 typedef int32 GroupId;
 typedef trange< GroupId > GroupChildren;
 

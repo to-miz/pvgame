@@ -113,3 +113,24 @@ void deserialize( const JsonValue& value, uint32& out, uint32 def = {} )
 {
 	out = (uint32)value.getUInt( def );
 }
+
+JsonStackAllocator makeJsonAllocator( StackAllocator* allocator, int32 size )
+{
+	JsonStackAllocator result = {};
+	assert( size >= 0 );
+	if( size ) {
+		auto array = allocateArray( allocator, char, size );
+		result = {array, 0, (size_t)size};
+	}
+	return result;
+}
+
+JsonDocument makeJsonDocument( StackAllocator* allocator, StringView data,
+                               uint32 flags = JSON_READER_STRICT )
+{
+	auto jsonAlloc = makeJsonAllocator( allocator, data.size() * sizeof( JsonValue ) );
+	auto doc = jsonMakeDocument( &jsonAlloc, data.data(), data.size(), flags );
+	reallocateInPlace( allocator, jsonAlloc.ptr, jsonAlloc.size, jsonAlloc.capacity,
+	                   alignof( char ) );
+	return doc;
+}

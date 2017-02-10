@@ -641,7 +641,7 @@ bool bindParent( AnimatorState* animator, AnimatorNode* node )
 
 			int16 count = node->childrenCount + 1;
 			auto current = node->parent;
-			bounded_while( current, 1024 ) {
+			bounded_while( current, SkeletonMaxParents ) {
 				current->childrenCount += count;
 				current = current->parent;
 			}

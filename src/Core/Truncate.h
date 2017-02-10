@@ -18,4 +18,32 @@ inline constexpr ReturnType safe_truncate( ValueType val )
 	return static_cast< ReturnType >( val );
 }
 
+// deduced version of safe truncate, so that the return type does not have to be repeated
+// motivation of this method is to say "truncate implicitly, but make sure at runtime that
+// truncation doesn't alter value"
+// basically you can write this:
+//	int32 x = 12;
+//	int16 y = auto_truncate( x ); // alternative: safe_truncate< int16 >( x );
+template < class T >
+struct auto_truncate_t {
+	static_assert( std::is_integral< T >::value || std::is_floating_point< T >::value,
+	               "T needs to be integral or floating point for truncation" );
+
+	T value;
+
+	// "universal" conversion operator that truncates "safely"
+	// not really universal, since we static_assert on integral types
+	template < class U >
+	inline operator U() const
+	{
+		return safe_truncate< U >( value );
+	};
+};
+
+template < class T >
+auto_truncate_t< T > auto_truncate( T value )
+{
+	return auto_truncate_t< T >{value};
+}
+
 #endif // _TRUNCATE_H_INCLUDED_
