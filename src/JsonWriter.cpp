@@ -106,6 +106,26 @@ void writeValue( JsonWriter* writer, const T& value )
 	writer->isNotProperty = true;
 	writer->builder << value;
 }
+template< class T >
+void writeValue( JsonWriter* writer, Array< T > array )
+{
+	writeStartArray( writer );
+		FOR( entry : array ) {
+			writeValue( writer, entry );
+		}
+	writeEndArray( writer );
+}
+template< class T >
+void writeCompactArray( JsonWriter* writer, Array< T > array )
+{
+	writeStartArray( writer );
+		auto prev = exchange( writer->minimal, true );
+		FOR( entry : array ) {
+			writeValue( writer, entry );
+		}
+	writeEndArray( writer );
+	writer->minimal = prev;
+}
 void writeValue( JsonWriter* writer, StringView value )
 {
 	// TODO: when writing string values we need to escape some characters
@@ -184,14 +204,7 @@ void writeValue( JsonWriter* writer, vec3arg v )
 	writeEndObject( writer );
 	writer->minimal = prev;
 #else
-	writeStartArray( writer );
-	auto prev       = writer->minimal;
-	writer->minimal = true;
-	writeValue( writer, v.x );
-	writeValue( writer, v.y );
-	writeValue( writer, v.z );
-	writeEndArray( writer );
-	writer->minimal = prev;
+	writeCompactArray( writer, makeArrayView( v.elements ) );
 #endif
 }
 

@@ -3,7 +3,7 @@
 #ifndef _RANGE_H_INCLUDED_
 #define _RANGE_H_INCLUDED_
 
-template< class T >
+template < class T >
 struct trange {
 	T min;
 	T max;
@@ -13,14 +13,22 @@ struct trange {
 		assert( min <= max );
 		return min < max;
 	}
+
+#if RANGE_ARGS_AS_CONST_REF
+	typedef const trange& rangearg;
+#else
+	typedef trange rangearg;
+#endif
+	inline bool operator==( rangearg rhs ) const { return min == rhs.min && max == rhs.max; }
+	inline bool operator!=( rangearg rhs ) const { return min != rhs.min || max != rhs.max; }
 };
 
 #if RANGE_ARGS_AS_CONST_REF
-	template< class T >
-	using trangearg = const trange< T >&;
+template < class T >
+using trangearg = const trange< T >&;
 #else
-	template< class T >
-	using trangearg = trange< T >;
+template < class T >
+using trangearg = trange< T >;
 #endif
 
 typedef trange< int32 > rangei;
@@ -51,17 +59,6 @@ template < class A, class B, class C = typename std::common_type< A, B >::type >
 trange< C > Range( A min, B max )
 {
 	return {(C)min, (C)max};
-}
-
-template < class T >
-bool operator==( trangearg< T > a, trangearg< T > b )
-{
-	return a.min == b.min && a.max == b.max;
-}
-template < class T >
-bool operator!=( trangearg< T > a, trangearg< T > b )
-{
-	return a.min != b.min || a.max != b.max;
 }
 
 template < class T >

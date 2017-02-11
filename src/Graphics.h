@@ -32,13 +32,13 @@ enum class BlendType {
 enum class ProjectionType { Perspective, Orthogonal };
 
 // macro to define typesafe id types
-#define GRAPHICS_MAKE_ID_ENTRY( name )                                \
-	struct name {                                                     \
-		int32 id;                                                     \
-		inline explicit operator bool() const { return id != 0; };    \
-	};                                                                \
-	inline bool operator==( name a, name b ) { return a.id == b.id; } \
-	inline bool operator!=( name a, name b ) { return a.id != b.id; }
+#define GRAPHICS_MAKE_ID_ENTRY( name )                                           \
+	struct name {                                                                \
+		int32 id;                                                                \
+		inline explicit operator bool() const { return id != 0; };               \
+		friend bool operator==( name a, name b ) { return a.id == b.id; } \
+		friend bool operator!=( name a, name b ) { return a.id != b.id; } \
+	};
 
 GRAPHICS_MAKE_ID_ENTRY( TextureId );
 GRAPHICS_MAKE_ID_ENTRY( MeshId );

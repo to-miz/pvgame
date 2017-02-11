@@ -7,16 +7,11 @@ struct SkeletonTransform {
 	int16 id;
 };
 enum class SkeletonVisualType : int8 { None, Voxel };
-struct SkeletonVisuals {
-	SkeletonVisualType type;
-	int8 voxelIndex;
+struct SkeletonVoxelVisuals {
+	int16 voxelIndex;
 	int16 index;
-	union {
-		struct {
-			int16 animation;
-			int16 frame;
-		} voxel;
-	};
+	int16 animation;
+	int16 frame;
 };
 struct SkeletonKeyframesState {
 	int16 translation;
@@ -33,7 +28,7 @@ struct SkeletonAnimationState {
 struct Skeleton {
 	Array< SkeletonTransform > transforms;
 	Array< mat4 > worldTransforms;
-	Array< SkeletonVisuals > visuals;
+	Array< SkeletonVoxelVisuals > visuals;
 	Array< VoxelCollection* > voxels;
 	UArray< SkeletonAnimationState > animations;
 	int16 definitionIndex;
@@ -59,6 +54,7 @@ struct SkeleonKeyframes {
 };
 struct SkeletonAnimation {
 	Array< SkeletonTransform > nodes;
+	Array< SkeletonVoxelVisuals > visuals;
 	Array< SkeleonKeyframes > keyframes;
 	Array< BezierForwardDifferencerData > curves;
 	float duration;
@@ -77,7 +73,7 @@ struct SkeletonAssetId {
 struct SkeletonDefinition {
 	Array< SkeletonAnimation > animations;
 	Array< SkeletonTransform > baseNodes;
-	Array< SkeletonVisuals > baseVisuals;
+	Array< SkeletonVoxelVisuals > baseVisuals;
 	Array< SkeletonId > animationIds;
 	Array< SkeletonId > nodeIds;
 	Array< SkeletonAssetId > assetIds;

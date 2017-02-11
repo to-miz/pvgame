@@ -474,9 +474,12 @@ AnimatorKeyframeData getInterpolatedKeyframe( AnimatorState* animator, float t, 
 	return result;
 }
 
-UniqueAnimatorNode* findNodeById( AnimatorNodes& nodes, int16 id )
+AnimatorNode* findNodeById( AnimatorNodes& nodes, int16 id )
 {
-	return find_first_where( nodes, entry->id == id );
+	if( auto it = find_first_where( nodes, entry->id == id ) ) {
+		return it->get();
+	}
+	return nullptr;
 }
 
 AnimatorNode getCurrentFrameNode( AnimatorState* animator, AnimatorNode* node, float lastFrame = 0 )
@@ -637,7 +640,7 @@ bool bindParent( AnimatorState* animator, AnimatorNode* node )
 	node->parent = nullptr;
 	if( node->parentId >= 0 ) {
 		if( auto parent = findNodeById( animator->nodes, node->parentId ) ) {
-			node->parent = parent->get();
+			node->parent = parent;
 
 			int16 count = node->childrenCount + 1;
 			auto current = node->parent;
@@ -899,9 +902,7 @@ void openAnimation( AnimatorState* animator, AnimatorAnimation* animation )
 	clearAnimatorGroups( animator );
 
 	FOR( node : animation->nodes ) {
-		auto baseIt = findNodeById( animator->baseNodes, node.id );
-		if( baseIt ) {
-			auto base = baseIt->get();
+		if( auto base = findNodeById( animator->baseNodes, node.id ) ) {
 			assert( !base->marked );
 			if( base->marked ) {
 				continue;
@@ -935,7 +936,7 @@ void openAnimation( AnimatorState* animator, AnimatorAnimation* animation )
 		auto base = findNodeById( animator->baseNodes, getAnimatorKeyframeOwner( keyframe.group ) );
 		assert( base );
 		animator->keyframes.push_back(
-		    std::make_unique< AnimatorKeyframe >( toAbsoluteKeyframe( base->get(), &keyframe ) ) );
+		    std::make_unique< AnimatorKeyframe >( toAbsoluteKeyframe( base, &keyframe ) ) );
 	}
 	sortKeyframes( animator );
 
@@ -949,9 +950,8 @@ void commitAnimation( AnimatorState* animator )
 	animation->nodes.resize( animator->nodes.size() );
 
 	zip_for( animation->nodes, animator->nodes ) {
-		auto base = findNodeById( animator->baseNodes, ( *second )->id );
-		if( base ) {
-			*first = toRelativeNode( base->get(), second->get() );
+		if( auto base = findNodeById( animator->baseNodes, ( *second )->id ) ) {
+			*first = toRelativeNode( base, second->get() );
 		}
 	}
 
@@ -1017,52 +1017,136 @@ void animatorClear( AnimatorState* animator )
 	clearSelectedNodes( animator );
 	clearAnimatorGroups( animator );
 }
-void animatorSave( StackAllocator* allocator, AnimatorState* animator, StringView filename )
+template < class T >
+void animatorSaveNodes( JsonWriter* writer, Array< T > nodes, bool baseNodes,
+                        const AnimatorNode* ( *get )(const T&))
 {
-	auto writeNodeKeyableProperties = []( JsonWriter* writer, AnimatorNode* node ) {
-		writeProperty( writer, "translation", node->translation );
-		writeProperty( writer, "rotation", node->rotation );
-		writeProperty( writer, "scale", node->scale );
-		writeProperty( writer, "id", node->id );
-		switch( node->assetType ) {
-			case AnimatorAsset::type_none: {
-				break;
-			}
-			case AnimatorAsset::type_collection: {
-				writePropertyName( writer, "voxel" );
+	if( baseNodes ) {
+		// write idents
+		writePropertyName( writer, "idents" );
+		writeStartArray( writer );
+			FOR( entry : nodes ) {
+				auto node = get( entry );
 				writeStartObject( writer );
+					writeProperty( writer, "id", node->id );
+					writeProperty( writer, "name", StringView{node->name} );
+				writeEndObject( writer );
+			}
+		writeEndArray( writer );
+	}
+
+	// write transforms
+	writePropertyName( writer, "transforms" );
+	writeStartArray( writer );
+		FOR( entry : nodes ) {
+			auto node = get( entry );
+			writeStartObject( writer );
+				writeProperty( writer, "id", node->id );
+				writeProperty( writer, "translation", node->translation );
+				writeProperty( writer, "rotation", node->rotation );
+				writeProperty( writer, "scale", node->scale );
+				writeProperty( writer, "length", node->length );
+				if( baseNodes ) {
+					writeProperty( writer, "parentId", NullableInt32{node->parentId} );
+				}
+			writeEndObject( writer );
+		}
+	writeEndArray( writer );
+
+	// write voxels
+	writePropertyName( writer, "voxels" );
+	writeStartArray( writer );
+		FOR( entry : nodes ) {
+			auto node = get( entry );
+			if( node->assetType == AnimatorAsset::type_collection ) {
+				writeStartObject( writer );
+					writeProperty( writer, "id", node->id );
+					if( baseNodes ) {
+						writeProperty( writer, "assetId", node->assetId );
+					}
 					writeProperty( writer, "animation", NullableInt32{node->voxel.animation} );
 					writeProperty( writer, "frame", node->voxel.frame );
 				writeEndObject( writer );
-				break;
 			}
-			case AnimatorAsset::type_collision:
-			case AnimatorAsset::type_hitbox:
-			case AnimatorAsset::type_hurtbox:
-			case AnimatorAsset::type_emitter: {
-				if( node->assetType == AnimatorAsset::type_emitter ) {
-					writePropertyName( writer, "emitter" );
-				} else {
-					writePropertyName( writer, "hitbox" );
-				}
+		}
+	writeEndArray( writer );
+
+	// write emitters
+	writePropertyName( writer, "emitters" );
+	writeStartArray( writer );
+		FOR( entry : nodes ) {
+			auto node = get( entry );
+			if( node->assetType == AnimatorAsset::type_emitter ) {
 				writeStartObject( writer );
+					writeProperty( writer, "id", node->id );
+					if( baseNodes ) {
+						writeProperty( writer, "assetId", node->assetId );
+					}
 					writeProperty( writer, "active", (bool)node->active );
 				writeEndObject( writer );
-				break;
 			}
-			InvalidDefaultCase;
 		}
-	};
+	writeEndArray( writer );
 
-	auto writeNode = [&writeNodeKeyableProperties]( JsonWriter* writer, AnimatorNode* node ) {
-		writeStartObject( writer );
-			writeNodeKeyableProperties( writer, node );
-			writeProperty( writer, "length", node->length );
-			writeProperty( writer, "parentId", NullableInt32{node->parentId} );
-			writeProperty( writer, "assetId", NullableInt32{node->assetId} );
-			writeProperty( writer, "name", StringView{node->name} );
-		writeEndObject( writer );
-	};
+	// write collision_bounds
+	writePropertyName( writer, "collision_bounds" );
+	writeStartArray( writer );
+		FOR( entry : nodes ) {
+			auto node = get( entry );
+			if( node->assetType == AnimatorAsset::type_collision ) {
+				writeStartObject( writer );
+					writeProperty( writer, "id", node->id );
+					if( baseNodes ) {
+						writeProperty( writer, "assetId", node->assetId );
+					}
+					writeProperty( writer, "active", (bool)node->active );
+				writeEndObject( writer );
+			}
+		}
+	writeEndArray( writer );
+
+	// write hitboxes
+	writePropertyName( writer, "hitboxes" );
+	writeStartArray( writer );
+		FOR( entry : nodes ) {
+			auto node = get( entry );
+			if( node->assetType == AnimatorAsset::type_hitbox ) {
+				writeStartObject( writer );
+					writeProperty( writer, "id", node->id );
+					if( baseNodes ) {
+						writeProperty( writer, "assetId", node->assetId );
+					}
+					writeProperty( writer, "active", (bool)node->active );
+				writeEndObject( writer );
+			}
+		}
+	writeEndArray( writer );
+	// write hurtboxes
+	writePropertyName( writer, "hurtboxes" );
+	writeStartArray( writer );
+		FOR( entry : nodes ) {
+			auto node = get( entry );
+			if( node->assetType == AnimatorAsset::type_hurtbox ) {
+				writeStartObject( writer );
+					writeProperty( writer, "id", node->id );
+					if( baseNodes ) {
+						writeProperty( writer, "assetId", node->assetId );
+					}
+					writeProperty( writer, "active", (bool)node->active );
+				writeEndObject( writer );
+			}
+		}
+	writeEndArray( writer );
+}
+
+
+void animatorSave( StackAllocator* allocator, AnimatorState* animator, StringView filename )
+{
+	auto current = animator->currentAnimation;
+	if( current ) {
+		closeAnimation( animator, true );
+	}
+	assert( !animator->currentAnimation );
 
 	auto writeKeyframes = []( JsonWriter* writer, Array< AnimatorKeyframe > keyframes,
 	                          Array< AnimatorCurveData > curves, StringView name, GroupId id ) {
@@ -1112,127 +1196,175 @@ void animatorSave( StackAllocator* allocator, AnimatorState* animator, StringVie
 		writeEndArray( writer );
 	};
 
-	auto writeAsset = []( JsonWriter* writer, const AnimatorAsset* asset ) {
-		writeStartObject( writer );
-			writeProperty( writer, "type", to_string( asset->type ) );
-			switch( asset->type ) {
-				case AnimatorAsset::type_collection: {
-					assert( asset->collection );
-					writeProperty( writer, "filename", asset->collection->voxels.filename );
-					break;
-				}
-				case AnimatorAsset::type_collision: {
-					writeProperty( writer, "collision", asset->collision );
-					break;
-				}
-				case AnimatorAsset::type_hitbox: {
-					writeProperty( writer, "hitbox", asset->hitbox );
-					break;
-				}
-				case AnimatorAsset::type_hurtbox: {
-					writeProperty( writer, "hurtbox", asset->hurtbox );
-					break;
-				}
-				case AnimatorAsset::type_emitter: {
-					writeProperty( writer, "emitter", asset->emitter );
-					break;
-				}
-				InvalidDefaultCase;
-			}
-			writeProperty( writer, "id", asset->id );
-			writeProperty( writer, "name", StringView{asset->name, asset->nameLength} );
-		writeEndObject( writer );
-	};
-
-	AnimatorAnimation* current = animator->currentAnimation;
-	if( animator->currentAnimation ) {
-		closeAnimation( animator, true );
+	// make sure that every node has valid assets
+	FOR( entry : animator->nodes ) {
+		refreshAsset( animator, entry.get() );
 	}
 
 	TEMPORARY_MEMORY_BLOCK( allocator ) {
-		auto bufferSize = (int32)getCapacityFor< char >( allocator );
-		auto buffer     = allocateArray( allocator, char, bufferSize );
-		auto writerObj  = makeJsonWriter( buffer, bufferSize );
-		auto writer     = &writerObj;
-
-		auto nodes = ( animator->currentAnimation ) ? &animator->baseNodes : &animator->nodes;
+		auto jsonData  = beginVector( allocator, char );
+		auto writerObj = makeJsonWriter( jsonData.data(), jsonData.capacity() );
+		auto writer    = &writerObj;
 
 		writeStartObject( writer );
-			writePropertyName( writer, "assets" );
+		// write assets
+		writePropertyName( writer, "assets" );
+		writeStartObject( writer );
+			// write voxel assets
+			writePropertyName( writer, "voxels" );
 			writeStartArray( writer );
-				FOR( asset : animator->assets ) {
-					writeAsset( writer, asset.get() );
+			FOR( entry : animator->assets ) {
+				auto asset = entry.get();
+				if( asset->type == AnimatorAsset::type_collection ) {
+					writeStartObject( writer );
+					    writeProperty( writer, "id", asset->id );
+					    writeProperty( writer, "name", asset->getName() );
+					    writeProperty( writer, "filename", asset->collection->voxels.filename );
+				    writeEndObject( writer );
 				}
-			writeEndArray( writer );
-
-			writePropertyName( writer, "nodes" );
-			writeStartArray( writer );
-			FOR( node : *nodes ) {
-				writeNode( writer, node.get() );
 			}
 			writeEndArray( writer );
 
-			writePropertyName( writer, "animations" );
+			// write emitter assets
+			writePropertyName( writer, "emitters" );
 			writeStartArray( writer );
-			FOR( animation : animator->animations ) {
-			    auto keyframes = makeArrayView( animation.keyframes );
-			    auto curves    = makeArrayView( animation.curves );
-			    writeStartObject( writer );
-					writeProperty( writer, "name", StringView{animation.name} );
-					writePropertyName( writer, "nodes" );
-					writeStartArray( writer );
-					FOR( node : animation.nodes ) {
-						auto baseIt = findNodeById( animator->nodes, node.id );
-						if( !baseIt ) {
-							continue;
-						}
-						auto base = baseIt->get();
-						writeStartObject( writer );
-							writeNodeKeyableProperties( writer, &node );
-							auto group = makeAnimatorGroup( node.id );
-							writePropertyName( writer, "keyframes" );
-							writeStartObject( writer );
-				            writeKeyframes( writer, keyframes, curves, "translation",
-				                            group + AnimatorKeyframeData::type_translation );
-				            writeKeyframes( writer, keyframes, curves, "rotation",
-				                            group + AnimatorKeyframeData::type_rotation );
-				            writeKeyframes( writer, keyframes, curves, "scale",
-				                            group + AnimatorKeyframeData::type_scale );
-				            // make sure that node has a valid asset set up
-				            correctAsset( base, &node );
-				            refreshAsset( animator, &node );
+			FOR( entry : animator->assets ) {
+				auto asset = entry.get();
+				if( asset->type == AnimatorAsset::type_emitter ) {
+					writeStartObject( writer );
+						writeProperty( writer, "id", asset->id );
+						writeProperty( writer, "name", asset->getName() );
+				        writeProperty( writer, "emitter", asset->emitter );
+			        writeEndObject( writer );
+				}
+			}
+			writeEndArray( writer );
 
-				            switch( node.assetType ) {
-					            case AnimatorAsset::type_none: {
-						            break;
-					            }
-					            case AnimatorAsset::type_collection: {
-						            writeKeyframes( writer, keyframes, curves, "frame",
-						                            group + AnimatorKeyframeData::type_frame );
-						            break;
-					            }
-					            case AnimatorAsset::type_collision:
-					            case AnimatorAsset::type_hitbox:
-					            case AnimatorAsset::type_hurtbox:
-					            case AnimatorAsset::type_emitter: {
-					            	writeKeyframes( writer, keyframes, curves, "active",
-					            	                group + AnimatorKeyframeData::type_active );
-					            	break;
-					            }
-								InvalidDefaultCase;
-							}
-							writeEndObject( writer );
-						writeEndObject( writer );
-					}
-					writeEndArray( writer );
-				writeEndObject( writer );
+			// write collision assets
+			writePropertyName( writer, "collision_bounds" );
+			writeStartArray( writer );
+			FOR( entry : animator->assets ) {
+				auto asset = entry.get();
+				if( asset->type == AnimatorAsset::type_collision ) {
+					writeStartObject( writer );
+						writeProperty( writer, "id", asset->id );
+						writeProperty( writer, "name", asset->getName() );
+				        writeProperty( writer, "bounds", asset->collision );
+			        writeEndObject( writer );
+				}
+			}
+			writeEndArray( writer );
+
+			// write hitbox assets
+			writePropertyName( writer, "hitboxes" );
+			writeStartArray( writer );
+			FOR( entry : animator->assets ) {
+				auto asset = entry.get();
+				if( asset->type == AnimatorAsset::type_hitbox ) {
+					writeStartObject( writer );
+						writeProperty( writer, "id", asset->id );
+						writeProperty( writer, "name", asset->getName() );
+				        writeProperty( writer, "bounds", asset->hitbox );
+			        writeEndObject( writer );
+				}
+			}
+			writeEndArray( writer );
+
+			// write hurtbox assets
+			writePropertyName( writer, "hurtboxes" );
+			writeStartArray( writer );
+			FOR( entry : animator->assets ) {
+				auto asset = entry.get();
+				if( asset->type == AnimatorAsset::type_hurtbox ) {
+					writeStartObject( writer );
+						writeProperty( writer, "id", asset->id );
+						writeProperty( writer, "name", asset->getName() );
+				        writeProperty( writer, "bounds", asset->hurtbox );
+			        writeEndObject( writer );
+				}
 			}
 			writeEndArray( writer );
 		writeEndObject( writer );
 
+		// write nodes
+		writePropertyName( writer, "nodes" );
+		writeStartObject( writer );
+		animatorSaveNodes< UniqueAnimatorNode >(
+		    writer, makeArrayView( animator->nodes ), true,
+		    []( const UniqueAnimatorNode& entry ) -> const AnimatorNode* { return entry.get(); } );
+		writeEndObject( writer );
+
+		// write animations
+		writePropertyName( writer, "animations" );
+		writeStartArray( writer );
+			auto getter = []( const AnimatorNode& entry ) -> const AnimatorNode* { return &entry; };
+			FOR( animation : animator->animations ) {
+				// make sure that animation has valid asset values
+			    FOR( node : animation.nodes ) {
+				    auto base = findNodeById( animator->nodes, node.id );
+				    if( !base ) {
+				    	node.marked = false;
+					    continue;
+				    }
+			    	node.marked = true;
+				    correctAsset( base, &node );
+			    }
+
+				writeStartObject( writer );
+				    writeProperty( writer, "name", StringView{animation.name} );
+			        animatorSaveNodes< AnimatorNode >( writer, makeArrayView( animation.nodes ),
+			                                           false, getter );
+
+			        writePropertyName( writer, "keyframes" );
+			        writeStartArray( writer );
+			        FOR( node : animation.nodes ) {
+				        if( !node.marked ) {
+				        	continue;
+				        }
+
+				        auto keyframes = makeArrayView( animation.keyframes );
+				        auto curves    = makeArrayView( animation.curves );
+
+				        writeStartObject( writer );
+				        writeProperty( writer, "id", node.id );
+				        auto group = makeAnimatorGroup( node.id );
+				        writeKeyframes( writer, keyframes, curves, "translation",
+				                        group + AnimatorKeyframeData::type_translation );
+
+				        writeKeyframes( writer, keyframes, curves, "rotation",
+				                        group + AnimatorKeyframeData::type_rotation );
+
+				        writeKeyframes( writer, keyframes, curves, "scale",
+				                        group + AnimatorKeyframeData::type_scale );
+
+				        switch( node.assetType ) {
+				        	case AnimatorAsset::type_none: {
+				        		break;
+				        	}
+					        case AnimatorAsset::type_collection: {
+						        writeKeyframes( writer, keyframes, curves, "frame",
+						                        group + AnimatorKeyframeData::type_frame );
+						        break;
+					        }
+					        case AnimatorAsset::type_collision:
+					        case AnimatorAsset::type_hitbox:
+					        case AnimatorAsset::type_hurtbox:
+					        case AnimatorAsset::type_emitter: {
+						        writeKeyframes( writer, keyframes, curves, "active",
+						                        group + AnimatorKeyframeData::type_active );
+						        break;
+					        }
+					        InvalidDefaultCase;
+				        }
+				        writeEndObject( writer );
+			        }
+			        writeEndArray( writer );
+		        writeEndObject( writer );
+			}
+		writeEndArray( writer );
+		writeEndObject( writer );
+
 		GlobalPlatformServices->writeBufferToFile( filename, writer->data(), writer->size() );
-		animator->flags.unsavedChanges     = false;
-		animator->flags.uncommittedChanges = false;
 	}
 
 	if( current ) {
@@ -1303,7 +1435,316 @@ void loadKeyframes( JsonObjectArray array, GroupId group, Tag tag,
 	}
 }
 
+template <class T >
+void animatorDeserializeNodes( T forEach )
+{
+	// transforms
+	forEach( "transforms", []( JsonObject& attr, AnimatorNode* node, bool baseNode ) {
+		deserialize( attr["translation"], node->translation );
+		deserialize( attr["rotation"], node->rotation );
+		deserialize( attr["scale"], node->scale );
+		deserialize( attr["length"], node->length );
+		if( baseNode ) {
+			deserialize( attr["parentId"], node->parentId, -1 );
+		}
+	} );
+
+	// voxels
+	forEach( "voxels", []( JsonObject& attr, AnimatorNode* node, bool baseNode ) {
+		if( baseNode ) {
+			deserialize( attr["assetId"], node->assetId, -1 );
+		}
+		deserialize( attr["animation"], node->voxel.animation , -1);
+		deserialize( attr["frame"], node->voxel.frame );
+	} );
+
+	// emitters
+	forEach( "emitters", []( JsonObject& attr, AnimatorNode* node, bool baseNode ) {
+		if( baseNode ) {
+			deserialize( attr["assetId"], node->assetId, -1 );
+		}
+		deserialize( attr["active"], node->active );
+	} );
+
+	// collision_bounds
+	forEach( "collision_bounds", []( JsonObject& attr, AnimatorNode* node, bool baseNode ) {
+		if( baseNode ) {
+			deserialize( attr["assetId"], node->assetId, -1 );
+		}
+		deserialize( attr["active"], node->active );
+	} );
+
+	// hitboxes
+	forEach( "hitboxes", []( JsonObject& attr, AnimatorNode* node, bool baseNode ) {
+		if( baseNode ) {
+			deserialize( attr["assetId"], node->assetId, -1 );
+		}
+		deserialize( attr["active"], node->active );
+	} );
+
+	// hurtboxes
+	forEach( "hurtboxes", []( JsonObject& attr, AnimatorNode* node, bool baseNode ) {
+		if( baseNode ) {
+			deserialize( attr["assetId"], node->assetId, -1 );
+		}
+		deserialize( attr["active"], node->active );
+	} );
+}
+
 bool animatorOpen( StackAllocator* allocator, AnimatorState* animator, StringView filename )
+{
+	TEMPORARY_MEMORY_BLOCK( allocator ) {
+		auto file = readFile( allocator, filename );
+		if( !file.size() ) {
+			LOG( ERROR, "Unable to open file {}", filename );
+			return false;
+		}
+
+		auto doc = makeJsonDocument( allocator, file );
+		if( !doc || !doc.root.getObject() ) {
+			if( !doc ) {
+				LOG( ERROR, "{}: Json error {}", filename, jsonGetErrorString( doc.errorType ) );
+			} else {
+				LOG( ERROR, "{}: Json root not object", filename );
+			}
+			return false;
+		}
+
+		animatorClear( animator );
+		auto root = doc.root.getObject();
+
+		if( auto assets = root["assets"].getObject() ) {
+			FOR( attr : assets["voxels"].getObjectArray() ) {
+				auto voxelFile = attr["filename"].getString();
+				if( auto added =
+				        addNewAsset( animator, AnimatorAsset::type_collection, voxelFile ) ) {
+					deserialize( attr["id"], added->id, -1 );
+					added->setName( attr["name"].getString() );
+				}
+			}
+			FOR( attr : assets["emitters"].getObjectArray() ) {
+				if( auto added = addNewAsset( animator, AnimatorAsset::type_emitter ) ) {
+					deserialize( attr["id"], added->id, -1 );
+					added->setName( attr["name"].getString() );
+					deserialize( attr["emitter"], added->emitter );
+				}
+			}
+			FOR( attr : assets["collision_bounds"].getObjectArray() ) {
+				if( auto added = addNewAsset( animator, AnimatorAsset::type_collision ) ) {
+					deserialize( attr["id"], added->id, -1 );
+					added->setName( attr["name"].getString() );
+					deserialize( attr["bounds"], added->collision );
+				}
+			}
+			FOR( attr : assets["hitboxes"].getObjectArray() ) {
+				if( auto added = addNewAsset( animator, AnimatorAsset::type_hitbox ) ) {
+					deserialize( attr["id"], added->id, -1 );
+					added->setName( attr["name"].getString() );
+					deserialize( attr["bounds"], added->hitbox );
+				}
+			}
+			FOR( attr : assets["hurtboxes"].getObjectArray() ) {
+				if( auto added = addNewAsset( animator, AnimatorAsset::type_hurtbox ) ) {
+					deserialize( attr["id"], added->id, -1 );
+					added->setName( attr["name"].getString() );
+					deserialize( attr["bounds"], added->hurtbox );
+				}
+			}
+		}
+
+		if( auto nodes = root["nodes"].getObject() ) {
+			// idents
+			FOR( attr : nodes["idents"].getObjectArray() ) {
+				auto addedNode = std::make_unique< AnimatorNode >();
+				auto node      = addedNode.get();
+				deserialize( attr["id"], node->id, -1 );
+				node->name = attr["name"].getString();
+				animator->nodes.push_back( std::move( addedNode ) );
+			}
+
+			// nodes
+			bool success = true;
+			auto for_each_node = [&]( StringView arrayName,
+			                          void ( *op )( JsonObject&, AnimatorNode*, bool ) ) {
+				FOR( attr : nodes[arrayName].getObjectArray() ) {
+					int16 id = (int16)attr["id"].getInt( -1 );
+					if( auto node = findNodeById( animator->nodes, id ) ) {
+						op( attr, node, true );
+					} else {
+						LOG( ERROR, "{}: No node found with id {}", filename, id );
+						success = false;
+					}
+				}
+			};
+			animatorDeserializeNodes( for_each_node );
+
+			if( !success ) {
+				return false;
+			}
+		}
+		FOR( node : animator->nodes ) {
+			auto parentId = node->parentId;
+			if( !bindParent( animator, node.get() ) ) {
+				LOG( ERROR, "{}: parent {} not found", parentId );
+				return false;
+			}
+		}
+		sortNodes( animator );
+
+		// animations
+		FOR( animation : root["animations"].getObjectArray() ) {
+			animator->animations.emplace_back();
+			auto added = &animator->animations.back();
+			added->name = animation["name"].getString();
+
+			// nodes
+			added->nodes.resize( animator->nodes.size() );
+			zip_for( added->nodes, animator->nodes ) {
+				first->id = second->get()->id;
+			}
+
+			bool success = true;
+			auto for_each_node = [&]( StringView arrayName,
+			                          void ( *op )( JsonObject&, AnimatorNode*, bool ) ) {
+				FOR( attr : animation[arrayName].getObjectArray() ) {
+					int16 id = (int16)attr["id"].getInt( -1 );
+					if( auto node = find_first_where( added->nodes, entry.id == id ) ) {
+						op( attr, node, false );
+					} else {
+						LOG( ERROR, "{}: No node found with id {}", filename, id );
+						success = false;
+					}
+				}
+			};
+			animatorDeserializeNodes( for_each_node );
+
+			if( !success ) {
+				return false;
+			}
+
+			// keyframes
+			FOR( keyframes : animation["keyframes"].getObjectArray() ) {
+				int16 id = (int16)keyframes["id"].getInt( -1 );
+				if( auto node = find_first_where( added->nodes, entry.id == id ) ) {
+					auto group = makeAnimatorGroup( node->id );
+					loadKeyframes( keyframes["translation"].getObjectArray(),
+					               group + AnimatorKeyframeData::type_translation,
+					               translation_tag{}, &added->keyframes, &added->curves );
+					loadKeyframes( keyframes["rotation"].getObjectArray(),
+					               group + AnimatorKeyframeData::type_rotation, rotation_tag{},
+					               &added->keyframes, &added->curves );
+					loadKeyframes( keyframes["scale"].getObjectArray(),
+					               group + AnimatorKeyframeData::type_scale, scale_tag{},
+					               &added->keyframes, &added->curves );
+					loadKeyframes( keyframes["frame"].getObjectArray(),
+					               group + AnimatorKeyframeData::type_frame, frame_tag{},
+					               &added->keyframes, &added->curves );
+					loadKeyframes( keyframes["active"].getObjectArray(),
+					               group + AnimatorKeyframeData::type_active, active_tag{},
+					               &added->keyframes, &added->curves );
+				} else {
+					LOG( ERROR, "{}: No node found with id {}", filename, id );
+					return false;
+				}
+			}
+		}
+	}
+
+	TEMPORARY_MEMORY_BLOCK( allocator ) {
+		// check whether ids are unique
+		int16 maxAssetId = 0;
+		auto cap = (int32)getCapacityFor< int16 >( allocator ) / 3;
+		auto assetIds = makeUArray( allocator, int16, cap );
+		FOR( entry : animator->assets ) {
+			auto asset = entry.get();
+			if( asset->id < 0 ) {
+				LOG( ERROR, "{}: Invalid id {}", filename, asset->id );
+				return false;
+			}
+			if( !append_unique( assetIds, asset->id ) ) {
+				LOG( ERROR, "{}: Asset id {} not unique", filename, asset->id );
+				return false;
+			}
+			maxAssetId = max( maxAssetId, asset->id );
+		}
+		animator->assetIds = maxAssetId + 1;
+
+		int16 maxNodeId = 0;
+		auto baseIds = makeUArray( allocator, int16, cap );
+		FOR( entry : animator->nodes ) {
+			auto node = entry.get();
+			if( node->id < 0 ) {
+				LOG( ERROR, "{}: Invalid id {}", filename, node->id );
+				return false;
+			}
+			if( !append_unique( baseIds, node->id ) ) {
+				LOG( ERROR, "{}: Node id {} not unique", filename, node->id );
+				return false;
+			}
+			if( node->assetId >= 0 ) {
+				auto index = find_index( assetIds, node->assetId );
+				if( !index ) {
+					LOG( ERROR, "{}: asset {} not found", filename, node->assetId );
+					return false;
+				}
+				node->asset     = animator->assets[index.get()].get();
+				node->assetType = node->asset->type;
+			}
+			maxNodeId = max( maxNodeId, node->id );
+		}
+		animator->nodeIds = maxNodeId + 1;
+
+		auto ids = makeUArray( allocator, int16, cap );
+		FOR( animation : animator->animations ) {
+			ids.clear();
+			FOR( entry : animation.nodes ) {
+				auto node = &entry;
+				if( node->id < 0 ) {
+					LOG( ERROR, "{}: Invalid id {}", filename, node->id );
+					return false;
+				}
+				if( !append_unique( ids, node->id ) ) {
+					LOG( ERROR, "{}: Node id {} not unique", filename, node->id );
+					return false;
+				}
+				if( auto baseIndex = find_first_where( baseIds, entry == node->id ) ) {
+					auto base      = animator->nodes[*baseIndex].get();
+					entry.parentId = base->parentId;
+					entry.assetId  = base->assetId;
+				} else {
+					LOG( ERROR, "{}: id {} not found as base", node->id );
+					return false;
+				}
+				if( entry.assetId >= 0 ) {
+					auto index = find_index( assetIds, entry.assetId );
+					if( !index ) {
+						LOG( ERROR, "{}: asset {} not found", filename, entry.assetId );
+						return false;
+					}
+					entry.asset     = animator->assets[index.get()].get();
+					entry.assetType = entry.asset->type;
+				}
+			}
+            // we don't need to check keyframe ids, since they are derived from node ids
+			// if node ids are valid, so are keyframe ids
+
+#if GAME_DEBUG
+			// check whether all keyframes point to valid nodes
+			FOR( keyframe : animation.keyframes ) {
+				auto id = getAnimatorKeyframeOwner( keyframe.group );
+				if( !find_first_where( ids, entry == id ) ) {
+					LOG( ERROR, "{}: Invalid keyframe, no parent", filename );
+					return false;
+				}
+			}
+#endif
+		}
+	}
+	animator->filename = filename;
+
+	return true;
+}
+bool animatorOpenOld( StackAllocator* allocator, AnimatorState* animator, StringView filename )
 {
 	TEMPORARY_MEMORY_BLOCK( allocator ) {
 		auto bufferSize = (int32)getCapacityFor< char >( allocator ) / 2;
@@ -1400,7 +1841,7 @@ bool animatorOpen( StackAllocator* allocator, AnimatorState* animator, StringVie
 				deserialize( node["rotation"], addedNode->rotation );
 				deserialize( node["scale"], addedNode->scale );
 				if( auto voxel = node["voxel"].getObject() ) {
-					deserialize( voxel["animation"], addedNode->voxel.animation );
+					deserialize( voxel["animation"], addedNode->voxel.animation, -1 );
 					deserialize( voxel["frame"], addedNode->voxel.frame );
 				}
 				if( auto emitter = node["emitter"].getObject() ) {
@@ -2406,7 +2847,7 @@ void doAnimatorMenu( AppData* app, GameInputs* inputs, rectfarg rect )
 					animator->flags.showRelativeProperties = true;
 				}
 				if( animator->flags.showRelativeProperties ) {
-					base = findNodeById( animator->baseNodes, node.id )->get();
+					base = findNodeById( animator->baseNodes, node.id );
 					node = toRelativeNode( base, selected );
 				}
 			}

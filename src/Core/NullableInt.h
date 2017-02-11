@@ -5,10 +5,12 @@
 
 template < class T >
 struct NullableInt {
-	static_assert( std::is_integral< T >::value, "T Must be integral" );
+	T value;
 
-	inline static NullableInt make( T value ) { return {value}; }
-	inline static NullableInt make( T value, bool condition )
+	static_assert( std::is_integral< T >::value, "T must be integral" );
+
+	static NullableInt make( T value ) { return {value}; }
+	static NullableInt make( T value, bool condition )
 	{
 		NullableInt ret;
 		if( condition ) {
@@ -18,28 +20,28 @@ struct NullableInt {
 		}
 		return ret;
 	}
-	inline static NullableInt makeNull() { return {-1}; }
+	static NullableInt makeNull() { return {-1}; }
 
-	constexpr inline explicit operator bool() const { return value >= 0; }
+	constexpr explicit operator bool() const { return value >= 0; }
 
-	inline NullableInt& operator=( T other )
+	NullableInt& operator=( T other )
 	{
 		value = other;
 		return *this;
 	}
-	inline NullableInt& operator=( null_t )
+	NullableInt& operator=( null_t )
 	{
 		value = -1;
 		return *this;
 	}
-	inline T& get()
+	T& get()
 	{
 		assert( value >= 0 );
 		return value;
 	}
-	inline void clear() { value = -1; }
-	inline void set( T value ) { this->value = value; }
-	inline void set( T value, bool condition )
+	void clear() { value = -1; }
+	void set( T value ) { this->value = value; }
+	void set( T value, bool condition )
 	{
 		if( condition ) {
 			this->value = value;
@@ -48,39 +50,13 @@ struct NullableInt {
 		}
 	}
 
-	T value;
+	bool operator==( NullableInt< T > rhs ) const { return value == rhs.value; }
+	bool operator!=( NullableInt< T > rhs ) const { return value != rhs.value; }
+	bool operator==( null_t ) const { return value < 0; }
+	friend bool operator==( null_t, NullableInt< T > a ) { return a.value < 0; }
+	bool operator!=( null_t ) const { return value >= 0; }
+	friend bool operator!=( null_t, NullableInt< T > a ) { return a.value >= 0; }
 };
-
-template < class T >
-inline bool operator==( NullableInt< T > a, NullableInt< T > b )
-{
-	return a.value == b.value;
-}
-template < class T >
-inline bool operator!=( NullableInt< T > a, NullableInt< T > b )
-{
-	return a.value != b.value;
-}
-template < class T >
-inline bool operator==( NullableInt< T > a, null_t )
-{
-	return a.value < 0;
-}
-template < class T >
-inline bool operator==( null_t, NullableInt< T > a )
-{
-	return a.value < 0;
-}
-template < class T >
-inline bool operator!=( NullableInt< T > a, null_t )
-{
-	return a.value >= 0;
-}
-template < class T >
-inline bool operator!=( null_t, NullableInt< T > a )
-{
-	return a.value >= 0;
-}
 
 typedef NullableInt< int32 > NullableInt32;
 typedef NullableInt< int8 > NullableInt8;

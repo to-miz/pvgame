@@ -47,10 +47,10 @@ union ImGuiHandle {
 	uint64 bits;
 
 	inline explicit operator bool() const { return bits != 0; }
+	inline bool operator==( ImGuiHandle rhs ) const { return bits == rhs.bits; }
+	inline bool operator!=( ImGuiHandle rhs ) const { return bits != rhs.bits; }
 };
 static_assert( sizeof( ImGuiHandle ) == sizeof( uint64 ), "ImGuiHandle is invalid" );
-inline bool operator==( ImGuiHandle a, ImGuiHandle b ) { return a.bits == b.bits; }
-inline bool operator!=( ImGuiHandle a, ImGuiHandle b ) { return a.bits != b.bits; }
 namespace ImGuiHandleFlags
 {
 enum Values : uint8 {

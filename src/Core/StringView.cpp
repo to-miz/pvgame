@@ -120,6 +120,15 @@ struct StringView {
 		assert( sz >= n );
 		sz -= n;
 	}
+
+	friend bool operator==( StringView a, StringView b )
+	{
+		auto sz = a.sz;
+		if( sz != b.sz ) return false;
+
+		return a.ptr == b.ptr || sz <= 0 || memcmp( a.ptr, b.ptr, sz ) == 0;
+	}
+	friend bool operator!=( StringView a, StringView b ) { return !( a == b ); }
 };
 
 int32 compare( StringView a, StringView b )
@@ -149,15 +158,6 @@ inline constexpr bool isPostfix( StringView str, StringView postfix )
 {
 	return find( str, other ) != StringView::npos;
 }*/
-
-inline bool operator==( StringView a, StringView b )
-{
-	auto sz = a.sz;
-	if( sz != b.sz ) return false;
-
-	return a.ptr == b.ptr || sz <= 0 || memcmp( a.ptr, b.ptr, sz ) == 0;
-}
-inline bool operator!=( StringView a, StringView b ) { return !( a == b ); }
 
 bool equalsIgnoreCase( StringView a, StringView b )
 {

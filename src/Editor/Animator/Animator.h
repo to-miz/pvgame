@@ -40,6 +40,7 @@ struct AnimatorAsset {
 	int32 itemTextLength = 0;
 
 	void setName( StringView str );
+	StringView getName() const { return {name, nameLength}; }
 
 	AnimatorAsset() = default;
 	~AnimatorAsset();
