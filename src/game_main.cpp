@@ -2,6 +2,7 @@
 
 #include <type_traits>
 #include <cassert>
+// #include "Core/CoreAssert.h"
 #include "Core/IntegerTypes.h"
 #include "Core/CoreTypes.h"
 #include "Warnings.h"
@@ -1447,18 +1448,10 @@ bool loadVoxelCollectionTextureMapping( StackAllocator* allocator, StringView fi
 
 	auto guard = StackAllocatorGuard( allocator );
 	auto primary = allocator;
-	auto scrap = GlobalScrap;
+	auto scrap   = GlobalScrap;
 	TEMPORARY_MEMORY_BLOCK( scrap ) {
-		auto jsonDataMaxSize = kilobytes( 200 );
-		auto jsonData        = allocateArray( scrap, char, jsonDataMaxSize );
-		auto jsonDataSize =
-		    GlobalPlatformServices->readFileToBuffer( filename, jsonData, jsonDataMaxSize );
-
-		size_t jsonDocSize                     = kilobytes( 200 );
-		JsonStackAllocatorStruct jsonAllocator = {allocateArray( scrap, char, jsonDocSize ), 0,
-		                                          jsonDocSize};
-		auto doc =
-		    jsonMakeDocument( &jsonAllocator, jsonData, (int32)jsonDataSize, JSON_READER_STRICT );
+		auto file = readFile( scrap, filename );
+		auto doc  = makeJsonDocument( scrap, file );
 		if( !doc || !doc.root.getObject() ) {
 			return false;
 		}
@@ -1689,8 +1682,8 @@ struct CollisionInfo {
 struct PushPair {
 	float push;
 	vec2 normal;
+	friend bool operator<( const PushPair& a, const PushPair& b ) { return a.push < b.push; }
 };
-static bool operator<( const PushPair& a, const PushPair& b ) { return a.push < b.push; }
 bool testAabVsAab( vec2arg aPosition, rectfarg a, vec2arg delta, rectfarg b, float maxT,
                    CollisionInfo* info )
 {
@@ -2626,79 +2619,19 @@ void testSkeletonSystem( AppData* app, GameInputs* inputs, float dt, bool frameB
 #if 1
 	auto renderer = &app->renderer;
 	auto game = &app->gameState;
-	auto test = &game->skeletonTest;
+	auto test     = &game->skeletonTest;
 	if( !test->initialized ) {
 		auto allocator = &app->stackAllocator;
 		test->definition =
 		    loadSkeletonDefinition( allocator, "Data/voxels/wheels_enemy_animations.json", 0 );
+		test->skeleton = makeSkeleton( allocator, test->definition );
+		playAnimation( &test->skeleton, "turn" );
 		test->initialized = true;
 	}
 
 	auto skeleton = &test->skeleton;
-#if 0
-	if( isKeyPressed( inputs, KC_Space ) && !skeleton->transforms.size() ) {
-		// NOTE: only for testing/debug
-		// we are copying node information from the animation editor, very hacky!
-		auto allocator = GlobalScrap;
-		auto animator = &app->animatorState;
-		auto count = ::size( animator->nodes );
-		skeleton->transforms = makeArray( allocator, SkeletonTransform, count );
-		skeleton->worldTransforms = makeArray( allocator, mat4, count );
 
-		auto visualsCount = 0;
-		for( auto i = 0; i < count; ++i ) {
-			auto node = animator->nodes[i].get();
-			auto transform = &skeleton->transforms[i];
-			transform->translation = node->translation;
-			transform->rotation = node->rotation;
-			transform->scale = node->scale;
-			transform->length = node->length;
-			transform->parent =
-			    (int16)find_index_if( animator->nodes, [&]( const UniqueAnimatorNode& entry ) {
-				    return entry->id == node->parentId;
-				} ).value;
-			if( node->assetType == AnimatorAsset::type_collection ) {
-				++visualsCount;
-			}
-		}
-
-		auto voxelsCount = count_if( animator->assets, []( const auto& entry ) {
-			return entry->type == AnimatorAsset::type_collection;
-		} );
-		skeleton->voxels  = makeArray( allocator, VoxelCollection*, voxelsCount );
-		auto currentVoxel = 0;
-		FOR( entry : animator->assets ) {
-			auto asset = entry.get();
-			if( asset->type == AnimatorAsset::type_collection ) {
-				auto voxel = &skeleton->voxels[currentVoxel++];
-				*voxel = &asset->collection->voxels;
-			}
-		}
-		assert( currentVoxel == voxelsCount );
-
-		skeleton->visuals = makeArray( allocator, SkeletonVisuals, visualsCount );
-		auto cur          = 0;
-		for( auto i = 0; i < count; ++i ) {
-			auto node = animator->nodes[i].get();
-			if( node->assetType == AnimatorAsset::type_collection ) {
-				auto visual             = &skeleton->visuals[cur++];
-				visual->type            = SkeletonVisualType::Voxel;
-				visual->voxel.animation = node->voxel.animation;
-				visual->voxel.frame     = node->voxel.frame;
-				visual->index           = (int16)i;
-				visual->voxelIndex =
-				    (int8)find_index_if( skeleton->voxels, [&]( const auto& entry ) {
-					    return entry == &node->asset->collection->voxels;
-					} ).value;
-			}
-		}
-		assert( cur == visualsCount );
-
-		skeleton->dirty = true;
-	}
-#endif
-
-	update( skeleton );
+	update( skeleton, dt );
 	render( renderer, skeleton );
 #endif
 }

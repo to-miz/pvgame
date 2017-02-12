@@ -25,7 +25,7 @@ DynamicVoxelCollection loadDynamicVoxelCollection( StringView filename )
 DynamicVoxelCollection loadDynamicVoxelCollectionWithoutMeshes( StringView filename )
 {
 	DynamicVoxelCollection result;
-	result.memorySize = megabytes( 2 );
+	result.memorySize = megabytes( 3 );
 	result.memory     = GlobalPlatformServices->allocate( result.memorySize, 1 );
 	auto allocator    = makeStackAllocator( result.memory, result.memorySize );
 	if( loadVoxelCollectionTextureMapping( &allocator, filename, &result.voxels ) ) {

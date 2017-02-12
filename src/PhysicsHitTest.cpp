@@ -75,11 +75,11 @@ bool testRayVsAabb( vec3arg rayOrigin, vec3arg rayDir, aabbarg box, float* t = n
 struct TestRayVsAabbOption {
 	float t;
 	vec3i normal;
+	friend bool operator<( const TestRayVsAabbOption& a, const TestRayVsAabbOption& b )
+	{
+		return a.t < b.t;
+	}
 };
-static bool operator<( const TestRayVsAabbOption& a, const TestRayVsAabbOption& b )
-{
-	return a.t < b.t;
-}
 struct TestRayVsAabbResult {
 	TestRayVsAabbOption enter; // intersection with aabb when entering
 	TestRayVsAabbOption leave; // intersection with aabb when leaving

@@ -125,11 +125,17 @@ JsonStackAllocator makeJsonAllocator( StackAllocator* allocator, int32 size )
 	return result;
 }
 
+// make new type for flags, so that if we ever write something like
+//	makeJsonDocument( allocator, file.data(), file.size() );
+// it doesn't silently compile, where it interprets file.size() as the flags param
+struct JsonFlags {
+	uint32 flags;
+};
 JsonDocument makeJsonDocument( StackAllocator* allocator, StringView data,
-                               uint32 flags = JSON_READER_STRICT )
+                               JsonFlags flags = {JSON_READER_STRICT} )
 {
 	auto jsonAlloc = makeJsonAllocator( allocator, data.size() * sizeof( JsonValue ) );
-	auto doc = jsonMakeDocument( &jsonAlloc, data.data(), data.size(), flags );
+	auto doc = jsonMakeDocument( &jsonAlloc, data.data(), data.size(), flags.flags );
 	reallocateInPlace( allocator, jsonAlloc.ptr, jsonAlloc.size, jsonAlloc.capacity,
 	                   alignof( char ) );
 	return doc;

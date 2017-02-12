@@ -78,8 +78,8 @@ struct AnimatorNode {
 	AnimatorAsset::Type assetType = {};
 	AnimatorAsset* asset          = nullptr;
 	struct {
-		int16 animation;
-		int16 frame;
+		int8 animation;
+		int8 frame;
 	} voxel = {-1, 0};
 	bool8 active = {1}; // whether asset is active (valid for hitboxes and emitters)
 	struct {
@@ -115,7 +115,7 @@ struct AnimatorKeyframeData {
 		vec3 translation;
 		vec3 rotation;
 		vec3 scale;
-		int16 frame;
+		int8 frame;
 		bool8 active;
 	};
 };

@@ -213,6 +213,11 @@ int32 copyToString( StringView str, char* dest, int32 destSize )
 	}
 	return minSize;
 }
+template < int32 N >
+int32 copyToString( StringView str, char ( &dest )[N] )
+{
+	return copyToString( str, dest, N );
+}
 
 struct StringViewPos {
 	int32 pos;

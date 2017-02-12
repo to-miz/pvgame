@@ -10,8 +10,9 @@ enum class SkeletonVisualType : int8 { None, Voxel };
 struct SkeletonVoxelVisuals {
 	int16 voxelIndex;
 	int16 index;
-	int16 animation;
-	int16 frame;
+	int8 animation;
+	int8 frame;
+	int16 id;
 };
 struct SkeletonKeyframesState {
 	int16 translation;
@@ -21,25 +22,34 @@ struct SkeletonKeyframesState {
 };
 struct SkeletonAnimationState {
 	int16 animationIndex;
-	int16 nodeId;
 	float currentFrame;
+	float blendFactor;
 	Array< SkeletonKeyframesState > keyframeStates;
 };
+struct SkeletonDefinition;
 struct Skeleton {
 	Array< SkeletonTransform > transforms;
 	Array< mat4 > worldTransforms;
 	Array< SkeletonVoxelVisuals > visuals;
-	Array< VoxelCollection* > voxels;
+	Array< const VoxelCollection* > voxels;
 	UArray< SkeletonAnimationState > animations;
-	int16 definitionIndex;
+	Array< Array< SkeletonKeyframesState > > keyframeStatesPool;
 	int16 definitionId;
-	bool dirty;
+	bool8 dirty;
+	const SkeletonDefinition* definition;
 };
 enum class SkeletonEaseType : int8 {
-	 Lerp, Step, Smoothstep, EaseOutBounce, EaseOutElastic, Curve
+	Lerp,
+	Step,
+	Smoothstep,
+	EaseOutBounce,
+	EaseOutElastic,
+	Curve,
 };
 template< class T >
 struct SkeletonKeyframe {
+	typedef T value_type;
+
 	float t;
 	T data;
 	SkeletonEaseType easeType;
@@ -51,9 +61,11 @@ struct SkeleonKeyframes {
 	Array< SkeletonKeyframe< vec3 > > scale;
 	Array< SkeletonKeyframe< int16 > > frame;
 	Array< SkeletonKeyframe< bool8 > > active;
+	int16 id;
+	bool8 hasKeyframes;
 };
 struct SkeletonAnimation {
-	Array< SkeletonTransform > nodes;
+	Array< SkeletonTransform > transforms;
 	Array< SkeletonVoxelVisuals > visuals;
 	Array< SkeleonKeyframes > keyframes;
 	Array< BezierForwardDifferencerData > curves;
@@ -66,9 +78,11 @@ struct SkeletonId {
 };
 struct SkeletonAssetId {
 	int16 id;
+	int16 transformIndex;
+	int16 assetIndex;
 	int16 nameLength;
-	char name[10];
 	AnimatorAsset::Type type;
+	char name[10];
 };
 struct SkeletonDefinition {
 	Array< SkeletonAnimation > animations;

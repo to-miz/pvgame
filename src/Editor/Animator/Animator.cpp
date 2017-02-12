@@ -394,7 +394,7 @@ AnimatorKeyframeData lerp( Array< AnimatorCurveData > curves, float t,
 		}
 		case AnimatorKeyframeData::type_frame: {
 			result.type = AnimatorKeyframeData::type_frame;
-			result.frame = (int16)lerp( t, (float)a.frame, (float)b.frame );
+			result.frame = auto_truncate( lerp( t, (float)a.frame, (float)b.frame ) );
 			break;
 		}
 		case AnimatorKeyframeData::type_active: {
@@ -415,6 +415,18 @@ AnimatorKeyframes::iterator lowerBoundKeyframeIt( AnimatorState* animator, float
 		                       []( const auto& keyframe, float t ) { return keyframe->t < t; } );
 		if( it == last ) {
 			--it;
+		}
+		if( ( *it )->group != group && ( *it )->t <= t ) {
+			while( ( *it )->t <= t ) {
+				++it;
+				if( it == last ) {
+					return last;
+				}
+				if( ( *it )->group == group && ( *it )->t <= t ) {
+					return it;
+				}
+			}
+			return last;
 		}
 		if( ( *it )->group == group && ( *it )->t <= t ) {
 			return it;
@@ -518,7 +530,7 @@ AnimatorNode getCurrentFrameNode( AnimatorState* animator, AnimatorNode* node, f
 			if( activeKeyframe.type == AnimatorKeyframeData::type_active ) {
 				auto prevKey  = lowerBoundKeyframe( animator, animator->currentFrame, activeId );
 				result.active = activeKeyframe.active;
-				if( prevKey && prevKey->t >= lastFrame /*&& prevKey->t < animator->currentFrame*/ && node->active && result.active ) {
+				if( prevKey && prevKey->t >= lastFrame && prevKey->t < animator->currentFrame && node->active && result.active ) {
 					result.emitter.time = 0;
 				}
 				if( !result.active ) {
@@ -943,9 +955,18 @@ void openAnimation( AnimatorState* animator, AnimatorAnimation* animation )
 	animator->curves = animation->curves;
 }
 
+void animatorSetCurrentFrame( AnimatorState* animator, float currentFrame, float lastFrame = 0 )
+{
+	animator->currentFrame = currentFrame;
+	FOR( node : animator->nodes ) {
+		*node = getCurrentFrameNode( animator, node.get(), lastFrame );
+	}
+}
+
 void commitAnimation( AnimatorState* animator )
 {
 	assert( animator->currentAnimation );
+	animatorSetCurrentFrame( animator, 0 );
 	auto animation = animator->currentAnimation;
 	animation->nodes.resize( animator->nodes.size() );
 
@@ -1393,7 +1414,7 @@ vec3& getValue( AnimatorKeyframeData& data, scale_tag )
 	data.type = AnimatorKeyframeData::type_scale;
 	return data.scale;
 }
-int16& getValue( AnimatorKeyframeData& data, frame_tag )
+int8& getValue( AnimatorKeyframeData& data, frame_tag )
 {
 	data.type = AnimatorKeyframeData::type_frame;
 	return data.frame;
@@ -2970,7 +2991,7 @@ void doAnimatorMenu( AppData* app, GameInputs* inputs, rectfarg rect )
 					auto comboHandle = imguiMakeHandle( &node.voxel );
 					int32 index      = node.voxel.animation;
 					if( imguiCombo( comboHandle, &index, collection->names, true ) ) {
-						node.voxel.animation = safe_truncate< int16 >( index );
+						node.voxel.animation = auto_truncate( index );
 						setUnsavedChanges( animator );
 					}
 
@@ -2985,7 +3006,8 @@ void doAnimatorMenu( AppData* app, GameInputs* inputs, rectfarg rect )
 						float val = (float)( node.voxel.frame );
 						if( imguiSlider( imguiMakeHandle( &node.voxel.frame ), &val, 0,
 						                 (float)width( frames ) ) ) {
-							node.voxel.frame = min( (uint16)val, (uint16)( width( frames ) - 1 ));
+							node.voxel.frame = min( safe_truncate< int8 >( val ),
+							                        safe_truncate< int8 >( width( frames ) - 1 ) );
 							setUnsavedChanges( animator );
 						}
 					}
@@ -4098,8 +4120,9 @@ void doAnimator( AppData* app, GameInputs* inputs, bool focus, float dt )
 		if( animator->currentFrame > animator->duration ) {
 			animator->currentFrame = animator->duration;
 		}
-		FOR( node : animator->nodes ) {
-			*node = getCurrentFrameNode( animator, node.get(), lastFrame );
+		animatorSetCurrentFrame( animator, animator->currentFrame, lastFrame );
+		FOR( entry : animator->nodes ) {
+			auto node = entry.get();
 			if( node->assetType == AnimatorAsset::type_emitter && node->active ) {
 				auto emitter = &get_variant( *node->asset, emitter );
 				node->emitter.time -= t;
@@ -4110,7 +4133,7 @@ void doAnimator( AppData* app, GameInputs* inputs, bool focus, float dt )
 						node->emitter.time = FLOAT32_MAX;
 					}
 					auto pos = transformVector3( node->world, {} );
-					pos.y = -pos.y;
+					pos.y    = -pos.y;
 					emitParticles( &animator->particleSystem, pos, emitter->emitter );
 				}
 			}
