@@ -2143,6 +2143,11 @@ void doKeyframesFrameNumbers( ImGuiHandle handle, AppData* app, GameInputs* inpu
 		if( pos < 0 ) {
 			pos = 0;
 		}
+		if( !isKeyDown( inputs, KC_Alt ) ) {
+			pos = round( pos );
+		} else {
+			pos = fmod( pos, KeyframePrecision );
+		}
 		auto oldFrame = exchange( animator->currentFrame, pos );
 		if( !floatEqSoft( oldFrame, pos ) && !leftButton ) {
 			// current frame changed and mouse moved

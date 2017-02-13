@@ -33,7 +33,7 @@ bool isValid( FixedSizeAllocator* allocator )
 
 void clear( FixedSizeAllocator* allocator )
 {
-	allocator->size = 0;
+	allocator->size      = 0;
 	allocator->firstFree = -1;
 }
 size_t remaining( FixedSizeAllocator* allocator )
@@ -96,7 +96,8 @@ void free( FixedSizeAllocator* allocator, void* ptr, size_t size, uint32 alignme
 	assert( size >= sizeof( FixedSizeAllocatoreFreeEntry ) );
 
 	if( ptr ) {
-		assert( (char*)ptr >= begin( allocator ) && (char*)ptr < end( allocator ) );
+		assert( Pointer::greater_equal( ptr, begin( allocator ) )
+		        && Pointer::less( ptr, end( allocator ) ) );
 		assert( isAligned( ptr, allocator->alignment ) );
 
 		if( (char*)ptr + size == back( allocator ) ) {

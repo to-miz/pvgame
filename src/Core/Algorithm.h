@@ -3,6 +3,40 @@
 #ifndef _ALGORITHM_H_INCLUDED_
 #define _ALGORITHM_H_INCLUDED_
 
+namespace Pointer
+{
+template < class A, class B >
+bool less( A&& a, B&& b )
+{
+	using std::less;
+	return less<>()( std::forward< A >( a ), std::forward< B >( b ) );
+}
+template < class A, class B >
+bool less_equal( A&& a, B&& b )
+{
+	using std::less_equal;
+	return less_equal<>()( std::forward< A >( a ), std::forward< B >( b ) );
+}
+template < class A, class B >
+bool greater( A&& a, B&& b )
+{
+	using std::greater;
+	return greater<>()( std::forward< A >( a ), std::forward< B >( b ) );
+}
+template < class A, class B >
+bool greater_equal( A&& a, B&& b )
+{
+	using std::greater_equal;
+	return greater_equal<>()( std::forward< A >( a ), std::forward< B >( b ) );
+}
+template < class A, class B >
+bool equal( A&& a, B&& b )
+{
+	using std::equal_to;
+	return equal_to<>()( std::forward< A >( a ), std::forward< B >( b ) );
+}
+}
+
 template < class Container >
 inline int32 size( const Container& container )
 {
@@ -34,7 +68,7 @@ typename Container::const_iterator min_element( const Container& container, Comp
 template < class RandomAccessIterator >
 RandomAccessIterator rotate_right( RandomAccessIterator first, RandomAccessIterator last )
 {
-	assert( first < last );
+	assert( less<>()( first, last ) );
 	if( last - first > 1 ) {
 		auto tmp = std::move( *( last - 1 ) );
 		std::move_backward( first, last - 1, last );
@@ -45,7 +79,7 @@ RandomAccessIterator rotate_right( RandomAccessIterator first, RandomAccessItera
 template < class RandomAccessIterator >
 RandomAccessIterator rotate_left( RandomAccessIterator first, RandomAccessIterator last )
 {
-	assert( first <= last );
+	assert( less_equal<>()( first, last ) );
 	if( last - first > 1 ) {
 		auto tmp = std::move( *first );
 		std::move( first + 1, last, first );

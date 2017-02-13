@@ -19,13 +19,14 @@ char* begin( StackAllocator* allocator )
 }
 bool isAllocatedWithAllocator( StackAllocator* allocator, void* ptr, size_t size )
 {
-	return ( (char*)ptr >= allocator->ptr
-	         && (char*)ptr + size <= back( allocator ) );
+	return ( Pointer::greater_equal( ptr, allocator->ptr )
+	         && Pointer::less_equal( (char*)ptr + size, back( allocator ) ) );
 }
 bool isBack( StackAllocator* allocator, void* ptr, size_t size )
 {
 	auto end = (char*)ptr + size;
-	return end + getAlignmentOffset( end, allocator->lastPoppedAlignment ) == back( allocator );
+	return Pointer::equal( end + getAlignmentOffset( end, allocator->lastPoppedAlignment ),
+	                       back( allocator ) );
 }
 
 uint32 getAlignmentOffset( StackAllocator* allocator, uint32 alignment )

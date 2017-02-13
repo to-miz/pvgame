@@ -7,13 +7,23 @@ Most functions are not 100% stand-ins for stl algorithms, most assume that itera
 pointers.
 */
 
-struct less {
-	template < class A, class B >
-	bool operator()( const A& a, const B& b )
-	{
-		return a < b;
-	}
-};
+#ifdef _MSC_VER <= 1900
+	// these definitions need to work on pointer types, so at least for msvc
+	// this is defined behavior
+
+	// TODO: can we use <functional>?
+	template < class T = void >
+	struct less;
+
+	template <>
+	struct less< void > {
+		template < class A, class B >
+		bool operator()( A&& a, B&& b )
+		{
+			return static_cast< A&& >( a ) < static_cast< B&& >( b );
+		}
+	};
+#endif
 
 template < class A, class B >
 struct pair {

@@ -1995,6 +1995,11 @@ bool imguiListboxSingleSelect( ImGuiHandle handle, float* scrollPos, const void*
 	auto first = (const char*)items;
 	auto last  = first + entrySize * itemsCount;
 
+	auto scrollItems = itemsCount;
+	if( hasNoneEntry ) {
+		++scrollItems;
+	}
+
 	if( itemsCount * itemHeight > height ) {
 		rect.right -= style->scrollWidth + style->innerPadding;
 		scrollActive = true;
@@ -2016,8 +2021,8 @@ bool imguiListboxSingleSelect( ImGuiHandle handle, float* scrollPos, const void*
 			*selectedIndex = index;
 		}
 	}
-	if( scrollActive && imguiScrollbar( handle, scrollPos, 0, itemsCount * itemHeight - height,
-	                                    itemHeight, itemHeight * 0.5f, scrollRect, true ) ) {
+	if( scrollActive && imguiScrollbar( handle, scrollPos, 0, scrollItems * itemHeight,
+	                                    height, itemHeight * 0.5f, scrollRect, true ) ) {
 	}
 
 	rectf itemsBg = translate( rect, 0, -( *scrollPos ) );

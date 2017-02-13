@@ -7,6 +7,7 @@
 #include <cfloat>
 #include <limits>
 #include <algorithm>
+#include <functional>
 using std::pair;
 using std::begin;
 using std::end;
@@ -26,5 +27,9 @@ using std::lower_bound;
 using std::upper_bound;
 using std::equal_range;
 using std::replace;
+using std::less;
+using std::less_equal;
+using std::greater;
+using std::greater_equal;
 
 #endif // _GAMESTL_H_INCLUDED_

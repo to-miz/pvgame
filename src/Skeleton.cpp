@@ -1,5 +1,6 @@
 bool loadVoxelCollection( StackAllocator* allocator, StringView filename, VoxelCollection* out );
 void from_string( StringView str, AnimatorKeyframeData::EaseType* out );
+void deserialize( const JsonValue& value, AnimatorParticleEmitter& out );
 
 template < class T, class Op >
 void readValues( StackAllocator* allocator, const JsonObjectArray& array, Array< T >* out, Op op )
@@ -13,7 +14,7 @@ void readValues( StackAllocator* allocator, const JsonObjectArray& array, Array<
 
 void readNodes( StackAllocator* allocator, const JsonObject& attr,
                 Array< SkeletonTransform >* transforms, Array< SkeletonVoxelVisuals >* visuals,
-                bool base )
+                Array< SkeletonEmitterState >* emitters, bool base )
 {
 	auto transformsAttr        = attr["transforms"].getObjectArray();
 	const auto transformsCount = transformsAttr.size();
@@ -33,33 +34,44 @@ void readNodes( StackAllocator* allocator, const JsonObject& attr,
 		deserialize( attr["id"], dest->id, -1 );
 		dest->index = -1;
 		if( base ) {
-			deserialize( attr["assetId"], dest->voxelIndex, -1 );
+			deserialize( attr["assetId"], dest->assetIndex, -1 );
 		}
 		deserialize( attr["animation"], dest->animation, -1 );
-		deserialize( attr["frame"], dest->frame, -1 );
+		deserialize( attr["frame"], dest->frame );
 	};
 	readValues( allocator, attr["voxels"].getObjectArray(), visuals, readVoxels );
+
+	auto readEmitters = [base]( const JsonObject& attr, SkeletonEmitterState* dest ) {
+		deserialize( attr["id"], dest->id, -1 );
+		dest->index = -1;
+		if( base ) {
+			deserialize( attr["assetId"], dest->assetIndex, -1 );
+		}
+		deserialize( attr["active"], dest->active );
+		dest->time = 0;
+	};
+	readValues( allocator, attr["emitters"].getObjectArray(), emitters, readEmitters );
 }
 
-pair< int16, bool > bindIdsToIndices( Array< SkeletonVoxelVisuals > visualsArray,
-                                      Array< int16 > ids, Array< SkeletonAssetId > assetIds )
+template < class T >
+pair< int16, bool > bindIdsToIndices( Array< T > visualsArray, Array< int16 > ids,
+                                      Array< SkeletonAssetId > assetIds )
 {
 	FOR( visuals : visualsArray ) {
 		auto nodeId = visuals.id;
 		// convert id to index
 		visuals.index = auto_truncate( find_index( ids, nodeId ).value );
-		// voxelIndex is initialized with voxel id
-		auto voxelId = visuals.voxelIndex;
-		auto assetId = find_index_if( assetIds, [voxelId]( const SkeletonAssetId& id ) {
-			               return id.id == voxelId;
-			           } ).value;
+		// assetIndex is initialized with voxel id
+		auto assetId         = visuals.assetIndex;
+		auto assetIdentIndex = find_index_if( assetIds, [assetId]( const SkeletonAssetId& id ) {
+			                       return id.id == assetId;
+			                   } ).value;
 
-		if( visuals.index < 0 || assetId < 0 || assetIds[assetId].assetIndex < 0
-		    || assetIds[assetId].type != AnimatorAsset::type_collection ) {
+		if( visuals.index < 0 || assetIdentIndex < 0 || assetIds[assetIdentIndex].assetIndex < 0
+		    || assetIds[assetIdentIndex].type != Array< T >::value_type::AssetType ) {
 			return {nodeId, false};
 		}
-		visuals.voxelIndex               = assetIds[assetId].assetIndex;
-		assetIds[assetId].transformIndex = visuals.index;
+		visuals.assetIndex               = assetIds[assetIdentIndex].assetIndex;
 	}
 	return {-1, true};
 }
@@ -256,13 +268,24 @@ bool loadSkeletonDefinitionImpl( StackAllocator* allocator, StringView filename,
 				}
 				deserialize( attr["id"], ident->id, -1 );
 				ident->nameLength = (int16)copyToString( attr["name"].getString(), ident->name );
-				ident->transformIndex = -1;
-				ident->assetIndex     = auto_truncate( i );
-				ident->type           = AnimatorAsset::type_collection;
+				ident->assetIndex = auto_truncate( i );
+				ident->type       = AnimatorAsset::type_collection;
 			}
 
 			// emitters
-			// TODO: implement
+			const auto emittersCount = emitters.size();
+			out->emitters = makeArray( allocator, AnimatorParticleEmitter, emittersCount );
+			for( auto i = 0; i < emittersCount; ++i ) {
+				auto attr  = emitters[i];
+				auto dest  = &out->emitters[i];
+				auto ident = assetIds.emplace_back();
+				deserialize( attr["id"], ident->id, -1 );
+				ident->nameLength = (int16)copyToString( attr["name"].getString(), ident->name );
+				ident->assetIndex = auto_truncate( i );
+				ident->type       = AnimatorAsset::type_emitter;
+
+				deserialize( attr["emitter"], *dest );
+			}
 
 			// collision_bounds
 			// TODO: implement
@@ -280,7 +303,7 @@ bool loadSkeletonDefinitionImpl( StackAllocator* allocator, StringView filename,
 		}
 
 		// nodes
-		auto nodes = root["nodes"].getObject();
+		auto nodes   = root["nodes"].getObject();
 		auto nodeIds = makeArray( scrap, int16, nodes["idents"].getArray().size() );
 		fill( nodeIds.data(), (int16)-1, nodeIds.size() );
 		if( nodes ) {
@@ -294,7 +317,8 @@ bool loadSkeletonDefinitionImpl( StackAllocator* allocator, StringView filename,
 				};
 				readValues( allocator, idents, &out->nodeIds, readIdents );
 
-				readNodes( allocator, nodes, &out->baseNodes, &out->baseVisuals, true );
+				readNodes( allocator, nodes, &out->baseNodes, &out->baseVisuals, &out->baseEmitters,
+				           true );
 
 				if( !sortTransforms( out->baseNodes ) ) {
 					ABORT_ERROR( "Failed to form graph from parent/children nodes" );
@@ -317,14 +341,16 @@ bool loadSkeletonDefinitionImpl( StackAllocator* allocator, StringView filename,
 				}
 
 				// voxels
-
 				auto bindIds = bindIdsToIndices( out->baseVisuals, nodeIds, out->assetIds );
 				if( !bindIds.second ) {
 					ABORT_ERROR( "Invalid voxels entry {}", bindIds.first );
 				}
 
 				// emitters
-				// TODO: implement
+				bindIds = bindIdsToIndices( out->baseEmitters, nodeIds, out->assetIds );
+				if( !bindIds.second ) {
+					ABORT_ERROR( "Invalid emitter entry {}", bindIds.first );
+				}
 
 				// collision_bounds
 				// TODO: implement
@@ -354,13 +380,18 @@ bool loadSkeletonDefinitionImpl( StackAllocator* allocator, StringView filename,
 				ident->nameLength =
 				    auto_truncate( copyToString( attr["name"].getString(), ident->name ) );
 
-				readNodes( allocator, attr, &animation->transforms, &animation->visuals, false );
+				readNodes( allocator, attr, &animation->transforms, &animation->visuals,
+				           &animation->emitters, false );
 				if( !applyPermutationByIds( animation->transforms, nodeIds ) ) {
 					ABORT_ERROR( "Invalid transforms in animation \"{}\"",
 					             StringView{ident->name, ident->nameLength} );
 				}
 				if( !applyPermutationByIds( animation->visuals, out->baseVisuals ) ) {
 					ABORT_ERROR( "Invalid visuals in animation \"{}\"",
+					             StringView{ident->name, ident->nameLength} );
+				}
+				if( !applyPermutationByIds( animation->emitters, out->baseEmitters ) ) {
+					ABORT_ERROR( "Invalid emitters in animation \"{}\"",
 					             StringView{ident->name, ident->nameLength} );
 				}
 				// copy base node values to relative transforms
@@ -371,12 +402,18 @@ bool loadSkeletonDefinitionImpl( StackAllocator* allocator, StringView filename,
 					auto visuals = &animation->visuals[i];
 					auto base    = &out->baseVisuals[i];
 					assert( visuals->id == base->id );
-					visuals->voxelIndex = base->voxelIndex;
+					visuals->assetIndex = base->assetIndex;
 					visuals->index      = base->index;
+				}
+				for( auto i = 0, count = animation->emitters.size(); i < count; ++i ) {
+					auto emitter = &animation->emitters[i];
+					auto base    = &out->baseEmitters[i];
+					assert( emitter->id == base->id );
+					emitter->assetIndex = base->assetIndex;
+					emitter->index      = base->index;
 				}
 
 				// TODO: implement
-				// emitters
 				// collision_bounds
 				// hitboxes
 				// hurtboxes
@@ -456,8 +493,7 @@ bool loadSkeletonDefinitionImpl( StackAllocator* allocator, StringView filename,
 						// frame
 						auto frame            = keyframesAttr["frame"].getObjectArray();
 						const auto frameCount = frame.size();
-						dest->frame =
-						    makeArray( allocator, SkeletonKeyframe< int16 >, frameCount );
+						dest->frame = makeArray( allocator, SkeletonKeyframe< int8 >, frameCount );
 						for( auto j = 0; j < frameCount; ++j ) {
 							deserializeKeyframe( frame[j], &dest->frame[j] );
 						}
@@ -519,6 +555,7 @@ bool loadSkeletonDefinitionImpl( StackAllocator* allocator, StringView filename,
 SkeletonDefinition loadSkeletonDefinition( StackAllocator* allocator, StringView filename,
                                            int16 id )
 {
+	assert( id >= 0 );
 	SkeletonDefinition result = {};
 	result.id = -1;
 	if( loadSkeletonDefinitionImpl( allocator, filename, &result ) ) {
@@ -531,7 +568,9 @@ SkeletonDefinition loadSkeletonDefinition( StackAllocator* allocator, StringView
 
 Skeleton makeSkeleton( StackAllocator* allocator, const SkeletonDefinition& definition )
 {
+	assert( definition );
 	Skeleton result       = {};
+	result.rootTransform  = matrixIdentity();
 	const auto nodesCount = definition.baseNodes.size();
 	result.transforms     = makeArray( allocator, SkeletonTransform, nodesCount );
 	result.transforms.assign( definition.baseNodes );
@@ -540,6 +579,9 @@ Skeleton makeSkeleton( StackAllocator* allocator, const SkeletonDefinition& defi
 
 	result.visuals = makeArray( allocator, SkeletonVoxelVisuals, definition.baseVisuals.size() );
 	result.visuals.assign( definition.baseVisuals );
+
+	result.emitters = makeArray( allocator, SkeletonEmitterState, definition.baseEmitters.size() );
+	result.emitters.assign( definition.baseEmitters );
 
 	const auto voxelsCount = definition.voxels.size();
 	result.voxels          = makeArray( allocator, const VoxelCollection*, voxelsCount );
@@ -560,32 +602,36 @@ Skeleton makeSkeleton( StackAllocator* allocator, const SkeletonDefinition& defi
 	return result;
 }
 
-int32 playAnimation( Skeleton* skeleton, int32 animationIndex )
+int32 playAnimation( Skeleton* skeleton, int32 animationIndex, bool repeating = false )
 {
 	assert( skeleton );
+	assert( animationIndex >= 0 );
 	auto existing = find_index_if( skeleton->animations, [animationIndex]( const auto& entry ) {
 		return entry.animationIndex == animationIndex;
 	} );
 	if( existing ) {
+		auto state = &skeleton->animations[existing.get()];
+		setFlag( state->flags, SkeletonAnimationState::Playing );
 		return existing.get();
 	}
 	if( skeleton->animations.remaining() ) {
 		auto result     = skeleton->animations.size();
 		auto definition = skeleton->definition;
 		assert( definition );
-		// auto animation        = &definition->animations[animationIndex];
 		auto state            = skeleton->animations.emplace_back();
 		*state                = {};
 		state->animationIndex = auto_truncate( animationIndex );
+		state->flags          = SkeletonAnimationState::Playing;
+		setFlagCond( state->flags, SkeletonAnimationState::Repeating, repeating );
 		state->currentFrame   = 0;
 		state->keyframeStates = skeleton->keyframeStatesPool[result];
-		zeroMemory( state->keyframeStates.data(), state->keyframeStates.size() );
+		fill( state->keyframeStates.data(), {-1, -1, -1, -1}, state->keyframeStates.size() );
 		skeleton->dirty = true;
 		return result;
 	}
 	return -1;
 }
-int32 playAnimation( Skeleton* skeleton, StringView name )
+int32 playAnimation( Skeleton* skeleton, StringView name, bool repeating = false )
 {
 	assert( skeleton );
 	auto definition = skeleton->definition;
@@ -594,12 +640,17 @@ int32 playAnimation( Skeleton* skeleton, StringView name )
 		return StringView{entry.name, entry.nameLength} == name;
 	} );
 	if( animation ) {
-		return playAnimation( skeleton, animation.get() );
+		return playAnimation( skeleton, animation.get(), repeating );
 	}
 	return -1;
 }
+void stopAnimations( Skeleton* skeleton )
+{
+	skeleton->animations.clear();
+	skeleton->dirty = true;
+}
 
-void update( Skeleton* skeleton, float dt )
+void update( Skeleton* skeleton, ParticleSystem* particleSystem, float dt )
 {
 	assert( skeleton );
 	assert( skeleton->transforms.size() == skeleton->worldTransforms.size() );
@@ -613,12 +664,18 @@ void update( Skeleton* skeleton, float dt )
 		const auto toplevel = &animations[animationStates[0].animationIndex];
 		auto transforms     = skeleton->transforms;
 		auto visuals        = skeleton->visuals;
+		auto emitters       = skeleton->emitters;
 
 		const auto transformsCount = transforms.size();
 		const auto visualsCount    = visuals.size();
+		const auto emittersCount   = emitters.size();
 
 		transforms.assign( toplevel->transforms );
 		visuals.assign( toplevel->visuals );
+		// emitters can't be assigned easily because timer isn't allowed to be reset here
+		for( auto i = 0; i < emittersCount; ++i ) {
+			emitters[i].active = toplevel->emitters[i].active;
+		}
 
 		auto findCurrentKeyframe = []( float currentFrame, const auto& keyframes, int16 index ) {
 			while( index + 1 < keyframes.size() ) {
@@ -689,16 +746,34 @@ void update( Skeleton* skeleton, float dt )
 			*data  = multiplyComponents(
 			    interpolateKeyframeData( curves, currentFrame, keyframes, *index, def ), *data );
 		};
+		auto processCustom = [findCurrentKeyframe]( Array< BezierForwardDifferencerData > curves,
+		                                            float currentFrame, const auto& keyframes,
+		                                            int16* index, auto* data ) {
+			typeof( keyframes )::value_type::value_type def = {};
+			*index = findCurrentKeyframe( currentFrame, keyframes, *index );
+			if( *index >= 0 ) {
+				*data = keyframes[*index].data;
+			} else {
+				*data = def;
+			}
+		};
 
 		FOR( state : animationStates ) {
+			if( !( state.flags & SkeletonAnimationState::Playing ) ) {
+				continue;
+			}
 			auto animation = &animations[state.animationIndex];
 			auto keyframes = animation->keyframes;
 			auto curves    = animation->curves;
 			state.currentFrame += dt;
 			bool reset = false;
 			if( state.currentFrame > animation->duration ) {
-				state.currentFrame -= animation->duration;
-				reset = true;
+				if( state.flags & SkeletonAnimationState::Repeating ) {
+					state.currentFrame -= animation->duration;
+					reset = true;
+				} else {
+					clearFlag( state.flags, SkeletonAnimationState::Playing );
+				}
 			}
 			auto currentFrame = state.currentFrame;
 			// apply keyframe animations
@@ -716,11 +791,33 @@ void update( Skeleton* skeleton, float dt )
 					                 &keyframeState->rotation, &transform->rotation );
 					processScale( curves, currentFrame, currentKeyframes->scale,
 					              &keyframeState->scale, &transform->scale );
-					// TODO: process frame and active
-					/*processKeyframe( curves, currentFrame, currentKeyframes->frame,
-					                 &keyframeState->frame, &transform->frame );
-					processKeyframe( curves, currentFrame, currentKeyframes->active,
-					                 &keyframeState->active, &transform->active );*/
+				}
+			}
+			for( auto i = 0; i < visualsCount; ++i ) {
+				auto entry            = &visuals[i];
+				auto currentKeyframes = &keyframes[entry->index];
+				if( currentKeyframes->hasKeyframes ) {
+					auto keyframeState = &state.keyframeStates[entry->index];
+					processCustom( curves, currentFrame, currentKeyframes->frame,
+					               &keyframeState->custom, &entry->frame );
+				}
+			}
+			for( auto i = 0; i < emittersCount; ++i ) {
+				auto entry            = &emitters[i];
+				auto currentKeyframes = &keyframes[entry->index];
+				if( currentKeyframes->hasKeyframes ) {
+					auto keyframeState = &state.keyframeStates[entry->index];
+					bool8 wasActive    = {false};
+					auto prev          = keyframeState->custom;
+					if( prev >= 0 && currentKeyframes->active.size() ) {
+						wasActive = currentKeyframes->active[prev].data;
+					}
+					processCustom( curves, currentFrame, currentKeyframes->active,
+					               &keyframeState->custom, &entry->active );
+					if( ( prev != keyframeState->custom && wasActive && entry->active ) || reset ) {
+						// force emitting of particles, because emitter was reactivated or reset
+						entry->time = 0;
+					}
 				}
 			}
 		}
@@ -750,14 +847,16 @@ void update( Skeleton* skeleton, float dt )
 				current->frame += base->frame;
 			}
 		}
+
 		skeleton->dirty = true;
 	}
 
 	// calculate world transforms
 	if( skeleton->dirty ) {
-		skeleton->dirty = false;
+		skeleton->dirty      = false;
 		auto transforms      = skeleton->transforms;
 		auto worldTransforms = skeleton->worldTransforms;
+		auto& rootTransform  = skeleton->rootTransform;
 
 		auto count = skeleton->transforms.size();
 		for( auto i = 0; i < count; ++i ) {
@@ -772,7 +871,26 @@ void update( Skeleton* skeleton, float dt )
 			if( transform->parent >= 0 ) {
 				*world = local * worldTransforms[transform->parent];
 			} else {
-				*world = local;
+				*world = local * rootTransform;
+			}
+		}
+
+		// emit particles
+		FOR( state : skeleton->emitters ) {
+			if( state.active ) {
+				state.time -= dt;
+				if( state.time <= 0 ) {
+					// emit
+					const auto emitter = &definition->emitters[state.assetIndex];
+					if( emitter->interval > 0 ) {
+						state.time += emitter->interval;
+					} else {
+						state.time = FLOAT32_MAX;
+					}
+
+					auto pos = transformVector3( worldTransforms[state.index], {} );
+					emitParticles( particleSystem, pos, emitter->emitter );
+				}
 			}
 		}
 	}
@@ -804,7 +922,7 @@ void render( RenderCommands* renderer, const Skeleton* skeleton )
 	FOR( visual : skeleton->visuals ) {
 		if( visual.animation >= 0 ) {
 			auto& world     = worldTransforms[visual.index];
-			auto collection = voxels[visual.voxelIndex];
+			auto collection = voxels[visual.assetIndex];
 			setTexture( renderer, 0, collection->texture );
 			auto range = collection->animations[visual.animation].range;
 			if( range ) {
@@ -817,4 +935,59 @@ void render( RenderCommands* renderer, const Skeleton* skeleton )
 	}
 	popMatrix( stack );
 	setRenderState( renderer, RenderStateType::BackFaceCulling, true );
+}
+
+void processSkeletonSystem( SkeletonSystem* system, ParticleSystem* particleSystem, float dt )
+{
+	assert( system );
+	assert( particleSystem );
+
+	FOR( skeleton : system->skeletons ) {
+		update( &skeleton, particleSystem, dt );
+	}
+}
+
+SkeletonDefinition loadSkeletonDefinitionAndAnimationIndices(
+    StackAllocator* allocator, StringView filename, Array< const StringView > animationNames,
+    Array< int8 > outAnimationIndices )
+{
+	assert( isValid( allocator ) );
+	assert( animationNames.size() == outAnimationIndices.size() );
+
+	SkeletonDefinition result = loadSkeletonDefinition( allocator, filename, 0 );
+
+	for( auto i = 0, count = outAnimationIndices.size(); i < count; ++i ) {
+		auto name = animationNames[i];
+		outAnimationIndices[i] =
+		    auto_truncate( find_index_if( result.animationIds, [name]( const auto& entry ) {
+			                   return StringView{entry.name, entry.nameLength} == name;
+			               } ).value );
+	}
+
+	return result;
+}
+
+SkeletonSystem makeSkeletonSystem( StackAllocator* allocator, int32 maxSkeletons,
+                                   int32 maxDefinitions )
+{
+	SkeletonSystem result = {};
+	result.skeletons      = makeUArray( allocator, Skeleton, maxSkeletons );
+	result.definitions    = makeUArray( allocator, SkeletonDefinition, maxDefinitions );
+
+	result.hero.definition  = result.definitions.emplace_back();
+	*result.hero.definition = loadSkeletonDefinitionAndAnimationIndices(
+	    allocator, "Data/voxels/hero_animations.json", makeArrayView( HeroAnimationNames ),
+	    makeArrayView( (int8*)&result.hero.ids, sizeof( result.hero.ids ) / sizeof( int8 ) ) );
+	return result;
+}
+
+Skeleton* addSkeleton( StackAllocator* allocator, SkeletonSystem* system,
+                       const SkeletonDefinition& definition )
+{
+	Skeleton* result = nullptr;
+	if( system->skeletons.remaining() ) {
+		result  = system->skeletons.emplace_back();
+		*result = makeSkeleton( allocator, definition );
+	}
+	return result;
 }

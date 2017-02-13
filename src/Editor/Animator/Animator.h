@@ -213,7 +213,7 @@ struct AnimatorAnimation {
 	std::vector< AnimatorNode > nodes;
 	std::vector< AnimatorKeyframe > keyframes;
 	std::vector< AnimatorCurveData > curves;
-	short_string< 10 > name;
+	short_string< 25 > name;
 };
 
 typedef std::vector< std::unique_ptr< AnimatorKeyframe > > AnimatorKeyframes;

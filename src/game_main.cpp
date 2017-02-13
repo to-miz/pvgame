@@ -285,88 +285,6 @@ void debug_PushAabb( float x, float y, float z )
 }
 void debug_PushAabb( vec3arg point ) { debug_PushAabb( point.x, point.y, point.z ); }
 
-struct Camera {
-	vec3 position;
-	vec3 look;
-	vec3 right;  // how the x axis is oriented
-	vec3 up;     // how the y axis is oriented
-};
-
-Camera makeCamera( vec3arg position, vec3arg look, vec3arg up )
-{
-	Camera result;
-	result.position = position;
-	result.look     = normalize( look );
-	result.up       = normalize( up );
-	result.right    = normalize( cross( up, look ) );
-	return result;
-}
-void updateCamera( Camera* camera, float xAngle, float yAngle )
-{
-	assert( camera );
-
-	vec3 yDir = yAngle * camera->up;
-	if( ( camera->up.y < 0.1f && camera->look.y < 0.0f && yDir.y < 0.0f )
-	    || ( camera->up.y < 0.1f && camera->look.y >= 0.0f && yDir.y > 0.0f ) ) {
-		yDir = {};
-	}
-
-	vec3 xDir     = xAngle * camera->right;
-	camera->look  = normalize( camera->look + xDir + yDir );
-	camera->right = safeNormalize( vec3{camera->look.z, 0, -camera->look.x}, camera->right );
-	camera->up    = normalize( cross( camera->look, camera->right ) );
-}
-void updateCamera( Camera* camera, vec2arg angle ) { updateCamera( camera, angle.x, angle.y ); }
-Camera cameraLookAt( const Camera& camera, vec3arg position )
-{
-	Camera result;
-	result.position = camera.position;
-	result.look     = normalize( position - camera.position );
-	result.right    = normalize( cross( camera.up, result.look ) );
-	result.up       = cross( result.look, result.right );
-	return result;
-}
-Camera cameraLookDirection( const Camera& camera, vec3arg dir )
-{
-	assert( floatEqSoft( length( dir ), 1 ) );
-	Camera result;
-	result.position = camera.position;
-	result.look     = dir;
-	result.right    = normalize( cross( camera.up, dir ) );
-	result.up       = cross( dir, result.right );
-	return result;
-}
-mat4 getViewMatrix( Camera* camera )
-{
-	mat4 result;
-	result.m[0] = camera->right.x;
-	result.m[4] = camera->right.y;
-	result.m[8] = camera->right.z;
-
-	result.m[1] = camera->up.x;
-	result.m[5] = camera->up.y;
-	result.m[9] = camera->up.z;
-
-	result.m[2]  = camera->look.x;
-	result.m[6]  = camera->look.y;
-	result.m[10] = camera->look.z;
-
-	result.m[3]  = 0.0f;
-	result.m[7]  = 0.0f;
-	result.m[11] = 0.0f;
-
-	result.m[12] = -dot( camera->right, camera->position );
-	result.m[13] = -dot( camera->up, camera->position );
-	result.m[14] = -dot( camera->look, camera->position );
-
-	result.m[15] = 1.0f;
-	return result;
-}
-vec3 center( Camera* camera )
-{
-	return {camera->position.x, camera->position.y + 50.0f, camera->position.z};
-}
-
 struct GameSettings {
 	float mouseSensitivity;
 	bool mouseInvertY;
@@ -381,6 +299,7 @@ GameSettings makeDefaultGameSettings()
 	return result;
 }
 
+#include "Camera.cpp"
 #include "VoxelGrid.cpp"
 
 struct VoxelCollection {
@@ -512,9 +431,14 @@ enum class SpatialState {
 	FallingOff,
 	Airborne,
 };
-static const char* const SpatilStateStrings[] = {
-    "Grounded", "FallingOff", "Airborne",
-};
+const char* getSpatialStateString( SpatialState state )
+{
+	static const char* const SpatialStateStrings[] = {
+	    "Grounded", "FallingOff", "Airborne",
+	};
+	assert( valueof( state ) < countof( SpatialStateStrings ) );
+	return SpatialStateStrings[valueof( state )];
+}
 
 struct CollidableRef {
 	enum : int8 { None, Tile, Dynamic } type;
@@ -534,12 +458,19 @@ struct CollidableRef {
 		this->handle = handle;
 	}
 };
-enum class CollidableMovement : int8 { Straight, Grounded };
-enum class CollidableResponse : int8 { FullStop, Bounce };
-enum class CollidableFaceDirection : int8 { Left, Right };
+enum class EntityMovement : int8 { Straight, Grounded };
+enum class CollisionResponse : int8 { FullStop, Bounce };
+enum class EntityFaceDirection : int8 { Left, Right };
 enum class RenderType : int8 { Hero, Projectile };
 
-struct CollidableComponent {
+struct Skeleton;
+
+// this used to be CollidableComponent, but it had a lot of fields that didn't have anything to do
+// with collision detection, but with reporting back how/what happened. It behaved like a full
+// entity class, so now it is actually clear what this structure is: everything you need to know
+// about an entity is here
+// there are still "components", but for things that operate on entities as a whole, like controls
+struct Entity {
 	vec2 position;
 	vec2 velocity;
 	rectf aab;
@@ -563,24 +494,35 @@ struct CollidableComponent {
 	CountdownTimer aliveCountdown;  // how many frames this can be alive for, used for entities that
 	                                // dissipate after a certain time
 
+	// TODO: move these into hero
 	CountdownTimer animationLockTimer;
-	float animationSpeed;
-	float currentFrame;
-	rangeu16 currentAnimation;
-
 	CountdownTimer particleEmitTimer;
 	CountdownTimer shootingTimer;
 
 	EntityHandle entity;
 
-	CollidableMovement movement;
-	CollidableResponse response;
+	EntityMovement movement;
+	CollisionResponse response;
 	vec2 forcedNormal;
 	uint8 flags;
-	CollidableFaceDirection prevFaceDirection;
-	CollidableFaceDirection faceDirection;
+	EntityFaceDirection prevFaceDirection;
+	EntityFaceDirection faceDirection;
 
-	RenderType renderType;
+	enum { type_none, type_hero, type_projectile, type_wheels } type;
+	union {
+		struct {
+			Skeleton* skeleton;
+			int8 currentAnimationIndex;
+			int32 currentAnimation;
+		} hero;
+		struct {
+		} projectile;
+		struct Wheels {
+			Skeleton* skeleton;
+			CountdownTimer attackTimer;
+			enum {} state;
+		} wheels;
+	};
 
 	enum Flags : uint8 {
 		WalljumpLeft    = BITFIELD( 0 ),  // whether we are doing a walljump to the left or right
@@ -599,7 +541,7 @@ struct CollidableComponent {
 		flags |= UseForcedNormal;
 	}
 };
-void setSpatialState( CollidableComponent* collidable, SpatialState state )
+void setSpatialState( Entity* collidable, SpatialState state )
 {
 	if( state != collidable->spatialState ) {
 		collidable->spatialState      = state;
@@ -609,7 +551,7 @@ void setSpatialState( CollidableComponent* collidable, SpatialState state )
 		}
 	}
 }
-void processSpatialState( CollidableComponent* collidable, float dt )
+void processSpatialState( Entity* collidable, float dt )
 {
 	constexpr float maxFallingOffTime = 5;
 	collidable->spatialStateTimer += dt;
@@ -618,25 +560,20 @@ void processSpatialState( CollidableComponent* collidable, float dt )
 		setSpatialState( collidable, SpatialState::Airborne );
 	}
 }
-bool isSpatialStateJumpable( CollidableComponent* collidable )
+bool isSpatialStateJumpable( Entity* collidable )
 {
 	return collidable->spatialState == SpatialState::Grounded
 	       || collidable->spatialState == SpatialState::FallingOff;
 }
-bool isSpatialStateWalljumpable( CollidableComponent* collidable )
+bool isSpatialStateWalljumpable( Entity* collidable )
 {
 	return /*collidable->spatialState == SpatialState::FallingOff
 	       ||*/ collidable->spatialState
 	       == SpatialState::Airborne;
 }
-const char* getSpatialStateString( SpatialState state )
-{
-	assert( valueof( state ) < countof( SpatilStateStrings ) );
-	return SpatilStateStrings[valueof( state )];
-}
-bool canEntityShoot( CollidableComponent* collidable ) { return true; }
+bool canEntityShoot( Entity* collidable ) { return true; }
 
-CollidableComponent* getDynamicFromCollidableRef( Array< CollidableComponent > dynamics, CollidableRef ref )
+Entity* getDynamicFromCollidableRef( Array< Entity > dynamics, CollidableRef ref )
 {
 	assert( ref.type == CollidableRef::Dynamic );
 	assert( ref.index >= 0 );
@@ -649,7 +586,7 @@ CollidableComponent* getDynamicFromCollidableRef( Array< CollidableComponent > d
 	auto handle = ref.handle;
 	return find_first_where( dynamics, entry.entity == handle );
 }
-float getFrictionCoefficitonFromCollidableRef( Array< CollidableComponent > dynamics, TileGrid grid,
+float getFrictionCoefficitonFromCollidableRef( Array< Entity > dynamics, TileGrid grid,
                                                Array< TileInfo > infos, CollidableRef ref )
 {
 	switch( ref.type ) {
@@ -670,7 +607,7 @@ float getFrictionCoefficitonFromCollidableRef( Array< CollidableComponent > dyna
 	}
 	return 0;
 }
-rectf getBoundsFromCollidableRef( Array< CollidableComponent > dynamics, TileGrid grid,
+rectf getBoundsFromCollidableRef( Array< Entity > dynamics, TileGrid grid,
                                   CollidableRef ref )
 {
 	rectf result = {};
@@ -694,31 +631,31 @@ rectf getBoundsFromCollidableRef( Array< CollidableComponent > dynamics, TileGri
 	return result;
 }
 
-struct CollidableSystem {
-	UArray< CollidableComponent > entries;
+struct entitySystem {
+	UArray< Entity > entries;
 	int32 entriesCount;  // count of entries that are not dynamic
 
-	Array< CollidableComponent > staticEntries() const
+	Array< Entity > staticEntries() const
 	{
 		return makeArrayView( entries.begin(), entries.begin() + entriesCount );
 	}
-	Array< CollidableComponent > dynamicEntries() const
+	Array< Entity > dynamicEntries() const
 	{
 		return makeArrayView( entries.begin() + entriesCount, entries.end() );
 	}
 };
-CollidableSystem makeCollidableSystem( StackAllocator* allocator, int32 maxCount )
+entitySystem makeCollidableSystem( StackAllocator* allocator, int32 maxCount )
 {
-	CollidableSystem result = {};
-	result.entries          = makeUArray( allocator, CollidableComponent, maxCount );
+	entitySystem result = {};
+	result.entries          = makeUArray( allocator, Entity, maxCount );
 	return result;
 }
-CollidableComponent* addCollidableComponent( CollidableSystem* system, EntityHandle entity,
+Entity* addCollidableComponent( entitySystem* system, EntityHandle entity,
                                              bool dynamic = false )
 {
 	assert( system );
 	assert( entity );
-	CollidableComponent* result = nullptr;
+	Entity* result = nullptr;
 	if( system->entries.remaining() ) {
 		if( dynamic ) {
 			result  = system->entries.emplace_back();
@@ -730,15 +667,14 @@ CollidableComponent* addCollidableComponent( CollidableSystem* system, EntityHan
 		}
 		result->grounded.clear();
 		result->entity = entity;
-		setFlagCond( result->flags, CollidableComponent::Dynamic, dynamic );
+		setFlagCond( result->flags, Entity::Dynamic, dynamic );
 		result->gravityModifier = 1;
 		result->bounceModifier  = 1;
-		result->animationSpeed  = 0.1f;
 		result->airFrictionCoeffictient = 0.0f;
 	}
 	return result;
 }
-CollidableComponent* findCollidableComponent( CollidableSystem* system, EntityHandle entity )
+Entity* findCollidableComponent( entitySystem* system, EntityHandle entity )
 {
 	return find_first_where( system->entries, entry.entity == entity );
 }
@@ -902,39 +838,7 @@ static Room debugGetRoom( StackAllocator* allocator, TileSet* tileSet )
 	processLayer( result.layers[RL_Front].grid, GameDebugMapFront );
 	return result;
 }
-
-struct HeroVoxelCollection {
-	VoxelCollection voxels;
-	// cache animation name to index results
-	rangeu16 idle;
-	rangeu16 idleShoot;
-	rangeu16 turn;
-	rangeu16 walk;
-	rangeu16 jumpRising;
-	rangeu16 jumpFalling;
-	rangeu16 wallslide;
-	rangeu16 walkShoot;
-	rangeu16 jumpRisingShoot;
-	rangeu16 jumpFallingShoot;
-	rangeu16 wallslideShoot;
-	rangeu16 landing;
-};
-
-const char* const HeroAnimationNames[] = {
-    "Idle",
-    "IdleShoot",
-    "Turn",
-    "Walk",
-    "JumpRising",
-    "JumpFalling",
-    "Wallslide",
-    "WalkShoot",
-    "JumpRisingShoot",
-    "JumpFallingShoot",
-    "WallslideShoot",
-    "Landing",
-};
-
+vec2 gameToScreen( vec2 pos ) { return {pos.x, -pos.y}; }
 rectf gameToScreen( rectfarg rect )
 {
 	rectf result;
@@ -1091,15 +995,14 @@ enum class AppFocus { Game, Voxel, TexturePack, Animator, Easing };
 
 struct GameState {
 	TileSet tileSet;
-	HeroVoxelCollection heroVoxelCollection;
 	ParticleSystem particleSystem;
 	SkeletonSystem skeletonSystem;
 	VoxelCollection projectile;
 
 	HandleManager entityHandles;
-	CollidableSystem collidableSystem;
+	entitySystem entitySystem;
 	ControlSystem controlSystem;
-	CollidableComponent* player;
+	Entity* player;
 	UArray< EntityHandle > entityRemovalQueue;
 	bool initialized;
 
@@ -1112,7 +1015,6 @@ struct GameState {
 
 	// debug fields
 	GameDebugGuiState debugGui;
-	SkeletonTest skeletonTest;
 
 	bool paused;
 
@@ -1126,7 +1028,7 @@ bool emitProjectile( GameState* game, vec2arg origin, vec2arg velocity )
 {
 	// TODO: emit different types of projectiles based on upgrades
 	auto projectileId = addEntity( &game->entityHandles );
-	auto projectile   = addCollidableComponent( &game->collidableSystem, projectileId );
+	auto projectile   = addCollidableComponent( &game->entitySystem, projectileId );
 	if( projectile ) {
 		projectile->position                = origin;
 		projectile->velocity                = velocity;
@@ -1134,9 +1036,9 @@ bool emitProjectile( GameState* game, vec2arg origin, vec2arg velocity )
 		projectile->gravityModifier         = 0;
 		projectile->bounceModifier          = 2;
 		projectile->airFrictionCoeffictient = 0;
-		projectile->movement                = CollidableMovement::Straight;
-		projectile->response                = CollidableResponse::Bounce;
-		projectile->renderType              = RenderType::Projectile;
+		projectile->movement                = EntityMovement::Straight;
+		projectile->type                    = Entity::type_projectile;
+		projectile->response                = CollisionResponse::Bounce;
 		projectile->aliveCountdown          = {60};
 		return true;
 	}
@@ -1144,17 +1046,17 @@ bool emitProjectile( GameState* game, vec2arg origin, vec2arg velocity )
 }
 
 void processControlSystem( GameState* game, ControlSystem* control,
-                           CollidableSystem* collidableSystem, GameInputs* inputs, float dt,
+                           entitySystem* entitySystem, GameInputs* inputs, float dt,
                            bool frameBoundary )
 {
 	assert( control );
-	assert( collidableSystem );
+	assert( entitySystem );
 	assert( inputs );
 
 	using namespace GameConstants;
 
 	for( auto& entry : control->entries ) {
-		if( auto collidable = findCollidableComponent( collidableSystem, entry.entity ) ) {
+		if( auto collidable = findCollidableComponent( entitySystem, entry.entity ) ) {
 			collidable->velocity.x = 0;
 			// TODO: do keymapping to actions
 			if( isKeyDown( inputs, KC_Left ) ) {
@@ -1163,9 +1065,9 @@ void processControlSystem( GameState* game, ControlSystem* control,
 
 					collidable->velocity.x = -MovementSpeed;
 					if( collidable->walljumpWindow ) {
-						collidable->faceDirection = CollidableFaceDirection::Right;
+						collidable->faceDirection = EntityFaceDirection::Right;
 					} else {
-						collidable->faceDirection = CollidableFaceDirection::Left;
+						collidable->faceDirection = EntityFaceDirection::Left;
 					}
 				}
 			}
@@ -1175,9 +1077,9 @@ void processControlSystem( GameState* game, ControlSystem* control,
 
 					collidable->velocity.x = MovementSpeed;
 					if( !collidable->walljumpWindow ) {
-						collidable->faceDirection = CollidableFaceDirection::Right;
+						collidable->faceDirection = EntityFaceDirection::Right;
 					} else {
-						collidable->faceDirection = CollidableFaceDirection::Left;
+						collidable->faceDirection = EntityFaceDirection::Left;
 					}
 				}
 			}
@@ -1221,12 +1123,12 @@ void processControlSystem( GameState* game, ControlSystem* control,
 				// TODO: move this into a shoot projectile function
 				// TODO: load gun position dynamicly together with the voxel collection
 				vec2 gunOffset = {6, 14};
-				if( collidable->faceDirection == CollidableFaceDirection::Left ) {
+				if( collidable->faceDirection == EntityFaceDirection::Left ) {
 					gunOffset.x = -gunOffset.x;
 				}
 				auto gunPosition = collidable->position + gunOffset;
 				vec2 velocity = {3, 0};
-				if( collidable->faceDirection == CollidableFaceDirection::Left ) {
+				if( collidable->faceDirection == EntityFaceDirection::Left ) {
 					velocity.x = -velocity.x;
 				}
 				if( !emitProjectile( game, gunPosition, velocity ) ) {
@@ -1586,27 +1488,6 @@ bool loadVoxelCollection( StackAllocator* allocator, StringView filename, VoxelC
 	return true;
 }
 
-bool loadAnimatedVoxelCollection( StackAllocator* allocator, StringView filename,
-                                  VoxelCollection* out, Array< const char* const > animationNames,
-                                  Array< rangeu16 > indices )
-{
-	assert( animationNames.size() == indices.size() );
-	if( !loadVoxelCollection( allocator, filename, out ) ) {
-		return false;
-	}
-
-	for( auto i = 0; i < animationNames.size(); ++i ) {
-		indices[i] = getAnimationRange( out, animationNames[i] );
-	}
-	return true;
-}
-bool loadHeroVoxelCollection( StackAllocator* allocator, StringView filename,
-                              HeroVoxelCollection* out )
-{
-	return loadAnimatedVoxelCollection( allocator, filename, &out->voxels,
-	                                    makeArrayView( HeroAnimationNames ),
-	                                    makeArrayView( &out->idle, 12 ) );
-}
 bool loadTileSet( StackAllocator* allocator, StringView filename, TileSet* out ) {
 	if( !loadVoxelCollection( allocator, filename, &out->voxels ) ) {
 		return false;
@@ -1765,7 +1646,7 @@ struct CollisionResult {
 	CollisionInfo info;
 	inline explicit operator bool() const { return static_cast< bool >( collision ); }
 };
-static CollisionResult detectCollisionVsTileGrid( CollidableComponent* collidable, vec2arg velocity,
+static CollisionResult detectCollisionVsTileGrid( Entity* collidable, vec2arg velocity,
                                                   TileGrid grid, recti tileGridRegion, float maxT )
 {
 	using namespace GameConstants;
@@ -1791,8 +1672,8 @@ static CollisionResult detectCollisionVsTileGrid( CollidableComponent* collidabl
 	}
 	return result;
 }
-static CollisionResult detectCollisionVsDynamics( CollidableComponent* collidable, vec2arg velocity,
-                                                  Array< CollidableComponent > dynamics,
+static CollisionResult detectCollisionVsDynamics( Entity* collidable, vec2arg velocity,
+                                                  Array< Entity > dynamics,
                                                   float maxT )
 {
 	using namespace GameConstants;
@@ -1812,7 +1693,7 @@ static CollisionResult detectCollisionVsDynamics( CollidableComponent* collidabl
 	return result;
 }
 
-static recti getSweptTileGridRegion( const CollidableComponent* collidable, vec2arg velocity )
+static recti getSweptTileGridRegion( const Entity* collidable, vec2arg velocity )
 {
 	using namespace GameConstants;
 	auto currentPlayerAab = translate( collidable->aab, collidable->position );
@@ -1825,8 +1706,8 @@ static recti getSweptTileGridRegion( const CollidableComponent* collidable, vec2
 	return tileGridRegion;
 }
 
-CollisionResult findCollision( CollidableComponent* collidable, vec2arg velocity, TileGrid grid,
-                               recti tileGridRegion, Array< CollidableComponent > dynamics,
+CollisionResult findCollision( Entity* collidable, vec2arg velocity, TileGrid grid,
+                               recti tileGridRegion, Array< Entity > dynamics,
                                float maxT, bool dynamic )
 {
 	auto collision = detectCollisionVsTileGrid( collidable, velocity, grid, tileGridRegion, maxT );
@@ -1865,9 +1746,11 @@ CollisionResult findCollision( CollidableComponent* collidable, vec2arg velocity
 	return collision;
 }
 
-// TODO: rename function, since CollidableComponent does way more than colliding
-void processCollidables( Array< CollidableComponent > entries, TileGrid grid,
-                         Array< TileInfo > infos, Array< CollidableComponent > dynamics,
+#include <functional>
+
+// TODO: rename function, since Entity does way more than colliding
+void processCollidables( Array< Entity > entries, TileGrid grid,
+                         Array< TileInfo > infos, Array< Entity > dynamics,
                          bool dynamic, float dt, bool frameBoundary )
 {
 	using namespace GameConstants;
@@ -1882,11 +1765,10 @@ void processCollidables( Array< CollidableComponent > entries, TileGrid grid,
 		auto wasAlive          = isCountdownActive( entry.aliveCountdown );
 		entry.aliveCountdown   = processTimer( entry.aliveCountdown, dt );
 		if( wasAlive && isCountdownTimerExpired( entry.aliveCountdown ) ) {
-			entry.flags |= CollidableComponent::DeathFlag;
+			entry.flags |= Entity::DeathFlag;
 		}
 
 		// animations
-		entry.currentFrame += entry.animationSpeed * dt;
 		if( !entry.grounded ) {
 			entry.animationLockTimer = {};
 		}
@@ -1908,7 +1790,7 @@ void processCollidables( Array< CollidableComponent > entries, TileGrid grid,
 
 		// update
 		if( frameBoundary ) {
-			if( !entry.grounded || entry.movement != CollidableMovement::Grounded ) {
+			if( !entry.grounded || entry.movement != EntityMovement::Grounded ) {
 				entry.velocity.y += Gravity * entry.gravityModifier;
 				entry.velocity.y -= entry.airFrictionCoeffictient * entry.velocity.y;
 				if( entry.wallslideCollidable && entry.velocity.y > 0 ) {
@@ -1926,7 +1808,7 @@ void processCollidables( Array< CollidableComponent > entries, TileGrid grid,
 		auto vdt        = dt;
 		recti mapBounds = {0, 0, GAME_MAP_WIDTH, GAME_MAP_HEIGHT};
 
-		auto isGroundBased = entry.movement == CollidableMovement::Grounded
+		auto isGroundBased = entry.movement == EntityMovement::Grounded
 		                     && floatEqSoft( entry.bounceModifier, 1.0f );
 		// find position of gap and whether we should squeeze into it this frame
 		// entry must have ground based movement and bounceModifier of 1 (sliding behavior) for
@@ -2198,11 +2080,11 @@ void processCollidables( Array< CollidableComponent > entries, TileGrid grid,
 			if( collision ) {
 				entry.lastCollision = collision.collision;
 			}
-			if( entry.response == CollidableResponse::FullStop ) {
+			if( entry.response == CollisionResponse::FullStop ) {
 				if( collision ) {
 					break;
 				}
-			} else if( entry.response == CollidableResponse::Bounce ) {
+			} else if( entry.response == CollisionResponse::Bounce ) {
 				if( collision ) {
 					// reflect velocity based on the collision normal
 					entry.velocity -= entry.bounceModifier * normal * dot( normal, entry.velocity );
@@ -2212,7 +2094,7 @@ void processCollidables( Array< CollidableComponent > entries, TileGrid grid,
 				    && ( ( oldVelocity.x >= 0 ) == ( normal.x < 0 ) ) ) {
 
 					// we are wallsliding
-					setFlagCond( entry.flags, CollidableComponent::WalljumpLeft, ( normal.x < 0 ) );
+					setFlagCond( entry.flags, Entity::WalljumpLeft, ( normal.x < 0 ) );
 					entry.walljumpWindow = {WalljumpWindowDuration};
 					entry.wallslideCollidable = collision.collision;
 				}
@@ -2277,9 +2159,9 @@ void processCollidables( Array< CollidableComponent > entries, TileGrid grid,
 			// adjust face direction if we are wallsliding
 			if( entry.walljumpWindow ) {
 				if( entry.walljumpLeft() ) {
-					entry.faceDirection = CollidableFaceDirection::Left;
+					entry.faceDirection = EntityFaceDirection::Left;
 				} else {
-					entry.faceDirection = CollidableFaceDirection::Right;
+					entry.faceDirection = EntityFaceDirection::Right;
 				}
 			}
 		}
@@ -2287,7 +2169,7 @@ void processCollidables( Array< CollidableComponent > entries, TileGrid grid,
 
 }
 
-static void doCollisionDetection( Room* room, CollidableSystem* system, float dt,
+static void doCollisionDetection( Room* room, entitySystem* system, float dt,
                                   bool frameBoundary )
 {
 	using namespace GameConstants;
@@ -2352,7 +2234,7 @@ static StringView detailedDebugOutput( AppData* app, char* buffer, int32 size )
 
 	// output debug player state
 	auto player = app->gameState.player;
-	builder.println( "CollidableComponent: {}\nCollidableComponent Time: {}",
+	builder.println( "Entity: {}\nCollidableComponent Time: {}",
 	                 getSpatialStateString( player->spatialState ), player->spatialStateTimer );
 	builder.println( "Player pos: {}\nPlayer velocity: {}", player->position, player->velocity );
 	builder.println( "Camera follow: {:.2}", app->gameState.cameraFollowRegion );
@@ -2533,63 +2415,60 @@ static void processGameCamera( AppData* app, float dt, bool frameBoundary )
 	}
 }
 
-Array< VoxelCollection::Frame > getHeroActionAnimation( HeroVoxelCollection* collection,
-                                                        CollidableComponent* collidable, float dt )
+void setHeroActionAnimation( SkeletonSystem* system, Entity* entity, float dt )
 {
-	auto animation = collidable->currentAnimation;
-	bool shooting = (bool)collidable->shootingTimer;
-	if( isCountdownTimerExpired( collidable->animationLockTimer ) ) {
-		animation = ( shooting ) ? collection->idleShoot : collection->idle;
-		collidable->animationSpeed = 0.1f;
-		if( collidable->grounded ) {
-			if( !shooting && collidable->spatialStateTimer <= 10.0f ) {
-				collidable->animationSpeed = 0.2f;
-				animation = collection->landing;
+	auto hero       = &get_variant( *entity, hero );
+	const auto& ids = system->hero.ids;
+
+	auto skeleton  = hero->skeleton;
+	auto animation = hero->currentAnimationIndex;
+	bool shooting  = (bool)entity->shootingTimer;
+	if( isCountdownTimerExpired( entity->animationLockTimer ) ) {
+		animation = ( shooting ) ? ids.idleShoot : ids.idle;
+		if( entity->grounded ) {
+			if( !shooting && entity->spatialStateTimer <= 10.0f ) {
+				animation = ids.landing;
 			} else {
-				if( !shooting && collidable->faceDirection != collidable->prevFaceDirection ) {
-					collidable->animationLockTimer = {5.0f};
-					animation = collection->turn;
+				if( !shooting && entity->faceDirection != entity->prevFaceDirection ) {
+					auto lock = skeleton->definition->animations[ids.turn].duration;
+					entity->animationLockTimer = {lock};
+					animation                  = ids.turn;
 				} else {
-					if( collidable->velocity.x != 0 ) {
-						animation = ( shooting ) ? collection->walkShoot : collection->walk;
+					if( entity->velocity.x != 0 ) {
+						animation = ( shooting ) ? ids.walkShoot : ids.walk;
 					}
 				}
 			}
 		} else {
-			if( collidable->walljumpWindow ) {
-				animation = ( shooting ) ? collection->wallslideShoot : collection->wallslide;
+			if( entity->walljumpWindow ) {
+				animation = ( shooting ) ? ids.wallslideShoot : ids.wallslide;
 			} else {
-				if( collidable->velocity.y < 0 ) {
-					animation = ( shooting ) ? collection->jumpRisingShoot : collection->jumpRising;
+				if( entity->velocity.y < 0 ) {
+					animation = ( shooting ) ? ids.jumpRisingShoot : ids.jumpRising;
 				} else {
-					animation = ( shooting ) ? collection->jumpFallingShoot : collection->jumpFalling;
+					animation = ( shooting ) ? ids.jumpFallingShoot : ids.jumpFalling;
 				}
 			}
 		}
-		if( collidable->currentAnimation != animation ) {
-			collidable->currentFrame = 0;
+		if( hero->currentAnimationIndex != animation ) {
+			stopAnimations( skeleton );
+			hero->currentAnimation = playAnimation( skeleton, animation, true );
 		}
-		collidable->currentAnimation = animation;
-		collidable->prevFaceDirection = collidable->faceDirection;
+		hero->currentAnimationIndex = animation;
+		entity->prevFaceDirection   = entity->faceDirection;
 	}
-	return getAnimationFrames( &collection->voxels, animation );
 }
 
-template < class Container >
-void unordered_remove_if_helper( Container& container, Array< EntityHandle > handles )
-{
-	unordered_remove_if( container, [handles]( typename const Container::reference component ) {
-		return exists( handles, component.entity );
-	} );
-}
 template < class GenericSystem >
 void removeEntities( GenericSystem* system, Array< EntityHandle > handles )
 {
-	unordered_remove_if_helper( system->entries, handles );
+	unordered_remove_if( system->entries, [handles]( const auto& component ) {
+		return exists( handles, component.entity );
+	} );
 }
-void removeEntities( CollidableSystem* system, Array< EntityHandle > handles )
+void removeEntities( entitySystem* system, Array< EntityHandle > handles )
 {
-	erase_if( system->entries, [system, handles]( const CollidableComponent& component ) {
+	erase_if( system->entries, [system, handles]( const Entity& component ) {
 		if( exists( handles, component.entity ) ) {
 			if( !component.dynamic() ) {
 				--system->entriesCount;
@@ -2605,35 +2484,13 @@ void processEntityRemovalQueue( GameState* game )
 	if( game->entityRemovalQueue.size() ) {
 		auto handles = makeArrayView( game->entityRemovalQueue );
 		removeEntities( &game->controlSystem, handles );
-		removeEntities( &game->collidableSystem, handles );
+		removeEntities( &game->entitySystem, handles );
 		game->entityRemovalQueue.clear();
 	}
 }
 void removeEntity( GameState* game, EntityHandle handle )
 {
 	append_unique( game->entityRemovalQueue, handle );
-}
-
-void testSkeletonSystem( AppData* app, GameInputs* inputs, float dt, bool frameBoundary )
-{
-#if 1
-	auto renderer = &app->renderer;
-	auto game = &app->gameState;
-	auto test     = &game->skeletonTest;
-	if( !test->initialized ) {
-		auto allocator = &app->stackAllocator;
-		test->definition =
-		    loadSkeletonDefinition( allocator, "Data/voxels/wheels_enemy_animations.json", 0 );
-		test->skeleton = makeSkeleton( allocator, test->definition );
-		playAnimation( &test->skeleton, "turn" );
-		test->initialized = true;
-	}
-
-	auto skeleton = &test->skeleton;
-
-	update( skeleton, dt );
-	render( renderer, skeleton );
-#endif
 }
 
 static void doGame( AppData* app, GameInputs* inputs, bool focus, float dt, bool frameBoundary,
@@ -2656,34 +2513,45 @@ static void doGame( AppData* app, GameInputs* inputs, bool focus, float dt, bool
 		    app->platform.loadShader( "Shaders/scale_by_normal.vsh", "Shaders/single_color.fsh" );
 
 		loadTileSet( allocator, "Data/voxels/default_tileset.json", &app->gameState.tileSet );
-		loadHeroVoxelCollection( allocator, "Data/voxels/hero.json",
-		                         &app->gameState.heroVoxelCollection );
+		game->skeletonSystem = makeSkeletonSystem( allocator, 5, 5 );
+
 		auto maxEntities         = 10;
 		game->entityHandles      = makeHandleManager();
-		game->collidableSystem   = makeCollidableSystem( allocator, maxEntities );
+		game->entitySystem       = makeCollidableSystem( allocator, maxEntities );
 		game->controlSystem      = makeControlSystem( allocator, maxEntities );
 		game->entityRemovalQueue = makeUArray( allocator, EntityHandle, maxEntities );
 
 		auto playerHandle      = addEntity( &game->entityHandles );
-		game->player           = addCollidableComponent( &game->collidableSystem, playerHandle );
+		game->player           = addCollidableComponent( &game->entitySystem, playerHandle );
 		game->player->aab      = {-5, 0, 5, 24};
 		game->player->position = {16 * 2};
-		game->player->movement = CollidableMovement::Grounded;
-		game->player->response = CollidableResponse::Bounce;
-		game->player->airFrictionCoeffictient = 0.025f;
+		game->player->movement = EntityMovement::Grounded;
+		game->player->response = CollisionResponse::Bounce;
+		game->player->type     = Entity::type_hero;
+		game->player->hero.skeleton =
+		    addSkeleton( allocator, &game->skeletonSystem, *game->skeletonSystem.hero.definition );
+		game->player->hero.currentAnimationIndex = -1;
+		game->player->hero.currentAnimation      = -1;
+		game->player->airFrictionCoeffictient    = 0.025f;
 		addControlComponent( &game->controlSystem, playerHandle );
 
 		auto addMovingPlatform = [&]( vec2arg pos ) {
-			auto handle        = addEntity( &game->entityHandles );
-			auto platform      = addCollidableComponent( &game->collidableSystem, handle, true );
-			platform->aab      = {-8, 0, 8, 28};
-			platform->position = pos;
-			platform->movement = CollidableMovement::Straight;
-			platform->response = CollidableResponse::Bounce;
+			auto handle              = addEntity( &game->entityHandles );
+			auto platform            = addCollidableComponent( &game->entitySystem, handle, true );
+			platform->aab            = {-8, 0, 8, 28};
+			platform->position       = pos;
+			platform->movement       = EntityMovement::Straight;
+			platform->response       = CollisionResponse::Bounce;
 			platform->bounceModifier = 2;
 			platform->setForcedNormal( {1, 0} );
 			platform->velocity        = {1.0f, 0};
 			platform->gravityModifier = 0;
+
+			platform->type          = Entity::type_hero;
+			platform->hero.skeleton = addSkeleton( allocator, &game->skeletonSystem,
+			                                       *game->skeletonSystem.hero.definition );
+			platform->hero.currentAnimationIndex = -1;
+			platform->hero.currentAnimation      = -1;
 		};
 		addMovingPlatform( {16 * 3} );
 		addMovingPlatform( {16 * 8} );
@@ -2709,7 +2577,7 @@ static void doGame( AppData* app, GameInputs* inputs, bool focus, float dt, bool
 	               isKeyDown( inputs, KC_Shift ) ? dt : ( dt * 0.25f ) );
 
 	if( !frameBoundary ) {
-		debugPrintln( "Active entities: {}", game->collidableSystem.entries.size() );
+		debugPrintln( "Active entities: {}", game->entitySystem.entries.size() );
 	}
 
 	if( !frameBoundary ) {
@@ -2730,16 +2598,33 @@ static void doGame( AppData* app, GameInputs* inputs, bool focus, float dt, bool
 	}
 
 	processGameCamera( app, dt, frameBoundary );
-	processControlSystem( game, &game->controlSystem, &game->collidableSystem, inputs, dt,
+	processControlSystem( game, &game->controlSystem, &game->entitySystem, inputs, dt,
 	                      frameBoundary );
-	doCollisionDetection( &game->room, &game->collidableSystem, dt, frameBoundary );
+	doCollisionDetection( &game->room, &game->entitySystem, dt, frameBoundary );
+
+	// skeleton
+	FOR( entity : game->entitySystem.entries ) {
+		if( auto hero = query_variant( entity, hero ) ) {
+
+			auto origin = entity.position;
+			origin.y += height( entity.aab );
+			auto transform = matrixTranslation( Vec3( gameToScreen( origin ), 0 ) );
+			if( entity.faceDirection == EntityFaceDirection::Left ) {
+				transform = matrixScale( -1, 1, 1 ) * transform;
+			}
+			hero->skeleton->setTransform( transform );
+			setHeroActionAnimation( &game->skeletonSystem, &entity, dt );
+		}
+	}
+
+	processSkeletonSystem( &game->skeletonSystem, &game->particleSystem, dt );
 	processParticles( &game->particleSystem, dt );
 
 	// emitting particles
 	// TODO: factor this out into a processing function
-	FOR( entry : game->collidableSystem.entries ) {
+	FOR( entry : game->entitySystem.entries ) {
 		// wallslide particles
-		if( entry.wallslideCollidable && entry.movement == CollidableMovement::Grounded ) {
+		if( entry.wallslideCollidable && entry.movement == EntityMovement::Grounded ) {
 			auto feetPosition = entry.position;
 			feetPosition.y += height( entry.aab );
 			if( entry.walljumpLeft() ) {
@@ -2756,7 +2641,7 @@ static void doGame( AppData* app, GameInputs* inputs, bool focus, float dt, bool
 			auto oldPosition    = exchange( entry.position, feetPosition );
 			auto collisionAtFeet =
 			    findCollision( &entry, searchDir, game->room.layers[RL_Main].grid, region,
-			                   game->collidableSystem.dynamicEntries(), 1, false );
+			                   game->entitySystem.dynamicEntries(), 1, false );
 			entry.aab      = oldBoundingBox;
 			entry.position = oldPosition;
 			if( collisionAtFeet ) {
@@ -2782,10 +2667,8 @@ static void doGame( AppData* app, GameInputs* inputs, bool focus, float dt, bool
 	}
 
 	// entity behaviors
-	// TODO: move this into a seperate component?
-	FOR( entry : game->collidableSystem.staticEntries() ) {
-		// TODO: make this dependant on a behavior type
-		if( entry.renderType == RenderType::Projectile ) {
+	FOR( entry : game->entitySystem.staticEntries() ) {
+		if( entry.type == Entity::type_projectile ) {
 			if( entry.lastCollision || entry.dead() ) {
 				removeEntity( game, entry.entity );
 			}
@@ -2846,44 +2729,40 @@ static void doGame( AppData* app, GameInputs* inputs, bool focus, float dt, bool
 			}
 		}
 
-		testSkeletonSystem( app, inputs, dt, frameBoundary );
-
 		// render entities
-		for( auto& entry : game->collidableSystem.entries ) {
+		for( auto& entry : game->entitySystem.entries ) {
 			VoxelCollection::Frame* currentFrame = nullptr;
-			switch( entry.renderType ) {
-				case RenderType::Hero: {
-					setTexture( renderer, 0, game->heroVoxelCollection.voxels.texture );
-					auto frames  = getHeroActionAnimation( &game->heroVoxelCollection, &entry, dt );
-					currentFrame = &frames[(int32)entry.currentFrame % frames.size()];
+			switch( entry.type ) {
+				case Entity::type_hero: {
+					render( renderer, entry.hero.skeleton );
 					break;
 				}
-				case RenderType::Projectile: {
+				case Entity::type_projectile: {
 					setTexture( renderer, 0, game->projectile.texture );
 					auto frames  = game->projectile.frames;
 					currentFrame = &frames[0];
 					break;
 				}
-					InvalidDefaultCase;
+				InvalidDefaultCase;
 			}
-			assert( currentFrame );
-
-			// 2d game world coordinates to 3d space coordinates
-			auto offset = currentFrame->offset;
-			// offset.x = -offset.x;
-			auto position = ( entry.position - offset ) * CELL_WIDTH;
-			position.y    = -position.y - CELL_HEIGHT * height( entry.aab );
-			// position.x -= CELL_WIDTH * entry.aab.right;
-			pushMatrix( matrixStack );
-			translate( matrixStack, position, 0 );
-			if( entry.faceDirection == CollidableFaceDirection::Left ) {
-				translate( matrixStack, 2 * currentFrame->offset.x, 0 );
-				auto rot = matrixRotationY( Pi32 );
-				multMatrix( matrixStack, rot );
+			if( currentFrame ) {
+				// 2d game world coordinates to 3d space coordinates
+				auto offset = currentFrame->offset;
+				// offset.x = -offset.x;
+				auto position = ( entry.position - offset ) * CELL_WIDTH;
+				position.y    = -position.y - CELL_HEIGHT * height( entry.aab );
+				// position.x -= CELL_WIDTH * entry.aab.right;
+				pushMatrix( matrixStack );
+				translate( matrixStack, position, 0 );
+				if( entry.faceDirection == EntityFaceDirection::Left ) {
+					translate( matrixStack, 2 * currentFrame->offset.x, 0 );
+					auto rot = matrixRotationY( Pi32 );
+					multMatrix( matrixStack, rot );
+				}
+				auto mesh               = addRenderCommandMesh( renderer, currentFrame->mesh );
+				mesh->screenDepthOffset = -0.01f;
+				popMatrix( matrixStack );
 			}
-			auto mesh               = addRenderCommandMesh( renderer, currentFrame->mesh );
-			mesh->screenDepthOffset = -0.01f;
-			popMatrix( matrixStack );
 		}
 
 		// render particles
@@ -2904,7 +2783,7 @@ static void doGame( AppData* app, GameInputs* inputs, bool focus, float dt, bool
 			setTexture( renderer, 0, null );
 			MESH_STREAM_BLOCK( stream, renderer ) {
 				stream->color   = setAlpha( Color::Blue, 0.5f );
-				FOR( entry : game->collidableSystem.entries ) {
+				FOR( entry : game->entitySystem.entries ) {
 					auto screenRect = gameToScreen( translate( entry.aab, entry.position ) );
 					pushAabb( stream, screenRect.left, screenRect.bottom, -16, screenRect.right,
 					          screenRect.top, 16 );
