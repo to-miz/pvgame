@@ -14,7 +14,8 @@ void readValues( StackAllocator* allocator, const JsonObjectArray& array, Array<
 
 void readNodes( StackAllocator* allocator, const JsonObject& attr,
                 Array< SkeletonTransform >* transforms, Array< SkeletonVoxelVisuals >* visuals,
-                Array< SkeletonEmitterState >* emitters, bool base )
+                Array< SkeletonEmitterState >* emitters, Array< SkeletonHitboxState >* hitboxes,
+                bool base )
 {
 	auto transformsAttr        = attr["transforms"].getObjectArray();
 	const auto transformsCount = transformsAttr.size();
@@ -51,6 +52,47 @@ void readNodes( StackAllocator* allocator, const JsonObject& attr,
 		dest->time = 0;
 	};
 	readValues( allocator, attr["emitters"].getObjectArray(), emitters, readEmitters );
+
+	auto collisionsArray = attr["collision_bounds"].getObjectArray();
+	auto hitboxesArray   = attr["hitboxes"].getObjectArray();
+	auto hurtboxesArray  = attr["hurtboxes"].getObjectArray();
+	*hitboxes            = makeArray( allocator, SkeletonHitboxState,
+	                       collisionsArray.size() + hitboxesArray.size() + hurtboxesArray.size() );
+
+	SkeletonHitboxState::Type type = SkeletonHitboxState::Collision;
+	auto readHitbox = [base, type]( const JsonObject& attr, SkeletonHitboxState* dest ) {
+		*dest = {};
+		deserialize( attr["id"], dest->id, -1 );
+		dest->index = -1;
+		if( base ) {
+			deserialize( attr["assetId"], dest->assetIndex, -1 );
+		}
+		deserialize( attr["active"], dest->active );
+		dest->type = type;
+	};
+	auto currentHitbox = 0;
+	type               = SkeletonHitboxState::Collision;
+	FOR( entry : collisionsArray ) {
+		readHitbox( entry, &hitboxes->at( currentHitbox++ ) );
+	}
+	type = SkeletonHitboxState::Hitbox;
+	FOR( entry : hitboxesArray ) {
+		readHitbox( entry, &hitboxes->at( currentHitbox++ ) );
+	}
+	type = SkeletonHitboxState::Hurtbox;
+	FOR( entry : hurtboxesArray ) {
+		readHitbox( entry, &hitboxes->at( currentHitbox++ ) );
+	}
+}
+
+template < class T >
+bool hasSameType( AnimatorAsset::Type type, const T& value )
+{
+	return type == T::AssetType;
+}
+bool hasSameType( AnimatorAsset::Type type, const SkeletonHitboxState& value )
+{
+	return type == value.type + AnimatorAsset::type_collision;
 }
 
 template < class T >
@@ -68,10 +110,10 @@ pair< int16, bool > bindIdsToIndices( Array< T > visualsArray, Array< int16 > id
 			                   } ).value;
 
 		if( visuals.index < 0 || assetIdentIndex < 0 || assetIds[assetIdentIndex].assetIndex < 0
-		    || assetIds[assetIdentIndex].type != Array< T >::value_type::AssetType ) {
+		    || !hasSameType( assetIds[assetIdentIndex].type, visuals ) ) {
 			return {nodeId, false};
 		}
-		visuals.assetIndex               = assetIds[assetIdentIndex].assetIndex;
+		visuals.assetIndex = assetIds[assetIdentIndex].assetIndex;
 	}
 	return {-1, true};
 }
@@ -288,15 +330,49 @@ bool loadSkeletonDefinitionImpl( StackAllocator* allocator, StringView filename,
 			}
 
 			// collision_bounds
-			// TODO: implement
-
 			// hitboxes
-			// TODO: implement
-
 			// hurtboxes
-			// TODO: implement
+			const auto hitboxesCount = collision_bounds.size() + hitboxes.size() + hurtboxes.size();
+			out->hitboxes = makeArray( allocator, rectf, hitboxesCount );
+			auto currentHitbox = 0;
+			for( auto i = 0, count = collision_bounds.size(); i < count; ++i ) {
+				auto attr  = collision_bounds[i];
+				auto dest  = &out->hitboxes[currentHitbox];
+				auto ident = assetIds.emplace_back();
+				deserialize( attr["id"], ident->id, -1 );
+				ident->nameLength = (int16)copyToString( attr["name"].getString(), ident->name );
+				ident->assetIndex = auto_truncate( currentHitbox );
+				ident->type       = AnimatorAsset::type_collision;
 
-			// assert( assetIds.size() == assetsCount );
+				deserialize( attr["bounds"], *dest );
+				++currentHitbox;
+			}
+			for( auto i = 0, count = hitboxes.size(); i < count; ++i ) {
+				auto attr  = hitboxes[i];
+				auto dest  = &out->hitboxes[currentHitbox];
+				auto ident = assetIds.emplace_back();
+				deserialize( attr["id"], ident->id, -1 );
+				ident->nameLength = (int16)copyToString( attr["name"].getString(), ident->name );
+				ident->assetIndex = auto_truncate( currentHitbox );
+				ident->type       = AnimatorAsset::type_collision;
+
+				deserialize( attr["bounds"], *dest );
+				++currentHitbox;
+			}
+			for( auto i = 0, count = hurtboxes.size(); i < count; ++i ) {
+				auto attr  = hurtboxes[i];
+				auto dest  = &out->hitboxes[currentHitbox];
+				auto ident = assetIds.emplace_back();
+				deserialize( attr["id"], ident->id, -1 );
+				ident->nameLength = (int16)copyToString( attr["name"].getString(), ident->name );
+				ident->assetIndex = auto_truncate( currentHitbox );
+				ident->type       = AnimatorAsset::type_collision;
+
+				deserialize( attr["bounds"], *dest );
+				++currentHitbox;
+			}
+
+			assert( assetIds.size() == assetsCount );
 			out->assetIds = makeArrayView( assetIds );
 		} else {
 			ABORT_ERROR( "No assets defined" );
@@ -318,7 +394,7 @@ bool loadSkeletonDefinitionImpl( StackAllocator* allocator, StringView filename,
 				readValues( allocator, idents, &out->nodeIds, readIdents );
 
 				readNodes( allocator, nodes, &out->baseNodes, &out->baseVisuals, &out->baseEmitters,
-				           true );
+				           &out->baseHitboxes, true );
 
 				if( !sortTransforms( out->baseNodes ) ) {
 					ABORT_ERROR( "Failed to form graph from parent/children nodes" );
@@ -352,14 +428,14 @@ bool loadSkeletonDefinitionImpl( StackAllocator* allocator, StringView filename,
 					ABORT_ERROR( "Invalid emitter entry {}", bindIds.first );
 				}
 
-				// collision_bounds
-				// TODO: implement
-
 				// hitboxes
-				// TODO: implement
-
-				// hurtboxes
-				// TODO: implement
+				bindIds = bindIdsToIndices( out->baseHitboxes, nodeIds, out->assetIds );
+				if( !bindIds.second ) {
+					ABORT_ERROR( "Invalid collision_bound/hitbox/hurtbox entry {}", bindIds.first );
+				}
+				FOR( entry : out->baseHitboxes ) {
+					entry.relative = out->hitboxes[entry.assetIndex];
+				}
 			}
 		} else {
 			ABORT_ERROR( "No nodes defined" );
@@ -381,7 +457,7 @@ bool loadSkeletonDefinitionImpl( StackAllocator* allocator, StringView filename,
 				    auto_truncate( copyToString( attr["name"].getString(), ident->name ) );
 
 				readNodes( allocator, attr, &animation->transforms, &animation->visuals,
-				           &animation->emitters, false );
+				           &animation->emitters, &animation->hitboxes, false );
 				if( !applyPermutationByIds( animation->transforms, nodeIds ) ) {
 					ABORT_ERROR( "Invalid transforms in animation \"{}\"",
 					             StringView{ident->name, ident->nameLength} );
@@ -394,29 +470,35 @@ bool loadSkeletonDefinitionImpl( StackAllocator* allocator, StringView filename,
 					ABORT_ERROR( "Invalid emitters in animation \"{}\"",
 					             StringView{ident->name, ident->nameLength} );
 				}
+				if( !applyPermutationByIds( animation->hitboxes, out->baseHitboxes ) ) {
+					ABORT_ERROR( "Invalid hitboxes in animation \"{}\"",
+					             StringView{ident->name, ident->nameLength} );
+				}
 				// copy base node values to relative transforms
 				for( auto i = 0, count = animation->transforms.size(); i < count; ++i ) {
 					animation->transforms[i].parent = out->baseNodes[i].parent;
 				}
-				for( auto i = 0, count = animation->visuals.size(); i < count; ++i ) {
-					auto visuals = &animation->visuals[i];
-					auto base    = &out->baseVisuals[i];
-					assert( visuals->id == base->id );
-					visuals->assetIndex = base->assetIndex;
-					visuals->index      = base->index;
+				// copy assetIndex and index from bas
+				auto copyFromBase = []( auto& entries, const auto& bases ) {
+					assert( entries.size() == bases.size() );
+					for( auto i = 0, count = entries.size(); i < count; ++i ) {
+						auto dest = &entries[i];
+						auto base = &bases[i];
+						assert( dest->id == base->id );
+						dest->assetIndex = base->assetIndex;
+						dest->index      = base->index;
+					}
+				};
+				copyFromBase( animation->visuals, out->baseVisuals );
+				copyFromBase( animation->emitters, out->baseEmitters );
+				for( auto i = 0, count = animation->hitboxes.size(); i < count; ++i ) {
+					auto dest = &animation->hitboxes[i];
+					auto base = &out->baseHitboxes[i];
+					assert( dest->id == base->id );
+					dest->relative   = base->relative;
+					dest->assetIndex = base->assetIndex;
+					dest->index      = base->index;
 				}
-				for( auto i = 0, count = animation->emitters.size(); i < count; ++i ) {
-					auto emitter = &animation->emitters[i];
-					auto base    = &out->baseEmitters[i];
-					assert( emitter->id == base->id );
-					emitter->assetIndex = base->assetIndex;
-					emitter->index      = base->index;
-				}
-
-				// TODO: implement
-				// collision_bounds
-				// hitboxes
-				// hurtboxes
 
 				// keyframes
 				TEMPORARY_MEMORY_BLOCK( scrap ) {
@@ -583,6 +665,9 @@ Skeleton makeSkeleton( StackAllocator* allocator, const SkeletonDefinition& defi
 	result.emitters = makeArray( allocator, SkeletonEmitterState, definition.baseEmitters.size() );
 	result.emitters.assign( definition.baseEmitters );
 
+	result.hitboxes = makeArray( allocator, SkeletonHitboxState, definition.baseHitboxes.size() );
+	result.hitboxes.assign( definition.baseHitboxes );
+
 	const auto voxelsCount = definition.voxels.size();
 	result.voxels          = makeArray( allocator, const VoxelCollection*, voxelsCount );
 	for( auto i = 0; i < voxelsCount; ++i ) {
@@ -615,9 +700,7 @@ int32 playAnimation( Skeleton* skeleton, int32 animationIndex, bool repeating = 
 		return existing.get();
 	}
 	if( skeleton->animations.remaining() ) {
-		auto result     = skeleton->animations.size();
-		auto definition = skeleton->definition;
-		assert( definition );
+		auto result           = skeleton->animations.size();
 		auto state            = skeleton->animations.emplace_back();
 		*state                = {};
 		state->animationIndex = auto_truncate( animationIndex );
@@ -661,21 +744,25 @@ void update( Skeleton* skeleton, ParticleSystem* particleSystem, float dt )
 	if( animationStates.size() ) {
 		// apply animations base values (only toplevel animation)
 		auto animations     = definition->animations;
-		const auto toplevel = &animations[animationStates[0].animationIndex];
 		auto transforms     = skeleton->transforms;
 		auto visuals        = skeleton->visuals;
 		auto emitters       = skeleton->emitters;
+		auto hitboxes       = skeleton->hitboxes;
 
 		const auto transformsCount = transforms.size();
 		const auto visualsCount    = visuals.size();
 		const auto emittersCount   = emitters.size();
+		const auto hitboxesCount   = hitboxes.size();
 
+		// TODO: actually apply all animation base values, not just the toplevel one
+		const auto toplevel = &animations[animationStates[0].animationIndex];
 		transforms.assign( toplevel->transforms );
 		visuals.assign( toplevel->visuals );
 		// emitters can't be assigned easily because timer isn't allowed to be reset here
 		for( auto i = 0; i < emittersCount; ++i ) {
 			emitters[i].active = toplevel->emitters[i].active;
 		}
+		hitboxes.assign( toplevel->hitboxes );
 
 		auto findCurrentKeyframe = []( float currentFrame, const auto& keyframes, int16 index ) {
 			while( index + 1 < keyframes.size() ) {
@@ -820,6 +907,23 @@ void update( Skeleton* skeleton, ParticleSystem* particleSystem, float dt )
 					}
 				}
 			}
+			for( auto i = 0; i < hitboxesCount; ++i ) {
+				auto entry            = &hitboxes[i];
+				auto currentKeyframes = &keyframes[entry->index];
+				if( currentKeyframes->hasKeyframes ) {
+					auto keyframeState = &state.keyframeStates[entry->index];
+					bool8 wasActive    = {false};
+					auto prev          = keyframeState->custom;
+					if( prev >= 0 && currentKeyframes->active.size() ) {
+						wasActive = currentKeyframes->active[prev].data;
+					}
+					processCustom( curves, currentFrame, currentKeyframes->active,
+					               &keyframeState->custom, &entry->active );
+					if( ( prev != keyframeState->custom && wasActive && entry->active ) || reset ) {
+						// TODO: reactivation of hitboxes
+					}
+				}
+			}
 		}
 
 		// apply base values
@@ -856,7 +960,10 @@ void update( Skeleton* skeleton, ParticleSystem* particleSystem, float dt )
 		skeleton->dirty      = false;
 		auto transforms      = skeleton->transforms;
 		auto worldTransforms = skeleton->worldTransforms;
-		auto& rootTransform  = skeleton->rootTransform;
+		auto rootTransform   = skeleton->rootTransform;
+		if( skeleton->mirrored ) {
+			rootTransform = matrixScale( -1, 1, 1 ) * rootTransform;
+		}
 
 		auto count = skeleton->transforms.size();
 		for( auto i = 0; i < count; ++i ) {
@@ -876,22 +983,30 @@ void update( Skeleton* skeleton, ParticleSystem* particleSystem, float dt )
 		}
 
 		// emit particles
-		FOR( state : skeleton->emitters ) {
-			if( state.active ) {
-				state.time -= dt;
-				if( state.time <= 0 ) {
-					// emit
-					const auto emitter = &definition->emitters[state.assetIndex];
-					if( emitter->interval > 0 ) {
-						state.time += emitter->interval;
-					} else {
-						state.time = FLOAT32_MAX;
-					}
+		if( particleSystem ) {
+			FOR( state : skeleton->emitters ) {
+				if( state.active ) {
+					state.time -= dt;
+					if( state.time <= 0 ) {
+						// emit
+						const auto emitter = &definition->emitters[state.assetIndex];
+						if( emitter->interval > 0 ) {
+							state.time += emitter->interval;
+						} else {
+							state.time = FLOAT32_MAX;
+						}
 
-					auto pos = transformVector3( worldTransforms[state.index], {} );
-					emitParticles( particleSystem, pos, emitter->emitter );
+						auto pos = transformVector3( worldTransforms[state.index], {} );
+						emitParticles( particleSystem, pos, emitter->emitter );
+					}
 				}
 			}
+		}
+
+		// calculate hitbox origins
+		auto rootOrigin = transformVector3( rootTransform, {} );
+		FOR( entry : skeleton->hitboxes ) {
+			entry.origin = transformVector3( worldTransforms[entry.index], {} ) - rootOrigin;
 		}
 	}
 }
@@ -990,4 +1105,72 @@ Skeleton* addSkeleton( StackAllocator* allocator, SkeletonSystem* system,
 		*result = makeSkeleton( allocator, definition );
 	}
 	return result;
+}
+
+NullableInt32 getHitboxIndex( Skeleton* skeleton, StringView name, SkeletonHitboxState::Type type )
+{
+	assert( skeleton );
+	assert( skeleton->definition );
+	auto definition = skeleton->definition;
+	return find_index_if( skeleton->hitboxes, [definition, name, type]( const auto& cur ) {
+		if( cur.type == type ) {
+			auto ident = find_first_where(
+			    definition->assetIds,
+			    entry.id == cur.id && entry.type == cur.type + AnimatorAsset::type_collision );
+			assert( ident );
+			return ident->getName() == name;
+		} else {
+			return false;
+		}
+	} );
+}
+NullableInt32 getCollisionIndex( Skeleton* skeleton, StringView name )
+{
+	return getHitboxIndex( skeleton, name, SkeletonHitboxState::Collision );
+}
+NullableInt32 getHitboxIndex( Skeleton* skeleton, StringView name )
+{
+	return getHitboxIndex( skeleton, name, SkeletonHitboxState::Hitbox );
+}
+NullableInt32 getHurtboxIndex( Skeleton* skeleton, StringView name )
+{
+	return getHitboxIndex( skeleton, name, SkeletonHitboxState::Hurtbox );
+}
+
+rectf getHitboxRelative( Skeleton* skeleton, int32 index )
+{
+	assert( skeleton );
+	if( skeleton->dirty ) {
+		update( skeleton, nullptr, 0 );
+	}
+	auto hitbox = &skeleton->hitboxes[index];
+	auto origin = hitbox->origin.xy;
+	if( skeleton->mirrored ) {
+		origin = -origin;
+	}
+	return translate( hitbox->relative, origin );
+}
+
+void setTransform( Skeleton* skeleton, mat4arg transform )
+{
+	skeleton->rootTransform = transform;
+	skeleton->dirty         = true;
+}
+void setMirrored( Skeleton* skeleton, bool mirrored )
+{
+	skeleton->mirrored = mirrored;
+	skeleton->dirty    = true;
+}
+
+NullableInt32 getNodeIndex( Skeleton* skeleton, StringView name )
+{
+	assert( skeleton );
+	assert( skeleton->definition );
+	auto definition = skeleton->definition;
+	return find_index_if( definition->nodeIds,
+	                      [name]( const auto& entry ) { return entry.getName() == name; } );
+}
+vec3 getNode( Skeleton* skeleton, int32 index )
+{
+	return transformVector3( skeleton->worldTransforms[index], {} );
 }

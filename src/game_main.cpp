@@ -497,7 +497,7 @@ struct Entity {
 	// TODO: move these into hero
 	CountdownTimer animationLockTimer;
 	CountdownTimer particleEmitTimer;
-	CountdownTimer shootingTimer;
+	CountdownTimer shootingAnimationTimer;
 
 	EntityHandle entity;
 
@@ -508,20 +508,25 @@ struct Entity {
 	EntityFaceDirection prevFaceDirection;
 	EntityFaceDirection faceDirection;
 
+	Skeleton* skeleton;
+	int8 collisionIndex;
+
 	enum { type_none, type_hero, type_projectile, type_wheels } type;
+	struct Hero {
+		int8 currentAnimationIndex;
+		int8 collisionIndex;
+		int8 shootPosIndex;
+		int32 currentAnimation;
+	};
+	struct Wheels {
+		CountdownTimer attackTimer;
+		enum {} state;
+	};
 	union {
-		struct {
-			Skeleton* skeleton;
-			int8 currentAnimationIndex;
-			int32 currentAnimation;
-		} hero;
+		Hero hero;
 		struct {
 		} projectile;
-		struct Wheels {
-			Skeleton* skeleton;
-			CountdownTimer attackTimer;
-			enum {} state;
-		} wheels;
+		Wheels wheels;
 	};
 
 	enum Flags : uint8 {
@@ -631,7 +636,7 @@ rectf getBoundsFromCollidableRef( Array< Entity > dynamics, TileGrid grid,
 	return result;
 }
 
-struct entitySystem {
+struct EntitySystem {
 	UArray< Entity > entries;
 	int32 entriesCount;  // count of entries that are not dynamic
 
@@ -644,14 +649,13 @@ struct entitySystem {
 		return makeArrayView( entries.begin() + entriesCount, entries.end() );
 	}
 };
-entitySystem makeCollidableSystem( StackAllocator* allocator, int32 maxCount )
+EntitySystem makeEntitySystem( StackAllocator* allocator, int32 maxCount )
 {
-	entitySystem result = {};
-	result.entries          = makeUArray( allocator, Entity, maxCount );
+	EntitySystem result = {};
+	result.entries      = makeUArray( allocator, Entity, maxCount );
 	return result;
 }
-Entity* addCollidableComponent( entitySystem* system, EntityHandle entity,
-                                             bool dynamic = false )
+Entity* addEntity( EntitySystem* system, EntityHandle entity, bool dynamic = false )
 {
 	assert( system );
 	assert( entity );
@@ -668,13 +672,13 @@ Entity* addCollidableComponent( entitySystem* system, EntityHandle entity,
 		result->grounded.clear();
 		result->entity = entity;
 		setFlagCond( result->flags, Entity::Dynamic, dynamic );
-		result->gravityModifier = 1;
-		result->bounceModifier  = 1;
+		result->gravityModifier         = 1;
+		result->bounceModifier          = 1;
 		result->airFrictionCoeffictient = 0.0f;
 	}
 	return result;
 }
-Entity* findCollidableComponent( entitySystem* system, EntityHandle entity )
+Entity* findEntity( EntitySystem* system, EntityHandle entity )
 {
 	return find_first_where( system->entries, entry.entity == entity );
 }
@@ -684,6 +688,7 @@ struct ControlComponent {
 
 	CountdownTimer jumpInputBuffer;
 	CountdownTimer shootInputBuffer;
+	bool shoot;
 };
 struct ControlSystem {
 	UArray< ControlComponent > entries;
@@ -1000,7 +1005,7 @@ struct GameState {
 	VoxelCollection projectile;
 
 	HandleManager entityHandles;
-	entitySystem entitySystem;
+	EntitySystem entitySystem;
 	ControlSystem controlSystem;
 	Entity* player;
 	UArray< EntityHandle > entityRemovalQueue;
@@ -1028,7 +1033,7 @@ bool emitProjectile( GameState* game, vec2arg origin, vec2arg velocity )
 {
 	// TODO: emit different types of projectiles based on upgrades
 	auto projectileId = addEntity( &game->entityHandles );
-	auto projectile   = addCollidableComponent( &game->entitySystem, projectileId );
+	auto projectile   = addEntity( &game->entitySystem, projectileId );
 	if( projectile ) {
 		projectile->position                = origin;
 		projectile->velocity                = velocity;
@@ -1045,99 +1050,109 @@ bool emitProjectile( GameState* game, vec2arg origin, vec2arg velocity )
 	return false;
 }
 
-void processControlSystem( GameState* game, ControlSystem* control,
-                           entitySystem* entitySystem, GameInputs* inputs, float dt,
+void processControlSystem( GameState* game, ControlSystem* controlSystem,
+                           EntitySystem* entitySystem, GameInputs* inputs, float dt,
                            bool frameBoundary )
 {
-	assert( control );
+	assert( controlSystem );
 	assert( entitySystem );
 	assert( inputs );
 
 	using namespace GameConstants;
 
-	for( auto& entry : control->entries ) {
-		if( auto collidable = findCollidableComponent( entitySystem, entry.entity ) ) {
-			collidable->velocity.x = 0;
+	for( auto& control : controlSystem->entries ) {
+		control.shoot = false;
+		if( auto entity = findEntity( entitySystem, control.entity ) ) {
+			entity->velocity.x = 0;
 			// TODO: do keymapping to actions
 			if( isKeyDown( inputs, KC_Left ) ) {
-				if( isCountdownTimerExpired( collidable->walljumpDuration )
-				    || collidable->walljumpLeft() ) {
+				if( isCountdownTimerExpired( entity->walljumpDuration )
+				    || entity->walljumpLeft() ) {
 
-					collidable->velocity.x = -MovementSpeed;
-					if( collidable->walljumpWindow ) {
-						collidable->faceDirection = EntityFaceDirection::Right;
+					entity->velocity.x = -MovementSpeed;
+					if( entity->walljumpWindow ) {
+						entity->faceDirection = EntityFaceDirection::Right;
 					} else {
-						collidable->faceDirection = EntityFaceDirection::Left;
+						entity->faceDirection = EntityFaceDirection::Left;
 					}
 				}
 			}
 			if( isKeyDown( inputs, KC_Right ) ) {
-				if( isCountdownTimerExpired( collidable->walljumpDuration )
-				    || !collidable->walljumpLeft() ) {
+				if( isCountdownTimerExpired( entity->walljumpDuration )
+				    || !entity->walljumpLeft() ) {
 
-					collidable->velocity.x = MovementSpeed;
-					if( !collidable->walljumpWindow ) {
-						collidable->faceDirection = EntityFaceDirection::Right;
+					entity->velocity.x = MovementSpeed;
+					if( !entity->walljumpWindow ) {
+						entity->faceDirection = EntityFaceDirection::Right;
 					} else {
-						collidable->faceDirection = EntityFaceDirection::Left;
+						entity->faceDirection = EntityFaceDirection::Left;
 					}
 				}
 			}
-			if( isKeyPressed( inputs, KC_Up ) && !collidable->grounded ) {
-				entry.jumpInputBuffer = {4};
+			if( isKeyPressed( inputs, KC_Up ) && !entity->grounded ) {
+				control.jumpInputBuffer = {4};
 			}
 			// TODO: input buffering
 			auto jumpDown = isKeyDown( inputs, KC_Up );
-			if( collidable->spatialState == SpatialState::Airborne && jumpDown
-			    && collidable->velocity.y < 0 ) {
+			if( entity->spatialState == SpatialState::Airborne && jumpDown
+			    && entity->velocity.y < 0 ) {
 			} else {
-				if( collidable->velocity.y < 0 ) {
-					collidable->velocity.y = 0;
+				if( entity->velocity.y < 0 ) {
+					entity->velocity.y = 0;
 				}
 			}
-			if( frameBoundary && jumpDown && isSpatialStateJumpable( collidable ) ) {
-				collidable->velocity.y = JumpingSpeed;
-				setSpatialState( collidable, SpatialState::Airborne );
+			if( frameBoundary && jumpDown && isSpatialStateJumpable( entity ) ) {
+				entity->velocity.y = JumpingSpeed;
+				setSpatialState( entity, SpatialState::Airborne );
 			}
 			// walljump
-			if( frameBoundary && entry.jumpInputBuffer && isSpatialStateWalljumpable( collidable )
-			    && collidable->walljumpWindow ) {
+			if( frameBoundary && control.jumpInputBuffer && isSpatialStateWalljumpable( entity )
+			    && entity->walljumpWindow ) {
 
-				collidable->walljumpWindow   = {};
-				collidable->wallslideCollidable.clear();
-				collidable->velocity.y       = WalljumpingSpeed;
-				collidable->walljumpDuration = {WalljumpMaxDuration};
+				entity->walljumpWindow = {};
+				entity->wallslideCollidable.clear();
+				entity->velocity.y       = WalljumpingSpeed;
+				entity->walljumpDuration = {WalljumpMaxDuration};
 				// LOG( INFORMATION, "Walljump attempted" );
 			}
 
 			// shooting
-			if( isKeyPressed( inputs, KC_Space ) && canEntityShoot( collidable ) ) {
-				entry.shootInputBuffer = {1};
+			if( isKeyPressed( inputs, KC_Space ) && canEntityShoot( entity ) ) {
+				control.shootInputBuffer = {1};
 			}
-			if( entry.shootInputBuffer && frameBoundary ) {
+			if( control.shootInputBuffer && frameBoundary ) {
 				// consume input
-				entry.shootInputBuffer = {};
+				control.shootInputBuffer = {};
+				control.shoot            = true;
+			}
+		}
+		control.jumpInputBuffer  = processTimer( control.jumpInputBuffer, dt );
+		control.shootInputBuffer = processTimer( control.shootInputBuffer, dt );
+	}
+}
+void processControlActions( GameState* game, ControlSystem* controlSystem,
+                            EntitySystem* entitySystem )
+{
+	FOR( control : controlSystem->entries ) {
+		if( control.shoot ) {
+			auto entity        = findEntity( entitySystem, control.entity );
+			Entity::Hero* hero = nullptr;
+			if( entity && entity->skeleton
+			    && ( hero = query_variant( *entity, hero ) ) != nullptr ) {
 
-				collidable->shootingTimer = {20};
-
-				// TODO: move this into a shoot projectile function
-				// TODO: load gun position dynamicly together with the voxel collection
-				vec2 gunOffset = {6, 14};
-				if( collidable->faceDirection == EntityFaceDirection::Left ) {
-					gunOffset.x = -gunOffset.x;
-				}
-				auto gunPosition = collidable->position + gunOffset;
-				vec2 velocity = {3, 0};
-				if( collidable->faceDirection == EntityFaceDirection::Left ) {
+				entity->shootingAnimationTimer = {20};
+				auto gunPosition = getNode( entity->skeleton, hero->shootPosIndex ).xy;
+				gunPosition.y    = -gunPosition.y;
+				vec2 velocity    = {3, 0};
+				if( entity->faceDirection == EntityFaceDirection::Left ) {
 					velocity.x = -velocity.x;
 				}
 				if( !emitProjectile( game, gunPosition, velocity ) ) {
-					collidable->shootingTimer = {};
+					entity->shootingAnimationTimer = {};
 				}
 			}
+			control.shoot = false;
 		}
-		entry.jumpInputBuffer  = processTimer( entry.jumpInputBuffer, dt );
-		entry.shootInputBuffer = processTimer( entry.shootInputBuffer, dt );
 	}
 }
 
@@ -1774,7 +1789,7 @@ void processCollidables( Array< Entity > entries, TileGrid grid,
 		}
 		entry.animationLockTimer = processTimer( entry.animationLockTimer, dt );
 
-		entry.shootingTimer = processTimer( entry.shootingTimer, dt );
+		entry.shootingAnimationTimer = processTimer( entry.shootingAnimationTimer, dt );
 
 		// make entry move away from the wall if a walljump was executed
 		if( entry.walljumpDuration ) {
@@ -2169,7 +2184,7 @@ void processCollidables( Array< Entity > entries, TileGrid grid,
 
 }
 
-static void doCollisionDetection( Room* room, entitySystem* system, float dt,
+static void doCollisionDetection( Room* room, EntitySystem* system, float dt,
                                   bool frameBoundary )
 {
 	using namespace GameConstants;
@@ -2420,9 +2435,9 @@ void setHeroActionAnimation( SkeletonSystem* system, Entity* entity, float dt )
 	auto hero       = &get_variant( *entity, hero );
 	const auto& ids = system->hero.ids;
 
-	auto skeleton  = hero->skeleton;
+	auto skeleton  = entity->skeleton;
 	auto animation = hero->currentAnimationIndex;
-	bool shooting  = (bool)entity->shootingTimer;
+	bool shooting  = (bool)entity->shootingAnimationTimer;
 	if( isCountdownTimerExpired( entity->animationLockTimer ) ) {
 		animation = ( shooting ) ? ids.idleShoot : ids.idle;
 		if( entity->grounded ) {
@@ -2466,7 +2481,7 @@ void removeEntities( GenericSystem* system, Array< EntityHandle > handles )
 		return exists( handles, component.entity );
 	} );
 }
-void removeEntities( entitySystem* system, Array< EntityHandle > handles )
+void removeEntities( EntitySystem* system, Array< EntityHandle > handles )
 {
 	erase_if( system->entries, [system, handles]( const Entity& component ) {
 		if( exists( handles, component.entity ) ) {
@@ -2517,19 +2532,25 @@ static void doGame( AppData* app, GameInputs* inputs, bool focus, float dt, bool
 
 		auto maxEntities         = 10;
 		game->entityHandles      = makeHandleManager();
-		game->entitySystem       = makeCollidableSystem( allocator, maxEntities );
+		game->entitySystem       = makeEntitySystem( allocator, maxEntities );
 		game->controlSystem      = makeControlSystem( allocator, maxEntities );
 		game->entityRemovalQueue = makeUArray( allocator, EntityHandle, maxEntities );
 
 		auto playerHandle      = addEntity( &game->entityHandles );
-		game->player           = addCollidableComponent( &game->entitySystem, playerHandle );
+		game->player           = addEntity( &game->entitySystem, playerHandle );
 		game->player->aab      = {-5, 0, 5, 24};
 		game->player->position = {16 * 2};
 		game->player->movement = EntityMovement::Grounded;
 		game->player->response = CollisionResponse::Bounce;
 		game->player->type     = Entity::type_hero;
-		game->player->hero.skeleton =
-		    addSkeleton( allocator, &game->skeletonSystem, *game->skeletonSystem.hero.definition );
+		if( *game->skeletonSystem.hero.definition ) {
+			game->player->skeleton = addSkeleton( allocator, &game->skeletonSystem,
+			                                      *game->skeletonSystem.hero.definition );
+			game->player->hero.collisionIndex =
+			    auto_truncate( getCollisionIndex( game->player->skeleton, "collision" ).value );
+			game->player->hero.shootPosIndex =
+			    auto_truncate( getNodeIndex( game->player->skeleton, "shoot_pos" ).value );
+		}
 		game->player->hero.currentAnimationIndex = -1;
 		game->player->hero.currentAnimation      = -1;
 		game->player->airFrictionCoeffictient    = 0.025f;
@@ -2537,7 +2558,7 @@ static void doGame( AppData* app, GameInputs* inputs, bool focus, float dt, bool
 
 		auto addMovingPlatform = [&]( vec2arg pos ) {
 			auto handle              = addEntity( &game->entityHandles );
-			auto platform            = addCollidableComponent( &game->entitySystem, handle, true );
+			auto platform            = addEntity( &game->entitySystem, handle, true );
 			platform->aab            = {-8, 0, 8, 28};
 			platform->position       = pos;
 			platform->movement       = EntityMovement::Straight;
@@ -2547,9 +2568,15 @@ static void doGame( AppData* app, GameInputs* inputs, bool focus, float dt, bool
 			platform->velocity        = {1.0f, 0};
 			platform->gravityModifier = 0;
 
-			platform->type          = Entity::type_hero;
-			platform->hero.skeleton = addSkeleton( allocator, &game->skeletonSystem,
-			                                       *game->skeletonSystem.hero.definition );
+			platform->type = Entity::type_hero;
+			if( *game->skeletonSystem.hero.definition ) {
+				platform->skeleton = addSkeleton( allocator, &game->skeletonSystem,
+				                                  *game->skeletonSystem.hero.definition );
+				platform->hero.collisionIndex =
+				    auto_truncate( getCollisionIndex( platform->skeleton, "collision" ).value );
+				platform->hero.shootPosIndex =
+				    auto_truncate( getNodeIndex( platform->skeleton, "shoot_pos" ).value );
+			}
 			platform->hero.currentAnimationIndex = -1;
 			platform->hero.currentAnimation      = -1;
 		};
@@ -2573,8 +2600,16 @@ static void doGame( AppData* app, GameInputs* inputs, bool focus, float dt, bool
 	}
 	auto matrixStack = renderer->matrixStack;
 
-	processCamera( inputs, settings, &app->voxelState.camera,
-	               isKeyDown( inputs, KC_Shift ) ? dt : ( dt * 0.25f ) );
+	if( !game->useGameCamera ) {
+		float speed = dt * 0.25f;
+		if( isKeyDown( inputs, KC_Shift ) ) {
+			speed = dt;
+		}
+		if( isKeyDown( inputs, KC_Alt ) ) {
+			speed = dt * 0.01f;
+		}
+		processCamera( inputs, settings, &app->voxelState.camera, speed );
+	}
 
 	if( !frameBoundary ) {
 		debugPrintln( "Active entities: {}", game->entitySystem.entries.size() );
@@ -2600,22 +2635,28 @@ static void doGame( AppData* app, GameInputs* inputs, bool focus, float dt, bool
 	processGameCamera( app, dt, frameBoundary );
 	processControlSystem( game, &game->controlSystem, &game->entitySystem, inputs, dt,
 	                      frameBoundary );
-	doCollisionDetection( &game->room, &game->entitySystem, dt, frameBoundary );
-
-	// skeleton
+	// update aab's
 	FOR( entity : game->entitySystem.entries ) {
-		if( auto hero = query_variant( entity, hero ) ) {
-
-			auto origin = entity.position;
-			origin.y += height( entity.aab );
-			auto transform = matrixTranslation( Vec3( gameToScreen( origin ), 0 ) );
-			if( entity.faceDirection == EntityFaceDirection::Left ) {
-				transform = matrixScale( -1, 1, 1 ) * transform;
-			}
-			hero->skeleton->setTransform( transform );
-			setHeroActionAnimation( &game->skeletonSystem, &entity, dt );
+		if( entity.skeleton ) {
+			setMirrored( entity.skeleton, entity.faceDirection == EntityFaceDirection::Left );
+			entity.aab = getHitboxRelative( entity.skeleton, entity.collisionIndex );
 		}
 	}
+	doCollisionDetection( &game->room, &game->entitySystem, dt, frameBoundary );
+
+	// update skeleton transform
+	FOR( entity : game->entitySystem.entries ) {
+		if( entity.skeleton ) {
+			if( auto hero = query_variant( entity, hero ) ) {
+				vec3 origin = Vec3( gameToScreen( entity.position ), 0 );
+				origin.y -= height( entity.aab );
+				setTransform( entity.skeleton, matrixTranslation( origin ) );
+				setHeroActionAnimation( &game->skeletonSystem, &entity, dt );
+			}
+		}
+	}
+
+	processControlActions( game, &game->controlSystem, &game->entitySystem );
 
 	processSkeletonSystem( &game->skeletonSystem, &game->particleSystem, dt );
 	processParticles( &game->particleSystem, dt );
@@ -2623,46 +2664,48 @@ static void doGame( AppData* app, GameInputs* inputs, bool focus, float dt, bool
 	// emitting particles
 	// TODO: factor this out into a processing function
 	FOR( entry : game->entitySystem.entries ) {
-		// wallslide particles
-		if( entry.wallslideCollidable && entry.movement == EntityMovement::Grounded ) {
-			auto feetPosition = entry.position;
-			feetPosition.y += height( entry.aab );
-			if( entry.walljumpLeft() ) {
-				feetPosition.x += entry.aab.right;
-			} else {
-				feetPosition.x += entry.aab.left;
-			}
-			vec2 searchDir = {1, 0};
-			if( !entry.walljumpLeft() ) {
-				searchDir = {-1, 0};
-			}
-			auto region         = getSweptTileGridRegion( &entry, searchDir );
-			auto oldBoundingBox = exchange( entry.aab, {-1, -1, 1, 1} );
-			auto oldPosition    = exchange( entry.position, feetPosition );
-			auto collisionAtFeet =
-			    findCollision( &entry, searchDir, game->room.layers[RL_Main].grid, region,
-			                   game->entitySystem.dynamicEntries(), 1, false );
-			entry.aab      = oldBoundingBox;
-			entry.position = oldPosition;
-			if( collisionAtFeet ) {
-				entry.particleEmitTimer = processTimer( entry.particleEmitTimer, dt );
-				if( !entry.particleEmitTimer ) {
-					entry.particleEmitTimer = {6};
-					emitParticles( &game->particleSystem, feetPosition, ParticleEmitterId::Dust );
+		if( entry.movement == EntityMovement::Grounded ) {
+			// wallslide particles
+			if( entry.wallslideCollidable ) {
+				auto feetPosition = entry.position;
+				feetPosition.y += height( entry.aab );
+				if( entry.walljumpLeft() ) {
+					feetPosition.x += entry.aab.right;
+				} else {
+					feetPosition.x += entry.aab.left;
 				}
+				vec2 searchDir = {1, 0};
+				if( !entry.walljumpLeft() ) {
+					searchDir = {-1, 0};
+				}
+				auto region         = getSweptTileGridRegion( &entry, searchDir );
+				auto oldBoundingBox = exchange( entry.aab, {-1, -1, 1, 1} );
+				auto oldPosition    = exchange( entry.position, feetPosition );
+				auto collisionAtFeet =
+				    findCollision( &entry, searchDir, game->room.layers[RL_Main].grid, region,
+				                   game->entitySystem.dynamicEntries(), 1, false );
+				entry.aab      = oldBoundingBox;
+				entry.position = oldPosition;
+				if( collisionAtFeet ) {
+					entry.particleEmitTimer = processTimer( entry.particleEmitTimer, dt );
+					if( !entry.particleEmitTimer ) {
+						entry.particleEmitTimer = {6};
+						emitParticles( &game->particleSystem, feetPosition, ParticleEmitterId::Dust );
+					}
+				}
+			} else {
+				entry.particleEmitTimer = {};
 			}
-		} else {
-			entry.particleEmitTimer = {};
-		}
 
-		// landing particles
-		if( entry.spatialState == SpatialState::Grounded
-		    && floatEqZero( entry.spatialStateTimer ) ) {
+			// landing particles
+			if( entry.spatialState == SpatialState::Grounded
+			    && floatEqZero( entry.spatialStateTimer ) ) {
 
-			auto feetPosition = entry.position;
-			feetPosition.y += height( entry.aab );
-			auto emitted = emitParticles( &game->particleSystem, feetPosition,
-			                              ParticleEmitterId::LandingDust );
+				auto feetPosition = entry.position;
+				feetPosition.y += height( entry.aab );
+				auto emitted = emitParticles( &game->particleSystem, feetPosition,
+				                              ParticleEmitterId::LandingDust );
+			}
 		}
 	}
 
@@ -2731,37 +2774,39 @@ static void doGame( AppData* app, GameInputs* inputs, bool focus, float dt, bool
 
 		// render entities
 		for( auto& entry : game->entitySystem.entries ) {
-			VoxelCollection::Frame* currentFrame = nullptr;
-			switch( entry.type ) {
-				case Entity::type_hero: {
-					render( renderer, entry.hero.skeleton );
-					break;
+			if( entry.skeleton ) {
+				render( renderer, entry.skeleton );
+			} else {
+				VoxelCollection::Frame* currentFrame = nullptr;
+				switch( entry.type ) {
+					case Entity::type_projectile: {
+						setTexture( renderer, 0, game->projectile.texture );
+						auto frames  = game->projectile.frames;
+						currentFrame = &frames[0];
+						break;
+					}
+					default: {
+						break;
+					}
 				}
-				case Entity::type_projectile: {
-					setTexture( renderer, 0, game->projectile.texture );
-					auto frames  = game->projectile.frames;
-					currentFrame = &frames[0];
-					break;
+				if( currentFrame ) {
+					// 2d game world coordinates to 3d space coordinates
+					auto offset = currentFrame->offset;
+					// offset.x = -offset.x;
+					auto position = ( entry.position - offset ) * CELL_WIDTH;
+					position.y    = -position.y - CELL_HEIGHT * height( entry.aab );
+					// position.x -= CELL_WIDTH * entry.aab.right;
+					pushMatrix( matrixStack );
+					translate( matrixStack, position, 0 );
+					if( entry.faceDirection == EntityFaceDirection::Left ) {
+						translate( matrixStack, 2 * currentFrame->offset.x, 0 );
+						auto rot = matrixRotationY( Pi32 );
+						multMatrix( matrixStack, rot );
+					}
+					auto mesh               = addRenderCommandMesh( renderer, currentFrame->mesh );
+					mesh->screenDepthOffset = -0.01f;
+					popMatrix( matrixStack );
 				}
-				InvalidDefaultCase;
-			}
-			if( currentFrame ) {
-				// 2d game world coordinates to 3d space coordinates
-				auto offset = currentFrame->offset;
-				// offset.x = -offset.x;
-				auto position = ( entry.position - offset ) * CELL_WIDTH;
-				position.y    = -position.y - CELL_HEIGHT * height( entry.aab );
-				// position.x -= CELL_WIDTH * entry.aab.right;
-				pushMatrix( matrixStack );
-				translate( matrixStack, position, 0 );
-				if( entry.faceDirection == EntityFaceDirection::Left ) {
-					translate( matrixStack, 2 * currentFrame->offset.x, 0 );
-					auto rot = matrixRotationY( Pi32 );
-					multMatrix( matrixStack, rot );
-				}
-				auto mesh               = addRenderCommandMesh( renderer, currentFrame->mesh );
-				mesh->screenDepthOffset = -0.01f;
-				popMatrix( matrixStack );
 			}
 		}
 

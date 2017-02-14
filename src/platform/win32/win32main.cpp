@@ -500,6 +500,9 @@ int CALLBACK WinMain( HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdL
 
 	    // shader
 	    &openGlLoadShaderProgram, &openGlDeleteShaderProgram,
+
+	    // debug
+	    &win32OutputDebugString,
 	};
 	PlatformInfo info     = {};
 	Win32AppContext.info  = &info;

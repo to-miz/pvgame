@@ -945,7 +945,7 @@ void openAnimation( AnimatorState* animator, AnimatorAnimation* animation )
 	animator->keyframes.end();
 	animator->keyframes.reserve( animation->keyframes.size() );
 	FOR( keyframe : animation->keyframes ) {
-		auto base = findNodeById( animator->baseNodes, getAnimatorKeyframeOwner( keyframe.group ) );
+		auto base = findNodeById( animator->nodes, getAnimatorKeyframeOwner( keyframe.group ) );
 		assert( base );
 		animator->keyframes.push_back(
 		    std::make_unique< AnimatorKeyframe >( toAbsoluteKeyframe( base, &keyframe ) ) );
@@ -979,7 +979,7 @@ void commitAnimation( AnimatorState* animator )
 	animation->keyframes.resize( animator->keyframes.size() );
 	zip_for( animation->keyframes, animator->keyframes ) {
 		auto base = find_first_where(
-		    animator->baseNodes, entry->id == getAnimatorKeyframeOwner( second->get()->group ) );
+		    animator->nodes, entry->id == getAnimatorKeyframeOwner( second->get()->group ) );
 		*first = toRelativeKeyframe( base->get(), second->get() );
 	}
 	animation->curves = animator->curves;
@@ -1320,18 +1320,32 @@ void animatorSave( StackAllocator* allocator, AnimatorState* animator, StringVie
 		writeStartArray( writer );
 			auto getter = []( const AnimatorNode& entry ) -> const AnimatorNode* { return &entry; };
 			FOR( animation : animator->animations ) {
-				// make sure that animation has valid asset values
+				// preprocess nodes and make sure that they are all valid
+				// because we might have changed assets and deleted/added base nodes, we need to
+				// make sure that everything is synced
+				FOR( base : animator->nodes ) {
+					base->marked = false;
+			    }
 			    FOR( node : animation.nodes ) {
 				    auto base = findNodeById( animator->nodes, node.id );
 				    if( !base ) {
-				    	node.marked = false;
+					    node.marked = false;
 					    continue;
 				    }
-			    	node.marked = true;
+				    base->marked = true;
+				    node.marked = true;
 				    correctAsset( base, &node );
 			    }
+			    erase_if( animation.nodes, []( const auto& entry ) { return !entry.marked; } );
+			    FOR( entry : animator->nodes ) {
+				    auto base = entry.get();
+				    if( !base->marked ) {
+					    auto added = toRelativeNode( base, base );
+					    animation.nodes.push_back( added );
+				    }
+			    }
 
-				writeStartObject( writer );
+			    writeStartObject( writer );
 				    writeProperty( writer, "name", StringView{animation.name} );
 			        animatorSaveNodes< AnimatorNode >( writer, makeArrayView( animation.nodes ),
 			                                           false, getter );
@@ -1339,10 +1353,6 @@ void animatorSave( StackAllocator* allocator, AnimatorState* animator, StringVie
 			        writePropertyName( writer, "keyframes" );
 			        writeStartArray( writer );
 			        FOR( node : animation.nodes ) {
-				        if( !node.marked ) {
-				        	continue;
-				        }
-
 				        auto keyframes = makeArrayView( animation.keyframes );
 				        auto curves    = makeArrayView( animation.curves );
 

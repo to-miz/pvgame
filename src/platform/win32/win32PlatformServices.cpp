@@ -2,6 +2,8 @@ int32 win32GetTimeStampString( char* buffer, int32 size )
 {
 	int32 ret = -1;
 
+#if 0
+	// version 1 current time and miliseconds
 	const int32 MAX_LEN = 200;
 	char timeStr[MAX_LEN];
 	if( GetTimeFormatA( LOCALE_USER_DEFAULT, 0, 0, "HH':'mm':'ss", timeStr, MAX_LEN ) > 0 ) {
@@ -12,6 +14,14 @@ int32 win32GetTimeStampString( char* buffer, int32 size )
 			buffer[size - 1] = 0;
 		}
 	}
+#else
+	// version 2 elapsed ticks since start
+	static DWORD first = GetTickCount();
+	ret = _snprintf( buffer, size, "%.05ld", (long)( GetTickCount() - first ) );
+	if( ret >= size ) {
+		buffer[size - 1] = 0;
+	}
+#endif
 
 	return ret;
 }
@@ -33,13 +43,15 @@ TextureId win32LoadTexture( StringView filename )
 			if( result ) {
 				LOG( INFORMATION, "loaded texture {}", filename );
 				if( GlobalTextureMap->entries.remaining() ) {
-					auto entry = GlobalTextureMap->entries.emplace_back();
-					entry->id = result;
-					entry->width = (float)image.width;
+					auto entry    = GlobalTextureMap->entries.emplace_back();
+					entry->id     = result;
+					entry->width  = (float)image.width;
 					entry->height = (float)image.height;
-					entry->filename = filename;
-					entry->image = image;
-					freeImage = false;
+					auto buffer   = new char[filename.size()];
+					memcpy( buffer, filename.data(), filename.size() );
+					entry->filename = {buffer, filename.size()};
+					entry->image    = image;
+					freeImage       = false;
 				} else {
 					LOG( ERROR, "TextureMap is full" );
 				}
@@ -69,6 +81,7 @@ void win32DeleteTexture( TextureId id )
 	// glBindTexture( GL_TEXTURE_2D, 0 ); // TODO: is this needed?
 	glDeleteTextures( 1, &oglId );
 	auto info = getTextureInfo( id );
+	delete[] info->filename.data();
 	freeImageData( &info->image );
 	deleteTextureInfo( id );
 }
@@ -312,4 +325,11 @@ void win32DlmallocFree( void* ptr, size_t size, uint32 alignment )
 	assert_alignment( ptr, alignment );
 	assert( !ptr || size );
 	mspace_free( allocator, ptr );
+}
+
+// debug
+void win32OutputDebugString( const char* str )
+{
+	// TODO: utf8?
+	OutputDebugStringA( str );
 }

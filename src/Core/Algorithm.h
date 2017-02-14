@@ -5,6 +5,8 @@
 
 namespace Pointer
 {
+// pointer comparisons that do not suffer from unspecified behavior when comparing arbitrary
+// pointers
 template < class A, class B >
 bool less( A&& a, B&& b )
 {

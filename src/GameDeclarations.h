@@ -41,6 +41,8 @@ typedef void* AllocateType( size_t size, uint32 alignment );
 typedef void* ReallocateType( void* ptr, size_t newSize, size_t oldSize, uint32 alignment );
 typedef void FreeType( void* ptr, size_t size, uint32 alignment );
 
+typedef void OutputDebugStringType( const char* str );
+
 struct PlatformServices {
 	LoadTextureType* loadTexture;
 	LoadTextureFromMemoryType* loadTextureFromMemory;
@@ -74,6 +76,9 @@ struct PlatformServices {
 	// shader
 	LoadShaderType* loadShader;
 	DeleteShaderType* deleteShader;
+
+	// debug
+	OutputDebugStringType* outputDebugString;
 };
 
 // structures that get passed into the platform layer, get filled and passed back
