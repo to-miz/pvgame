@@ -813,7 +813,7 @@ void doTexturePack( AppData* app, GameInputs* inputs, bool focus, float dt )
 	imguiBind( gui );
 	if( !editor->initialized ) {
 		*gui = defaultImmediateModeGui();
-		imguiLoadDefaultStyle( gui, &app->platform );
+		imguiLoadDefaultStyle( gui, &app->platform, font );
 
 		editor->removeConfirm = imguiGenerateContainer( gui );
 		imguiGetContainer( gui, editor->removeConfirm )->setHidden( true );

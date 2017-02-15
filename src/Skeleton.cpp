@@ -1062,25 +1062,80 @@ void processSkeletonSystem( SkeletonSystem* system, ParticleSystem* particleSyst
 	}
 }
 
-SkeletonDefinition loadSkeletonDefinitionAndAnimationIndices(
-    StackAllocator* allocator, StringView filename, Array< const StringView > animationNames,
-    Array< int8 > outAnimationIndices )
+NullableInt32 getHitboxIndex( SkeletonDefinition* definition, StringView name,
+                              SkeletonHitboxState::Type type )
+{
+	assert( definition );
+	return find_index_if( definition->baseHitboxes, [definition, name, type]( const auto& cur ) {
+		if( cur.type == type ) {
+			auto ident = &definition->nodeIds[cur.index];
+			return ident->getName() == name;
+		} else {
+			return false;
+		}
+	} );
+}
+struct LoadSkeletonDefinitionNamesOutputPair {
+	Array< const StringView > names;
+	Array< int8 > indices;
+};
+struct LoadSkeletonDefinitionIndicesOutput {
+	LoadSkeletonDefinitionNamesOutputPair animations;
+	LoadSkeletonDefinitionNamesOutputPair nodes;
+	LoadSkeletonDefinitionNamesOutputPair collisions;
+	LoadSkeletonDefinitionNamesOutputPair hitboxes;
+	LoadSkeletonDefinitionNamesOutputPair hurtboxes;
+};
+SkeletonDefinition loadSkeletonDefinitionAndIndices( StackAllocator* allocator, StringView filename,
+                                                     LoadSkeletonDefinitionIndicesOutput& out )
 {
 	assert( isValid( allocator ) );
-	assert( animationNames.size() == outAnimationIndices.size() );
+	assert( out.animations.names.size() == out.animations.indices.size() );
+	assert( out.nodes.names.size() == out.nodes.indices.size() );
+	assert( out.collisions.names.size() == out.collisions.indices.size() );
+	assert( out.hitboxes.names.size() == out.hitboxes.indices.size() );
+	assert( out.hurtboxes.names.size() == out.hurtboxes.indices.size() );
 
 	SkeletonDefinition result = loadSkeletonDefinition( allocator, filename, 0 );
 
-	for( auto i = 0, count = outAnimationIndices.size(); i < count; ++i ) {
-		auto name = animationNames[i];
-		outAnimationIndices[i] =
-		    auto_truncate( find_index_if( result.animationIds, [name]( const auto& entry ) {
-			                   return StringView{entry.name, entry.nameLength} == name;
-			               } ).value );
+	for( auto i = 0, count = out.animations.indices.size(); i < count; ++i ) {
+		auto name  = out.animations.names[i];
+		auto index = find_index_if(
+		    result.animationIds, [name]( const auto& entry ) { return entry.getName() == name; } );
+		out.animations.indices[i] = auto_truncate( index.value );
+	}
+	for( auto i = 0, count = out.nodes.indices.size(); i < count; ++i ) {
+		auto name  = out.nodes.names[i];
+		auto index = find_index_if(
+		    result.nodeIds, [name]( const auto& entry ) { return entry.getName() == name; } );
+		out.nodes.indices[i] = auto_truncate( index.value );
+	}
+	for( auto i = 0, count = out.collisions.indices.size(); i < count; ++i ) {
+		auto name  = out.collisions.names[i];
+		auto index = getHitboxIndex( &result, name, SkeletonHitboxState::Collision );
+		out.collisions.indices[i] = auto_truncate( index.value );
+	}
+	for( auto i = 0, count = out.hitboxes.indices.size(); i < count; ++i ) {
+		auto name  = out.hitboxes.names[i];
+		auto index = getHitboxIndex( &result, name, SkeletonHitboxState::Hitbox );
+		out.hitboxes.indices[i] = auto_truncate( index.value );
+	}
+	for( auto i = 0, count = out.hurtboxes.indices.size(); i < count; ++i ) {
+		auto name  = out.hurtboxes.names[i];
+		auto index = getHitboxIndex( &result, name, SkeletonHitboxState::Hurtbox );
+		out.hurtboxes.indices[i] = auto_truncate( index.value );
 	}
 
 	return result;
 }
+template< class T >
+Array< int8 > makeIndicesArray( T* entry )
+{
+	static_assert( std::is_pod< T >::value, "T is not pod" );
+	static_assert( ( sizeof( T ) / sizeof( int8 ) ) * sizeof( int8 ) == sizeof( T ),
+	               "Cannot turn T into an array of int8" );
+	return makeArrayView( (int8*)entry, sizeof( T ) / sizeof( int8 ) );
+};
 
 SkeletonSystem makeSkeletonSystem( StackAllocator* allocator, int32 maxSkeletons,
                                    int32 maxDefinitions )
@@ -1090,9 +1145,23 @@ SkeletonSystem makeSkeletonSystem( StackAllocator* allocator, int32 maxSkeletons
 	result.definitions    = makeUArray( allocator, SkeletonDefinition, maxDefinitions );
 
 	result.hero.definition  = result.definitions.emplace_back();
-	*result.hero.definition = loadSkeletonDefinitionAndAnimationIndices(
-	    allocator, "Data/voxels/hero_animations.json", makeArrayView( HeroAnimationNames ),
-	    makeArrayView( (int8*)&result.hero.ids, sizeof( result.hero.ids ) / sizeof( int8 ) ) );
+	LoadSkeletonDefinitionIndicesOutput inout = {
+	    {makeArrayView( HeroAnimationNames ), makeIndicesArray( &result.hero.animationIds )},
+	    {makeArrayView( HeroNodeNames ), makeIndicesArray( &result.hero.nodeIds )},
+	    {makeArrayView( HeroCollisionNames ), makeIndicesArray( &result.hero.collisionIds )},
+	};
+	*result.hero.definition =
+	    loadSkeletonDefinitionAndIndices( allocator, "Data/voxels/hero_animations.json", inout );
+
+	result.wheels.definition = result.definitions.emplace_back();
+	inout = {
+		{makeArrayView( WheelsAnimationNames ), makeIndicesArray( &result.wheels.animationIds )},
+		{},
+		{makeArrayView( WheelsCollisionNames ), makeIndicesArray( &result.wheels.collisionIds )}
+	};
+	*result.wheels.definition = loadSkeletonDefinitionAndIndices(
+	    allocator, "Data/voxels/wheels_enemy_animations.json", inout );
+
 	return result;
 }
 
@@ -1105,36 +1174,6 @@ Skeleton* addSkeleton( StackAllocator* allocator, SkeletonSystem* system,
 		*result = makeSkeleton( allocator, definition );
 	}
 	return result;
-}
-
-NullableInt32 getHitboxIndex( Skeleton* skeleton, StringView name, SkeletonHitboxState::Type type )
-{
-	assert( skeleton );
-	assert( skeleton->definition );
-	auto definition = skeleton->definition;
-	return find_index_if( skeleton->hitboxes, [definition, name, type]( const auto& cur ) {
-		if( cur.type == type ) {
-			auto ident = find_first_where(
-			    definition->assetIds,
-			    entry.id == cur.id && entry.type == cur.type + AnimatorAsset::type_collision );
-			assert( ident );
-			return ident->getName() == name;
-		} else {
-			return false;
-		}
-	} );
-}
-NullableInt32 getCollisionIndex( Skeleton* skeleton, StringView name )
-{
-	return getHitboxIndex( skeleton, name, SkeletonHitboxState::Collision );
-}
-NullableInt32 getHitboxIndex( Skeleton* skeleton, StringView name )
-{
-	return getHitboxIndex( skeleton, name, SkeletonHitboxState::Hitbox );
-}
-NullableInt32 getHurtboxIndex( Skeleton* skeleton, StringView name )
-{
-	return getHitboxIndex( skeleton, name, SkeletonHitboxState::Hurtbox );
 }
 
 rectf getHitboxRelative( Skeleton* skeleton, int32 index )

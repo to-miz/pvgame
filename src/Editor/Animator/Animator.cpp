@@ -235,7 +235,7 @@ void clearSelectedKeyframes( AnimatorState* animator )
 void clearSelectedNodes( AnimatorState* animator )
 {
 	FOR( entry : animator->nodes ) {
-		entry->selected = false;
+		entry->flags.selected = false;
 	}
 	animator->editor.clickedNode = nullptr;
 }
@@ -530,7 +530,9 @@ AnimatorNode getCurrentFrameNode( AnimatorState* animator, AnimatorNode* node, f
 			if( activeKeyframe.type == AnimatorKeyframeData::type_active ) {
 				auto prevKey  = lowerBoundKeyframe( animator, animator->currentFrame, activeId );
 				result.active = activeKeyframe.active;
-				if( prevKey && prevKey->t >= lastFrame && prevKey->t < animator->currentFrame && node->active && result.active ) {
+				if( prevKey && prevKey->t >= lastFrame && prevKey->t < animator->currentFrame
+				    && node->active && result.active ) {
+
 					result.emitter.time = 0;
 				}
 				if( !result.active ) {
@@ -543,8 +545,8 @@ AnimatorNode getCurrentFrameNode( AnimatorState* animator, AnimatorNode* node, f
 		}
 	}
 
-	result.parent   = node->parent;
-	result.selected = node->selected;
+	result.parent         = node->parent;
+	result.flags.selected = node->flags.selected;
 	return result;
 }
 AnimatorNode toAbsoluteNode( const AnimatorNode* base, const AnimatorNode* rel )
@@ -578,13 +580,13 @@ AnimatorNode toRelativeNode( const AnimatorNode* base, const AnimatorNode* abs )
 		result.voxel.frame = abs->voxel.frame - base->voxel.frame;
 	}
 
-	result.voxel.animation = abs->voxel.animation;
-	result.active          = abs->active;
-	result.emitter.time    = abs->emitter.time;
-	result.parent          = abs->parent;
-	result.assetId         = abs->assetId;
-	result.asset           = abs->asset;
-	result.assetType       = abs->assetType;
+	result.voxel.animation    = abs->voxel.animation;
+	result.active             = abs->active;
+	result.emitter.time       = abs->emitter.time;
+	result.parent             = abs->parent;
+	result.assetId            = abs->assetId;
+	result.asset              = abs->asset;
+	result.assetType          = abs->assetType;
 	return result;
 }
 AnimatorKeyframe toAbsoluteKeyframe( const AnimatorNode* base, const AnimatorKeyframe* keyframe )
@@ -908,25 +910,25 @@ void openAnimation( AnimatorState* animator, AnimatorAnimation* animation )
 	animator->nodes.clear();
 	// clear marked flag
 	FOR( node : animator->baseNodes ) {
-		node->marked = false;
+		node->flags.marked = false;
 	}
 
 	clearAnimatorGroups( animator );
 
 	FOR( node : animation->nodes ) {
 		if( auto base = findNodeById( animator->baseNodes, node.id ) ) {
-			assert( !base->marked );
-			if( base->marked ) {
+			assert( !base->flags.marked );
+			if( base->flags.marked ) {
 				continue;
 			}
-			base->marked = true;
+			base->flags.marked = true;
 			// correct asset if base asset and node asset don't match
 			correctAsset( base, &node );
 			addExistingNode( animator, toAbsoluteNode( base, &node ) );
 		}
 	}
 	FOR( base : animator->baseNodes ) {
-		if( !base->marked ) {
+		if( !base->flags.marked ) {
 			addExistingNode( animator, *base );
 		}
 	}
@@ -994,6 +996,13 @@ void closeAnimation( AnimatorState* animator, bool keep )
 
 	animator->keyframes.clear();
 	clearAnimatorGroups( animator );
+	zip_for( animator->nodes, animator->baseNodes ) {
+		auto node                = first->get();
+		auto base                = second->get();
+		assert( node->id == base->id );
+		base->flags.visible      = node->flags.visible;
+		base->flags.interactible = node->flags.interactible;
+	}
 	animator->nodes = std::move( animator->baseNodes );
 	animator->baseNodes.clear();
 	animator->currentAnimation = nullptr;
@@ -1324,22 +1333,23 @@ void animatorSave( StackAllocator* allocator, AnimatorState* animator, StringVie
 				// because we might have changed assets and deleted/added base nodes, we need to
 				// make sure that everything is synced
 				FOR( base : animator->nodes ) {
-					base->marked = false;
+					base->flags.marked = false;
 			    }
 			    FOR( node : animation.nodes ) {
 				    auto base = findNodeById( animator->nodes, node.id );
 				    if( !base ) {
-					    node.marked = false;
+					    node.flags.marked = false;
 					    continue;
 				    }
-				    base->marked = true;
-				    node.marked = true;
+				    base->flags.marked = true;
+				    node.flags.marked = true;
 				    correctAsset( base, &node );
 			    }
-			    erase_if( animation.nodes, []( const auto& entry ) { return !entry.marked; } );
+			    erase_if( animation.nodes,
+			              []( const auto& entry ) { return !entry.flags.marked; } );
 			    FOR( entry : animator->nodes ) {
 				    auto base = entry.get();
-				    if( !base->marked ) {
+				    if( !base->flags.marked ) {
 					    auto added = toRelativeNode( base, base );
 					    animation.nodes.push_back( added );
 				    }
@@ -1775,225 +1785,6 @@ bool animatorOpen( StackAllocator* allocator, AnimatorState* animator, StringVie
 
 	return true;
 }
-bool animatorOpenOld( StackAllocator* allocator, AnimatorState* animator, StringView filename )
-{
-	TEMPORARY_MEMORY_BLOCK( allocator ) {
-		auto bufferSize = (int32)getCapacityFor< char >( allocator ) / 2;
-		auto buffer     = allocateArray( allocator, char, bufferSize );
-		auto fileSize =
-		    (int32)GlobalPlatformServices->readFileToBuffer( filename, buffer, bufferSize );
-		if( !fileSize ) {
-			LOG( ERROR, "Unable to open file {}", filename );
-			return false;
-		}
-
-		auto jsonDocSize                       = remaining( allocator );
-		JsonStackAllocatorStruct jsonAllocator = {allocateArray( allocator, char, jsonDocSize ), 0,
-		                                          jsonDocSize};
-		auto doc = jsonMakeDocument( &jsonAllocator, buffer, fileSize, JSON_READER_REASONABLE );
-		if( !doc || !doc.root.getObject() ) {
-			if( !doc ) {
-				LOG( ERROR, "{}: Json error {}", filename, jsonGetErrorString( doc.errorType ) );
-			} else {
-				LOG( ERROR, "{}: Json root not object", filename );
-			}
-			return false;
-		}
-
-		animatorClear( animator );
-		auto root = doc.root.getObject();
-
-		FOR( asset : root["assets"].getObjectArray() ) {
-			auto type = convert_to< AnimatorAsset::Type >( asset["type"].getString() );
-			if( auto added = addNewAsset( animator, type, asset["filename"].getString() ) ) {
-				deserialize( asset["id"], added->id, -1 );
-				added->setName( asset["name"].getString() );
-				switch( type ) {
-					case AnimatorAsset::type_collision: {
-						deserialize( asset["collision"], added->collision );
-						break;
-					}
-					case AnimatorAsset::type_hitbox: {
-						deserialize( asset["hitbox"], added->hitbox );
-						break;
-					}
-					case AnimatorAsset::type_hurtbox: {
-						deserialize( asset["hurtbox"], added->hurtbox );
-						break;
-					}
-					case AnimatorAsset::type_emitter: {
-						deserialize( asset["emitter"], added->emitter );
-						break;
-					}
-				}
-			}
-		}
-
-		FOR( node : root["nodes"].getObjectArray() ) {
-			auto addedContainer = std::make_unique< AnimatorNode >();
-			auto added          = addedContainer.get();
-			deserialize( node["translation"], added->translation );
-			deserialize( node["rotation"], added->rotation );
-			deserialize( node["scale"], added->scale );
-			deserialize( node["length"], added->length );
-			deserialize( node["id"], added->id, -1 );
-			deserialize( node["parentId"], added->parentId, -1 );
-			deserialize( node["assetId"], added->assetId, -1 );
-			if( auto voxel = node["voxel"].getObject() ) {
-				deserialize( voxel["animation"], added->voxel.animation, -1 );
-				deserialize( voxel["frame"], added->voxel.frame );
-			}
-			if( auto emitter = node["emitter"].getObject() ) {
-				deserialize( emitter["active"], added->active );
-			}
-			added->name = node["name"].getString();
-			animator->nodes.push_back( std::move( addedContainer ) );
-		}
-		FOR( node : animator->nodes ) {
-			auto parentId = node->parentId;
-			if( !bindParent( animator, node.get() ) ) {
-				LOG( ERROR, "{}: parent {} not found", parentId );
-				return false;
-			}
-		}
-		sortNodes( animator );
-
-		FOR( animation : root["animations"].getObjectArray() ) {
-			animator->animations.emplace_back();
-			auto added = &animator->animations.back();
-			added->name = animation["name"].getString();
-			auto nodes = animation["nodes"].getObjectArray();
-			added->nodes.reserve( nodes.size() );
-			FOR( node : nodes ) {
-				added->nodes.emplace_back();
-				auto addedNode = &added->nodes.back();
-				deserialize( node["id"], addedNode->id, -1 );
-				deserialize( node["translation"], addedNode->translation );
-				deserialize( node["rotation"], addedNode->rotation );
-				deserialize( node["scale"], addedNode->scale );
-				if( auto voxel = node["voxel"].getObject() ) {
-					deserialize( voxel["animation"], addedNode->voxel.animation, -1 );
-					deserialize( voxel["frame"], addedNode->voxel.frame );
-				}
-				if( auto emitter = node["emitter"].getObject() ) {
-					deserialize( emitter["active"], addedNode->active );
-				}
-
-				auto keyframes = node["keyframes"].getObject();
-				auto group     = makeAnimatorGroup( addedNode->id );
-				loadKeyframes( keyframes["translation"].getObjectArray(),
-				               group + AnimatorKeyframeData::type_translation, translation_tag{},
-				               &added->keyframes, &added->curves );
-				loadKeyframes( keyframes["rotation"].getObjectArray(),
-				               group + AnimatorKeyframeData::type_rotation, rotation_tag{},
-				               &added->keyframes, &added->curves );
-				loadKeyframes( keyframes["scale"].getObjectArray(),
-				               group + AnimatorKeyframeData::type_scale, scale_tag{},
-				               &added->keyframes, &added->curves );
-				loadKeyframes( keyframes["frame"].getObjectArray(),
-				               group + AnimatorKeyframeData::type_frame, frame_tag{},
-				               &added->keyframes, &added->curves );
-				loadKeyframes( keyframes["active"].getObjectArray(),
-				               group + AnimatorKeyframeData::type_active, active_tag{},
-				               &added->keyframes, &added->curves );
-			}
-		}
-	}
-
-	TEMPORARY_MEMORY_BLOCK( allocator ) {
-		// check whether ids are unique
-		int16 maxAssetId = 0;
-		auto cap = (int32)getCapacityFor< int16 >( allocator ) / 3;
-		auto assetIds = makeUArray( allocator, int16, cap );
-		FOR( entry : animator->assets ) {
-			auto asset = entry.get();
-			if( asset->id < 0 ) {
-				LOG( ERROR, "{}: Invalid id {}", filename, asset->id );
-				return false;
-			}
-			if( !append_unique( assetIds, asset->id ) ) {
-				LOG( ERROR, "{}: Asset id {} not unique", filename, asset->id );
-				return false;
-			}
-			maxAssetId = max( maxAssetId, asset->id );
-		}
-		animator->assetIds = maxAssetId + 1;
-
-		int16 maxNodeId = 0;
-		auto baseIds = makeUArray( allocator, int16, cap );
-		FOR( entry : animator->nodes ) {
-			auto node = entry.get();
-			if( node->id < 0 ) {
-				LOG( ERROR, "{}: Invalid id {}", filename, node->id );
-				return false;
-			}
-			if( !append_unique( baseIds, node->id ) ) {
-				LOG( ERROR, "{}: Node id {} not unique", filename, node->id );
-				return false;
-			}
-			if( node->assetId >= 0 ) {
-				auto index = find_index( assetIds, node->assetId );
-				if( !index ) {
-					LOG( ERROR, "{}: asset {} not found", filename, node->assetId );
-					return false;
-				}
-				node->asset     = animator->assets[index.get()].get();
-				node->assetType = node->asset->type;
-			}
-			maxNodeId = max( maxNodeId, node->id );
-		}
-		animator->nodeIds = maxNodeId + 1;
-
-		auto ids = makeUArray( allocator, int16, cap );
-		FOR( animation : animator->animations ) {
-			ids.clear();
-			FOR( entry : animation.nodes ) {
-				auto node = &entry;
-				if( node->id < 0 ) {
-					LOG( ERROR, "{}: Invalid id {}", filename, node->id );
-					return false;
-				}
-				if( !append_unique( ids, node->id ) ) {
-					LOG( ERROR, "{}: Node id {} not unique", filename, node->id );
-					return false;
-				}
-				if( auto baseIndex = find_first_where( baseIds, entry == node->id ) ) {
-					auto base      = animator->nodes[*baseIndex].get();
-					entry.parentId = base->parentId;
-					entry.assetId  = base->assetId;
-				} else {
-					LOG( ERROR, "{}: id {} not found as base", node->id );
-					return false;
-				}
-				if( entry.assetId >= 0 ) {
-					auto index = find_index( assetIds, entry.assetId );
-					if( !index ) {
-						LOG( ERROR, "{}: asset {} not found", filename, entry.assetId );
-						return false;
-					}
-					entry.asset     = animator->assets[index.get()].get();
-					entry.assetType = entry.asset->type;
-				}
-			}
-            // we don't need to check keyframe ids, since they are derived from node ids
-			// if node ids are valid, so are keyframe ids
-
-#if GAME_DEBUG
-			// check whether all keyframes point to valid nodes
-			FOR( keyframe : animation.keyframes ) {
-				auto id = getAnimatorKeyframeOwner( keyframe.group );
-				if( !find_first_where( ids, entry == id ) ) {
-					LOG( ERROR, "{}: Invalid keyframe, no parent", filename );
-					return false;
-				}
-			}
-#endif
-		}
-	}
-	animator->filename = filename;
-
-	return true;
-}
 
 FilenameString animatorGetSaveFilename()
 {
@@ -2091,7 +1882,9 @@ void doKeyframesNames( AppData* app, GameInputs* inputs, float width, float heig
 			setTexture( renderer, 0, null );
 			renderer->color = Color::White;
 			int32 typeIndex = ExpandBox;
-			if( ( !group && animator->flags.timelineRootExpanded ) || ( group && group->expanded ) ) {
+			if( ( !group && animator->flags.timelineRootExpanded )
+			    || ( group && group->expanded ) ) {
+
 				typeIndex = RetractBox;
 			}
 			auto texCoords = makeQuadTexCoords( style->texCoords[typeIndex] );
@@ -2845,6 +2638,8 @@ void doAnimatorMenu( AppData* app, GameInputs* inputs, rectfarg rect )
 				        return entry.get() == clicked;
 				    } ).value;
 		}
+		imguiSameLine( 2 );
+		auto infoRect = imguiAddItem( 24, 200 );
 		auto listRect = imguiAddItem( 200, 200 );
 		if( imguiListboxSingleSelect(
 		        handle, &editor->nodesListboxScroll, (const void*)animator->nodes.data(),
@@ -2860,9 +2655,70 @@ void doAnimatorMenu( AppData* app, GameInputs* inputs, rectfarg rect )
 				editor->clickedNode = nullptr;
 			} else {
 				editor->clickedNode = animator->nodes[index].get();
-				editor->clickedNode->selected = true;
+				editor->clickedNode->flags.selected = true;
 			}
 		}
+		// info rect
+		{
+			auto clip = ClippingRect( renderer, infoRect );
+			setTexture( renderer, 0, null );
+			MESH_STREAM_BLOCK( stream, renderer ) {
+				auto style    = &ImGui->style;
+				stream->color = style->listboxBg;
+				pushQuad( stream, infoRect );
+
+				stream->color = Color::White;
+				auto buttonRect =
+				    RectCentered( center( RectWH( infoRect.leftTop + vec2{style->innerPadding}, 8,
+				                                  style->listboxItemHeight ) ),
+				                  8.0f, 8.0f );
+				buttonRect = translate( buttonRect, 0, -editor->nodesListboxScroll );
+				for( auto i = 0, count = ::size( animator->nodes ); i <= count; ++i ) {
+					auto node = ( i > 0 ) ? animator->nodes[i - 1].get() : nullptr;
+
+					auto visibleButton      = buttonRect;
+					auto interactibleButton = translate( visibleButton, 11, 0 );
+					if( ( i == 0 && editor->viewFlags.visibleNodes )
+					    || ( i > 0 && node->flags.visible ) ) {
+
+						pushQuad( stream, visibleButton );
+					}
+					if( ( i == 0 && editor->viewFlags.interactibleNodes )
+					    || ( i > 0 && node->flags.interactible ) ) {
+
+						pushQuad( stream, interactibleButton );
+					}
+					buttonRect = translate( buttonRect, 0, style->listboxItemHeight );
+
+					if( isPointInside( visibleButton, inputs->mouse.position )
+					    && isKeyPressed( inputs, KC_LButton ) ) {
+
+						if( i == 0 ) {
+							// all button
+							editor->viewFlags.visibleNodes = !editor->viewFlags.visibleNodes;
+						} else {
+							// single node
+							auto index = i - 1;
+							auto node = animator->nodes[index].get();
+							node->flags.visible = !node->flags.visible;
+						}
+					}
+					if( isPointInside( interactibleButton, inputs->mouse.position )
+					    && isKeyPressed( inputs, KC_LButton ) ) {
+
+						if( i == 0 ) {
+							// all button
+							editor->viewFlags.interactibleNodes =
+							    !editor->viewFlags.interactibleNodes;
+						} else {
+							// single node
+							auto index = i - 1;
+							auto node = animator->nodes[index].get();
+							node->flags.interactible = !node->flags.interactible;
+						}
+					}
+				}
+			}}
 		imguiEndDropGroup();
 	}
 	if( imguiBeginDropGroup( "Properties", &editor->expandedFlags, AnimatorEditor::Properties ) ) {
@@ -3449,8 +3305,8 @@ AnimatorProjection animatorSetProjection( AppData* app, GameInputs* inputs, rect
 	if( editor->viewType == AnimatorEditorViewType::Perspective ) {
 		// auto aspect = width( rect ) / height( rect );
 		auto aspect = app->width / app->height;
-		// we need to translate in homogeneous coordinates to offset the origin of the projection matrix
-		// to the center of the editor frame, hence the division by app->width
+		// we need to translate in homogeneous coordinates to offset the origin of the projection
+		// matrix to the center of the editor frame, hence the division by app->width
 		auto offset      = matrixTranslation( rect.left / app->width, 0, 0 );
 		auto perspective = matrixPerspectiveFovProjection( degreesToRadians( 65 ), aspect, -1, 1 );
 		// translate origin first, then apply perspective matrix
@@ -3550,7 +3406,7 @@ void animatorUpdateAndRenderNodes( RenderCommands* renderer, AnimatorState* anim
 	renderParticles( renderer, &animator->particleSystem );
 
 	setRenderState( renderer, RenderStateType::DepthTest, false );
-	if( animator->editor.viewFlags & AnimatorEditor::DrawNodes ) {
+	if( animator->editor.viewFlags.visibleNodes ) {
 		// render skeleton
 		setTexture( renderer, 0, null );
 		LINE_MESH_STREAM_BLOCK( stream, renderer ) {
@@ -3584,7 +3440,7 @@ void doNodeEditor( AppData* app, GameInputs* inputs, rectfarg rect )
 	setRenderState( renderer, RenderStateType::Scissor, true );
 
 	animatorUpdateAndRenderNodes( renderer, animator );
-	if( !( editor->viewFlags & AnimatorEditor::DrawNodes ) ) {
+	if( !( editor->viewFlags.visibleNodes ) ) {
 		setProjection( renderer, ProjectionType::Orthogonal );
 		setRenderState( renderer, RenderStateType::Scissor, false );
 		return;
@@ -3600,11 +3456,11 @@ void doNodeEditor( AppData* app, GameInputs* inputs, rectfarg rect )
 	auto selectNode = [&]( AnimatorNode* node, vec2arg pos ) {
 		imguiFocus( handle );
 		if( isKeyDown( inputs, KC_Control ) ) {
-			node->selected = !node->selected;
+			node->flags.selected = !node->flags.selected;
 		} else {
-			if( !node->selected ) {
+			if( !node->flags.selected ) {
 				clearSelectedNodes( animator );
-				node->selected = true;
+				node->flags.selected = true;
 			}
 			editor->moving      = true;
 			editor->clickedNode = node;
@@ -3615,23 +3471,28 @@ void doNodeEditor( AppData* app, GameInputs* inputs, rectfarg rect )
 
 	LINE_MESH_STREAM_BLOCK( stream, renderer ) {
 		stream->color = Color::White;
-		FOR( node : animator->nodes ) {
-			auto mat      = node->world * viewProj;
-			auto head     = toScreenSpace( mat, {}, app->width, app->height );
-			auto headRect = animatorControlRect( head );
-			if( isPointInside( headRect, inputs->mouse.position ) && lMousePressed
-			    && imguiIsHover( handle ) ) {
+		FOR( entry : animator->nodes ) {
+			auto node     = entry.get();
+			if( node->flags.visible ) {
+				auto mat      = node->world * viewProj;
+				auto head     = toScreenSpace( mat, {}, app->width, app->height );
+				auto headRect = animatorControlRect( head );
+				if( node->flags.interactible && editor->viewFlags.interactibleNodes
+				    && isPointInside( headRect, inputs->mouse.position ) && lMousePressed
+				    && imguiIsHover( handle ) ) {
 
-				selectedAny = true;
-				selectNode( node.get(), head );
-				editor->mouseOffset  = head - inputs->mouse.position;
-				editor->clickedVoxel = false;
+					selectedAny = true;
+					selectNode( node, head );
+					editor->mouseOffset  = head - inputs->mouse.position;
+					editor->clickedVoxel = false;
+				}
+
+				stream->color = ( node->flags.selected ) ? ( Color::Red ) : ( Color::White );
+				pushQuadOutline( stream, headRect );
 			}
-
-			stream->color = ( node->selected ) ? ( Color::Red ) : ( Color::White );
-			pushQuadOutline( stream, headRect );
 		}
-		if( !selectedAny && lMousePressed && imguiIsHover( handle ) ) {
+		if( editor->viewFlags.visibleNodes && editor->viewFlags.interactibleNodes && !selectedAny
+		    && lMousePressed && imguiIsHover( handle ) ) {
 			// no node was selected, try selecting voxels
 			if( invViewProj ) {
 				auto ray = pointToWorldSpaceRay( invViewProj.matrix, inputs->mouse.position,
@@ -3640,6 +3501,9 @@ void doNodeEditor( AppData* app, GameInputs* inputs, rectfarg rect )
 
 				FOR( entry : animator->nodes ) {
 					auto node = entry.get();
+					if( !node->selectable() ) {
+						continue;
+					}
 					if( node->assetType == AnimatorAsset::type_collection
 					    && node->voxel.animation >= 0 ) {
 
@@ -4072,7 +3936,7 @@ void doAnimator( AppData* app, GameInputs* inputs, bool focus, float dt )
 	imguiBind( gui );
 	if( !animator->initialized ) {
 		*gui = defaultImmediateModeGui();
-		imguiLoadDefaultStyle( gui, &app->platform );
+		imguiLoadDefaultStyle( gui, &app->platform, font );
 
 		animator->controlIcons = app->platform.loadTexture( "Data/Images/animator_controls.png" );
 
@@ -4240,7 +4104,8 @@ void doAnimator( AppData* app, GameInputs* inputs, bool focus, float dt )
 		auto editor = &animator->editor;
 		imguiRadiobox( "Perspective", &editor->viewType, AnimatorEditorViewType::Perspective );
 		imguiRadiobox( "Orthogonal", &editor->viewType, AnimatorEditorViewType::Orthogonal );
-		imguiCheckboxFlag( "Draw Nodes", &editor->viewFlags, AnimatorEditor::DrawNodes );
+		editor->viewFlags.visibleNodes =
+		    imguiCheckbox( "Draw Nodes", editor->viewFlags.visibleNodes != 0 );
 		imguiEndContainer();
 	}
 

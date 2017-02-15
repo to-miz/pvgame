@@ -420,7 +420,7 @@ HandleManager makeHandleManager()
 	HandleManager result = {};
 	return result;
 }
-EntityHandle addEntity( HandleManager* handles )
+EntityHandle addEntityHandle( HandleManager* handles )
 {
 	assert( handles );
 	return {++handles->ids};
@@ -457,11 +457,13 @@ struct CollidableRef {
 		this->index  = safe_truncate< uint16 >( index );
 		this->handle = handle;
 	}
+
+	bool operator==( CollidableRef other ) { return type == other.type && index == other.index; }
+	bool operator!=( CollidableRef other ) { return type != other.type || index != other.index; }
 };
 enum class EntityMovement : int8 { Straight, Grounded };
 enum class CollisionResponse : int8 { FullStop, Bounce };
 enum class EntityFaceDirection : int8 { Left, Right };
-enum class RenderType : int8 { Hero, Projectile };
 
 struct Skeleton;
 
@@ -499,7 +501,7 @@ struct Entity {
 	CountdownTimer particleEmitTimer;
 	CountdownTimer shootingAnimationTimer;
 
-	EntityHandle entity;
+	EntityHandle handle;
 
 	EntityMovement movement;
 	CollisionResponse response;
@@ -514,8 +516,6 @@ struct Entity {
 	enum { type_none, type_hero, type_projectile, type_wheels } type;
 	struct Hero {
 		int8 currentAnimationIndex;
-		int8 collisionIndex;
-		int8 shootPosIndex;
 		int32 currentAnimation;
 	};
 	struct Wheels {
@@ -584,12 +584,12 @@ Entity* getDynamicFromCollidableRef( Array< Entity > dynamics, CollidableRef ref
 	assert( ref.index >= 0 );
 	if( ref.index < dynamics.size() ) {
 		auto candidate = &dynamics[ref.index];
-		if( candidate->entity == ref.handle ) {
+		if( candidate->handle == ref.handle ) {
 			return candidate;
 		}
 	}
 	auto handle = ref.handle;
-	return find_first_where( dynamics, entry.entity == handle );
+	return find_first_where( dynamics, entry.handle == handle );
 }
 float getFrictionCoefficitonFromCollidableRef( Array< Entity > dynamics, TileGrid grid,
                                                Array< TileInfo > infos, CollidableRef ref )
@@ -655,10 +655,10 @@ EntitySystem makeEntitySystem( StackAllocator* allocator, int32 maxCount )
 	result.entries      = makeUArray( allocator, Entity, maxCount );
 	return result;
 }
-Entity* addEntity( EntitySystem* system, EntityHandle entity, bool dynamic = false )
+Entity* addEntity( EntitySystem* system, EntityHandle handle, bool dynamic = false )
 {
 	assert( system );
-	assert( entity );
+	assert( handle );
 	Entity* result = nullptr;
 	if( system->entries.remaining() ) {
 		if( dynamic ) {
@@ -670,17 +670,18 @@ Entity* addEntity( EntitySystem* system, EntityHandle entity, bool dynamic = fal
 			++system->entriesCount;
 		}
 		result->grounded.clear();
-		result->entity = entity;
+		result->handle = handle;
 		setFlagCond( result->flags, Entity::Dynamic, dynamic );
 		result->gravityModifier         = 1;
 		result->bounceModifier          = 1;
 		result->airFrictionCoeffictient = 0.0f;
+		result->collisionIndex          = -1;
 	}
 	return result;
 }
-Entity* findEntity( EntitySystem* system, EntityHandle entity )
+Entity* findEntity( EntitySystem* system, EntityHandle handle )
 {
-	return find_first_where( system->entries, entry.entity == entity );
+	return find_first_where( system->entries, entry.handle == handle );
 }
 
 struct ControlComponent {
@@ -750,17 +751,17 @@ static int8 GameDebugMapMain[] = {
     2, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 0,
     3, 3, 3, 3, 0, 0, 1, 1, 1, 1, 1, 1, 1, 1, 2, 0,
     0, 0, 0, 3, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 0,
-    4, 0, 0, 3, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 0, 0,
+    4, 0, 0, 3, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
     4, 0, 0, 3, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
     4, 4, 4, 4, 1, 1, 0, 0, 0, 1, 1, 1, 1, 1, 1, 0,
     4, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
     4, 0, 0, 0, 0, 0, 0, 0, 7, 0, 0, 0, 0, 0, 0, 1,
     4, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1,
-    4, 0, 0, 0, 0, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1,
-    4, 0, 1, 0, 0, 0, 0, 0, 7, 0, 0, 0, 0, 0, 0, 1,
-    4, 0, 0, 0, 0, 0, 0, 0, 7, 0, 1, 0, 0, 0, 1, 1,
+    4, 0, 0, 0, 1, 1, 1, 0, 0, 0, 0, 0, 0, 0, 0, 1,
+    4, 0, 1, 0, 0, 0, 0, 0, 7, 0, 0, 0, 0, 0, 1, 1,
+    4, 0, 0, 0, 0, 0, 0, 0, 7, 0, 1, 0, 0, 0, 0, 0,
     4, 0, 0, 0, 0, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
-    4, 0, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+    4, 0, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1,
     6, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1,
 };
 static int8 GameDebugMapFront[] = {
@@ -1032,7 +1033,7 @@ struct GameState {
 bool emitProjectile( GameState* game, vec2arg origin, vec2arg velocity )
 {
 	// TODO: emit different types of projectiles based on upgrades
-	auto projectileId = addEntity( &game->entityHandles );
+	auto projectileId = addEntityHandle( &game->entityHandles );
 	auto projectile   = addEntity( &game->entitySystem, projectileId );
 	if( projectile ) {
 		projectile->position                = origin;
@@ -1131,7 +1132,7 @@ void processControlSystem( GameState* game, ControlSystem* controlSystem,
 	}
 }
 void processControlActions( GameState* game, ControlSystem* controlSystem,
-                            EntitySystem* entitySystem )
+                            EntitySystem* entitySystem, SkeletonSystem* skeletonSystem )
 {
 	FOR( control : controlSystem->entries ) {
 		if( control.shoot ) {
@@ -1141,9 +1142,10 @@ void processControlActions( GameState* game, ControlSystem* controlSystem,
 			    && ( hero = query_variant( *entity, hero ) ) != nullptr ) {
 
 				entity->shootingAnimationTimer = {20};
-				auto gunPosition = getNode( entity->skeleton, hero->shootPosIndex ).xy;
-				gunPosition.y    = -gunPosition.y;
-				vec2 velocity    = {3, 0};
+				auto shootPosIndex             = skeletonSystem->hero.nodeIds.shootPos;
+				auto gunPosition               = getNode( entity->skeleton, shootPosIndex ).xy;
+				gunPosition.y                  = -gunPosition.y;
+				vec2 velocity                  = {3, 0};
 				if( entity->faceDirection == EntityFaceDirection::Left ) {
 					velocity.x = -velocity.x;
 				}
@@ -1700,7 +1702,7 @@ static CollisionResult detectCollisionVsDynamics( Entity* collidable, vec2arg ve
 		if( testAabVsAab( collidable->position, collidable->aab, velocity,
 		                  translate( dynamic.aab, dynamic.position ), result.info.t, &info ) ) {
 			if( info.t < result.info.t ) {
-				result.collision.setDynamic( indexof( dynamics, dynamic ), dynamic.entity );
+				result.collision.setDynamic( indexof( dynamics, dynamic ), dynamic.handle );
 				result.info = info;
 			}
 		}
@@ -1999,7 +2001,7 @@ void processCollidables( Array< Entity > entries, TileGrid grid,
 							    && info.t < SafetyDistance + eps ) {
 								entry.position.y += info.t - SafetyDistance;
 								entry.grounded.setDynamic( indexof( dynamics, other ),
-								                           other.entity );
+								                           other.handle );
 								return;
 							}
 						}
@@ -2283,7 +2285,7 @@ static void showGameDebugGui( AppData* app, GameInputs* inputs, bool focus, floa
 	imguiBind( imgui );
 	if( !gui->initialized ) {
 		gui->debugGuiState = defaultImmediateModeGui();
-		imguiLoadDefaultStyle( imgui, &app->platform );
+		imguiLoadDefaultStyle( imgui, &app->platform, font );
 		gui->mainDialog        = imguiGenerateContainer( &gui->debugGuiState );
 		gui->debugOutputDialog = imguiGenerateContainer( &gui->debugGuiState, {200, 0, 600, 100} );
 		gui->debugLogDialog    = imguiGenerateContainer( &gui->debugGuiState, {600, 0, 1000, 100} );
@@ -2433,7 +2435,7 @@ static void processGameCamera( AppData* app, float dt, bool frameBoundary )
 void setHeroActionAnimation( SkeletonSystem* system, Entity* entity, float dt )
 {
 	auto hero       = &get_variant( *entity, hero );
-	const auto& ids = system->hero.ids;
+	const auto& ids = system->hero.animationIds;
 
 	auto skeleton  = entity->skeleton;
 	auto animation = hero->currentAnimationIndex;
@@ -2484,7 +2486,7 @@ void removeEntities( GenericSystem* system, Array< EntityHandle > handles )
 void removeEntities( EntitySystem* system, Array< EntityHandle > handles )
 {
 	erase_if( system->entries, [system, handles]( const Entity& component ) {
-		if( exists( handles, component.entity ) ) {
+		if( exists( handles, component.handle ) ) {
 			if( !component.dynamic() ) {
 				--system->entriesCount;
 			}
@@ -2508,6 +2510,48 @@ void removeEntity( GameState* game, EntityHandle handle )
 	append_unique( game->entityRemovalQueue, handle );
 }
 
+typedef void BehaviorFunctionType( GameState*, Entity* );
+void processHeroEntity( GameState* game, Entity* entity ) {}
+void processWheelsEntity( GameState* game, Entity* entity )
+{
+	if( ( entity->lastCollision && entity->lastCollision != entity->grounded )
+	    || floatEqZero( entity->velocity.x ) ) {
+
+		if( entity->faceDirection == EntityFaceDirection::Left ) {
+			entity->faceDirection = EntityFaceDirection::Right;
+			entity->velocity.x    = 1;
+		} else {
+			entity->faceDirection = EntityFaceDirection::Left;
+			entity->velocity.x    = -1;
+		}
+		if( entity->skeleton && entity->skeleton->animations.empty() ) {
+			playAnimation( entity->skeleton, game->skeletonSystem.wheels.animationIds.move, true );
+		}
+	}
+}
+void processProjectileEntity( GameState* game, Entity* entity )
+{
+	if( entity->lastCollision || entity->dead() ) {
+		removeEntity( game, entity->handle );
+	}
+}
+
+void processEntityBehaviors( GameState* game )
+{
+	assert( game );
+
+	static BehaviorFunctionType* const EntityBehaviors[] = {
+		processHeroEntity,
+		processProjectileEntity,
+		processWheelsEntity,
+	};
+
+	FOR( entry : game->entitySystem.staticEntries() ) {
+		assert( entry.type != Entity::type_none );
+		EntityBehaviors[entry.type - 1]( game, &entry );
+	}
+}
+
 static void doGame( AppData* app, GameInputs* inputs, bool focus, float dt, bool frameBoundary,
                     bool enableRender = true )
 {
@@ -2528,7 +2572,7 @@ static void doGame( AppData* app, GameInputs* inputs, bool focus, float dt, bool
 		    app->platform.loadShader( "Shaders/scale_by_normal.vsh", "Shaders/single_color.fsh" );
 
 		loadTileSet( allocator, "Data/voxels/default_tileset.json", &app->gameState.tileSet );
-		game->skeletonSystem = makeSkeletonSystem( allocator, 5, 5 );
+		game->skeletonSystem = makeSkeletonSystem( allocator, 10, 10 );
 
 		auto maxEntities         = 10;
 		game->entityHandles      = makeHandleManager();
@@ -2536,49 +2580,36 @@ static void doGame( AppData* app, GameInputs* inputs, bool focus, float dt, bool
 		game->controlSystem      = makeControlSystem( allocator, maxEntities );
 		game->entityRemovalQueue = makeUArray( allocator, EntityHandle, maxEntities );
 
-		auto playerHandle      = addEntity( &game->entityHandles );
-		game->player           = addEntity( &game->entitySystem, playerHandle );
-		game->player->aab      = {-5, 0, 5, 24};
-		game->player->position = {16 * 2};
-		game->player->movement = EntityMovement::Grounded;
-		game->player->response = CollisionResponse::Bounce;
-		game->player->type     = Entity::type_hero;
-		if( *game->skeletonSystem.hero.definition ) {
-			game->player->skeleton = addSkeleton( allocator, &game->skeletonSystem,
-			                                      *game->skeletonSystem.hero.definition );
-			game->player->hero.collisionIndex =
-			    auto_truncate( getCollisionIndex( game->player->skeleton, "collision" ).value );
-			game->player->hero.shootPosIndex =
-			    auto_truncate( getNodeIndex( game->player->skeleton, "shoot_pos" ).value );
-		}
-		game->player->hero.currentAnimationIndex = -1;
-		game->player->hero.currentAnimation      = -1;
-		game->player->airFrictionCoeffictient    = 0.025f;
-		addControlComponent( &game->controlSystem, playerHandle );
+		auto addHeroEntity = [&]( vec2arg pos, bool dynamic ) {
+			auto handle      = addEntityHandle( &game->entityHandles );
+			auto entity      = addEntity( &game->entitySystem, handle, dynamic );
+			entity->aab      = {-5, 0, 5, 24};
+			entity->position = pos;
+			entity->movement = EntityMovement::Grounded;
+			entity->response = CollisionResponse::Bounce;
+			entity->type     = Entity::type_hero;
+			if( *game->skeletonSystem.hero.definition ) {
+				entity->skeleton = addSkeleton( allocator, &game->skeletonSystem,
+				                                *game->skeletonSystem.hero.definition );
+			}
+			entity->hero.currentAnimationIndex = -1;
+			entity->hero.currentAnimation      = -1;
+			entity->airFrictionCoeffictient    = 0.025f;
+			entity->collisionIndex             = game->skeletonSystem.hero.collisionIds.collision;
+			return entity;
+		};
+		game->player = addHeroEntity( {16 * 2, 0}, false );
+		addControlComponent( &game->controlSystem, game->player->handle );
 
 		auto addMovingPlatform = [&]( vec2arg pos ) {
-			auto handle              = addEntity( &game->entityHandles );
-			auto platform            = addEntity( &game->entitySystem, handle, true );
-			platform->aab            = {-8, 0, 8, 28};
-			platform->position       = pos;
+			auto platform            = addHeroEntity( pos, true );
 			platform->movement       = EntityMovement::Straight;
 			platform->response       = CollisionResponse::Bounce;
 			platform->bounceModifier = 2;
 			platform->setForcedNormal( {1, 0} );
-			platform->velocity        = {1.0f, 0};
-			platform->gravityModifier = 0;
-
-			platform->type = Entity::type_hero;
-			if( *game->skeletonSystem.hero.definition ) {
-				platform->skeleton = addSkeleton( allocator, &game->skeletonSystem,
-				                                  *game->skeletonSystem.hero.definition );
-				platform->hero.collisionIndex =
-				    auto_truncate( getCollisionIndex( platform->skeleton, "collision" ).value );
-				platform->hero.shootPosIndex =
-				    auto_truncate( getNodeIndex( platform->skeleton, "shoot_pos" ).value );
-			}
-			platform->hero.currentAnimationIndex = -1;
-			platform->hero.currentAnimation      = -1;
+			platform->velocity                = {1.0f, 0};
+			platform->gravityModifier         = 0;
+			platform->airFrictionCoeffictient = 0;
 		};
 		addMovingPlatform( {16 * 3} );
 		addMovingPlatform( {16 * 8} );
@@ -2622,6 +2653,20 @@ static void doGame( AppData* app, GameInputs* inputs, bool focus, float dt, bool
 		if( isKeyPressed( inputs, KC_0 ) ) {
 			game->useGameCamera = !game->useGameCamera;
 		}
+		if( isKeyPressed( inputs, KC_1 ) ) {
+			auto handle                     = addEntityHandle( &game->entityHandles );
+			if( auto entity                     = addEntity( &game->entitySystem, handle ) ) {
+				entity->type                    = Entity::type_wheels;
+				entity->position                = {16 * 6, 16 * 8};
+				entity->gravityModifier         = 1;
+				entity->airFrictionCoeffictient = 0.025f;
+				entity->movement                = EntityMovement::Grounded;
+				entity->response                = CollisionResponse::Bounce;
+				entity->skeleton = addSkeleton( &app->stackAllocator, &game->skeletonSystem,
+				                                *game->skeletonSystem.wheels.definition );
+				entity->collisionIndex = game->skeletonSystem.wheels.collisionIds.collision;
+			}
+		}
 	}
 
 	// mouse lock
@@ -2637,7 +2682,7 @@ static void doGame( AppData* app, GameInputs* inputs, bool focus, float dt, bool
 	                      frameBoundary );
 	// update aab's
 	FOR( entity : game->entitySystem.entries ) {
-		if( entity.skeleton ) {
+		if( entity.skeleton && entity.collisionIndex >= 0 ) {
 			setMirrored( entity.skeleton, entity.faceDirection == EntityFaceDirection::Left );
 			entity.aab = getHitboxRelative( entity.skeleton, entity.collisionIndex );
 		}
@@ -2647,16 +2692,16 @@ static void doGame( AppData* app, GameInputs* inputs, bool focus, float dt, bool
 	// update skeleton transform
 	FOR( entity : game->entitySystem.entries ) {
 		if( entity.skeleton ) {
+			vec3 origin = Vec3( gameToScreen( entity.position ), 0 );
+			origin.y -= height( entity.aab );
+			setTransform( entity.skeleton, matrixTranslation( origin ) );
 			if( auto hero = query_variant( entity, hero ) ) {
-				vec3 origin = Vec3( gameToScreen( entity.position ), 0 );
-				origin.y -= height( entity.aab );
-				setTransform( entity.skeleton, matrixTranslation( origin ) );
 				setHeroActionAnimation( &game->skeletonSystem, &entity, dt );
 			}
 		}
 	}
 
-	processControlActions( game, &game->controlSystem, &game->entitySystem );
+	processControlActions( game, &game->controlSystem, &game->entitySystem, &game->skeletonSystem );
 
 	processSkeletonSystem( &game->skeletonSystem, &game->particleSystem, dt );
 	processParticles( &game->particleSystem, dt );
@@ -2666,14 +2711,10 @@ static void doGame( AppData* app, GameInputs* inputs, bool focus, float dt, bool
 	FOR( entry : game->entitySystem.entries ) {
 		if( entry.movement == EntityMovement::Grounded ) {
 			// wallslide particles
-			if( entry.wallslideCollidable ) {
-				auto feetPosition = entry.position;
-				feetPosition.y += height( entry.aab );
-				if( entry.walljumpLeft() ) {
-					feetPosition.x += entry.aab.right;
-				} else {
-					feetPosition.x += entry.aab.left;
-				}
+			if( entry.wallslideCollidable && entry.skeleton && entry.type == Entity::type_hero ) {
+				auto feetPosIndex = game->skeletonSystem.hero.nodeIds.feetPos;
+				auto feetPosition = getNode( entry.skeleton, feetPosIndex ).xy;
+				feetPosition.y    = -feetPosition.y;
 				vec2 searchDir = {1, 0};
 				if( !entry.walljumpLeft() ) {
 					searchDir = {-1, 0};
@@ -2690,7 +2731,8 @@ static void doGame( AppData* app, GameInputs* inputs, bool focus, float dt, bool
 					entry.particleEmitTimer = processTimer( entry.particleEmitTimer, dt );
 					if( !entry.particleEmitTimer ) {
 						entry.particleEmitTimer = {6};
-						emitParticles( &game->particleSystem, feetPosition, ParticleEmitterId::Dust );
+						emitParticles( &game->particleSystem, feetPosition,
+						               ParticleEmitterId::Dust );
 					}
 				}
 			} else {
@@ -2709,14 +2751,7 @@ static void doGame( AppData* app, GameInputs* inputs, bool focus, float dt, bool
 		}
 	}
 
-	// entity behaviors
-	FOR( entry : game->entitySystem.staticEntries() ) {
-		if( entry.type == Entity::type_projectile ) {
-			if( entry.lastCollision || entry.dead() ) {
-				removeEntity( game, entry.entity );
-			}
-		}
-	}
+	processEntityBehaviors( game );
 	processEntityRemovalQueue( game );
 
 	if( enableRender ) {
@@ -2910,7 +2945,7 @@ void doEasing( AppData* app, GameInputs* inputs, bool focus, float dt )
 	imguiBind( gui );
 	if( !easing->initialized ) {
 		*gui = defaultImmediateModeGui();
-		imguiLoadDefaultStyle( gui, &app->platform );
+		imguiLoadDefaultStyle( gui, &app->platform, font );
 
 		reset();
 
@@ -3074,7 +3109,7 @@ UPDATE_AND_RENDER( updateAndRender )
 	if( !app->resourcesLoaded ) {
 		app->font = app->platform.loadFont( allocator, "Arial", 11, 400, false,
 		                                    getDefaultFontUnicodeRanges() );
-		imguiLoadDefaultStyle( &app->guiState, &app->platform );
+		imguiLoadDefaultStyle( &app->guiState, &app->platform, font );
 		app->resourcesLoaded = true;
 
 		LOG( INFORMATION, "Resources Loaded" );

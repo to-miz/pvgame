@@ -72,8 +72,13 @@ struct AnimatorNode {
 
 	int16 childrenCount = {};
 
-	bool8 selected                = {};
-	bool8 marked                  = {};
+	struct {
+		uint32 selected : 1;
+		uint32 marked : 1;
+		uint32 visible : 1;
+		uint32 interactible : 1;
+	} flags = {0, 0, 1, 1};
+
 	int16 assetId                 = -1;
 	AnimatorAsset::Type assetType = {};
 	AnimatorAsset* asset          = nullptr;
@@ -90,6 +95,8 @@ struct AnimatorNode {
 	mat4 world = {};
 
 	short_string< 10 > name = {};
+
+	bool selectable() const { return flags.interactible && flags.visible; }
 };
 
 struct AnimatorCurveData {
@@ -183,10 +190,10 @@ struct AnimatorEditor {
 	};
 	uint32 expandedFlags;
 
-	enum : uint32 {
-		DrawNodes = BITFIELD( 0 ),
-	};
-	uint32 viewFlags = DrawNodes;
+	struct {
+		uint32 visibleNodes : 1;
+		uint32 interactibleNodes : 1;
+	} viewFlags = {1, 1};
 
 	AnimatorMouseMode mouseMode;
 	AnimatorTranslateOptions translateOptions;

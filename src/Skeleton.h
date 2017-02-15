@@ -160,7 +160,16 @@ struct HeroSkeletonDefinition {
 		int8 jumpRisingShoot;
 		int8 jumpFallingShoot;
 		int8 wallslideShoot;
-	} ids;
+	} animationIds;
+
+	struct {
+		int8 shootPos;
+		int8 feetPos;
+	} nodeIds;
+
+	struct {
+		int8 collision;
+	} collisionIds;
 };
 const StringView HeroAnimationNames[] = {
     "Turn",
@@ -178,10 +187,38 @@ const StringView HeroAnimationNames[] = {
     "JumpFallingShoot",
     "WallslideShoot",
 };
+const StringView HeroNodeNames[] = {
+    "shoot_pos", "feet_pos",
+};
+const StringView HeroCollisionNames[] = {
+    "collision",
+};
+
+struct WheelsSkeletonDefinition {
+	SkeletonDefinition* definition;
+
+	struct {
+		int8 move;
+		int8 attack;
+		int8 hurt;
+		int8 turn;
+	} animationIds;
+
+	struct {
+		int8 collision;
+	} collisionIds;
+};
+const StringView WheelsAnimationNames[] = {
+    "move", "attack", "hurt", "turn",
+};
+const StringView WheelsCollisionNames[] = {
+    "collision",
+};
 
 struct SkeletonSystem {
 	UArray< Skeleton > skeletons;
 	UArray< SkeletonDefinition > definitions;
 
 	HeroSkeletonDefinition hero;
+	WheelsSkeletonDefinition wheels;
 };

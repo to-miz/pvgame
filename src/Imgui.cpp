@@ -83,7 +83,7 @@ enum Values : int32 {
 
 struct ImGuiStyle {
 	float innerPadding;
-	float outerPadding;
+	float outerPadding;  // FIXME: currently unused
 	float buttonWidth;
 	float buttonHeight;
 
@@ -95,6 +95,8 @@ struct ImGuiStyle {
 	float scrollWidth;
 	float scrollHeight;
 
+	float listboxItemHeight;  // inclusive padding
+
 	Color buttonBg;
 	Color buttonText;
 	Color text;
@@ -103,6 +105,10 @@ struct ImGuiStyle {
 	Color editboxTextSelectedBg;
 	Color editboxTextSelected;
 	Color editboxCaret;
+
+	Color listboxBg;
+	Color listboxItemBg;
+	Color listboxItemSelectedBg;
 
 	Color menuBg;
 	Color menuSelectionBg;
@@ -127,8 +133,10 @@ ImGuiStyle defaultImGuiStyle()
 
 	result.containerWidth = 200;
 
-	result.scrollWidth = 14;
+	result.scrollWidth  = 14;
 	result.scrollHeight = 14;
+
+	result.listboxItemHeight = 16;
 
 	result.buttonBg   = Color::White;
 	result.buttonText = Color::Black;
@@ -139,6 +147,10 @@ ImGuiStyle defaultImGuiStyle()
 	result.editboxTextSelectedBg = setAlpha( Color::Blue, 0x80 );
 	result.editboxTextSelected   = Color::Red;
 	result.editboxCaret          = Color::Black;
+
+	result.listboxBg             = 0xFF443C2D;
+	result.listboxItemBg         = 0xFF342B1B;
+	result.listboxItemSelectedBg = 0xFF5F594C;
 
 	result.menuBg = 0xFF1E1E1E;
 	result.menuSelectionBg = 0x80517478;
@@ -299,13 +311,15 @@ ImmediateModeGui defaultImmediateModeGui()
 }
 extern global_var ImmediateModeGui* ImGui;
 
-void imguiLoadDefaultStyle( ImmediateModeGui* gui, PlatformServices* platform )
+void imguiLoadDefaultStyle( ImmediateModeGui* gui, PlatformServices* platform, Font* font )
 {
 	using namespace ImGuiTexCoords;
 	auto style   = &gui->style;
 	style->atlas = platform->loadTexture( "Data/Images/gui_atlas.png" );
 	auto itw     = 1.0f / 100.0f;
 	auto ith     = 1.0f / 100.0f;
+
+	style->listboxItemHeight = stringHeight( font );
 
 	style->texCoords[RadioboxUnchecked] = RectWH( 0, 0, 13 * itw, 13 * ith );
 	style->texCoords[RadioboxChecked]   = RectWH( 14 * itw, 0, 13 * itw, 13 * ith );
@@ -2029,13 +2043,13 @@ bool imguiListboxSingleSelect( ImGuiHandle handle, float* scrollPos, const void*
 	auto clip     = ClippingRect( renderer, rect );
 	setTexture( renderer, 0, null );
 	MESH_STREAM_BLOCK( stream, renderer ) {
-		stream->color = multiply( renderer->color, 0xFF443C2D );
+		stream->color = multiply( renderer->color, style->listboxBg );
 		pushQuad( stream, rect );
 
 		auto entryRect   = itemsBg;
 		entryRect.bottom = entryRect.top + itemHeight;
-		Color colors[]   = {{multiply( renderer->color, 0xFF342B1B )},
-		                  {multiply( renderer->color, 0xFF5F594C )}};
+		Color colors[]   = {{multiply( renderer->color, style->listboxItemBg )},
+		                  {multiply( renderer->color, style->listboxItemSelectedBg )}};
 		auto index    = 0;
 		auto selected = *selectedIndex;
 		if( hasNoneEntry ) {
@@ -2604,13 +2618,13 @@ int32 imguiListboxIntrusive( ImGuiHandle handle, float* scrollPos,
 	auto clip     = ClippingRect( renderer, rect );
 	setTexture( renderer, 0, null );
 	MESH_STREAM_BLOCK( stream, renderer ) {
-		stream->color = multiply( renderer->color, 0xFF443C2D );
+		stream->color = multiply( renderer->color, style->listboxBg );
 		pushQuad( stream, rect );
 
 		auto entryRect   = itemsBg;
 		entryRect.bottom = entryRect.top + itemHeight;
-		Color colors[]   = {{multiply( renderer->color, 0xFF342B1B )},
-		                  {multiply( renderer->color, 0xFF5F594C )}};
+		Color colors[]   = {{multiply( renderer->color, style->listboxItemBg )},
+		                  {multiply( renderer->color, style->listboxItemSelectedBg )}};
 		FOR( entry : items ) {
 			stream->color = colors[(int32)entry.selected];
 			pushQuad( stream, entryRect );
