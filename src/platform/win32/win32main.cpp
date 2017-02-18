@@ -153,6 +153,11 @@ ReloadAppType* reloadApp             = ReloadAppStub;
 
 bool isResizing = false;
 
+extern "C" {
+__declspec( dllexport ) DWORD AmdPowerXpressRequestHighPerformance = 0x00000001;
+__declspec( dllexport ) DWORD NvOptimusEnablement                  = 0x00000001;
+}
+
 static LRESULT CALLBACK windowProc( HWND hwnd, UINT uMsg, WPARAM wParam, LPARAM lParam );
 
 static void win32ResetInputs( GameInputs* inputs )

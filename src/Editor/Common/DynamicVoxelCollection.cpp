@@ -30,8 +30,7 @@ DynamicVoxelCollection loadDynamicVoxelCollectionWithoutMeshes( StringView filen
 	auto allocator    = makeStackAllocator( result.memory, result.memorySize );
 	if( loadVoxelCollectionTextureMapping( &allocator, filename, &result.voxels ) ) {
 		result.grids = makeArray( &allocator, VoxelGrid, result.voxels.frames.size() );
-		if( loadVoxelGridsFromFile( GlobalPlatformServices, result.voxels.voxelsFilename,
-		                            result.grids ) ) {
+		if( loadVoxelGridsFromFile( result.voxels.voxelsFilename, result.grids ) ) {
 			result.gridsLoaded = true;
 		}
 		auto inplace = GlobalPlatformServices->reallocateInPlace( result.memory, allocator.size,

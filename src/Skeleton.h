@@ -207,18 +207,55 @@ struct WheelsSkeletonDefinition {
 	struct {
 		int8 collision;
 	} collisionIds;
+
+	struct {
+		int8 hurtbox;
+	} hurtboxIds;
 };
 const StringView WheelsAnimationNames[] = {
     "move", "attack", "hurt", "turn",
 };
 const StringView WheelsCollisionNames[] = {
-    "collision",
+    "root",
+};
+const StringView WheelsHurtboxNames[] = {
+    "hurtbox",
+};
+
+struct EntitySkeletonTraits {
+	const SkeletonDefinition* definition;
+	int8 collisionIdsData[8];
+	int8 hitboxIdsData[8];
+	int8 hurtboxIdsData[8];
+	int8 hitboxesCounts[3];
+
+	Array< const int8 > collisionIds() const
+	{
+		return makeArrayView( collisionIdsData, hitboxesCounts[0] );
+	};
+	Array< const int8 > hitboxIds() const
+	{
+		return makeArrayView( hitboxIdsData, hitboxesCounts[1] );
+	};
+	Array< const int8 > hurtboxIds() const
+	{
+		return makeArrayView( hurtboxIdsData, hitboxesCounts[2] );
+	};
 };
 
 struct SkeletonSystem {
 	UArray< Skeleton > skeletons;
 	UArray< SkeletonDefinition > definitions;
 
+	EntitySkeletonTraits skeletonTraits[Entity::type_count];
 	HeroSkeletonDefinition hero;
 	WheelsSkeletonDefinition wheels;
+	// FIXME: don't use a stack allocator
+	StackAllocator* allocator;
 };
+
+const EntitySkeletonTraits* const getSkeletonTraits( SkeletonSystem* system, Entity::Type type )
+{
+	assert( type >= 0 && type < Entity::type_count );
+	return &system->skeletonTraits[type];
+}

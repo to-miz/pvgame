@@ -24,8 +24,8 @@ void readNodes( StackAllocator* allocator, const JsonObject& attr,
 		deserialize( attr["translation"], dest->translation );
 		deserialize( attr["rotation"], dest->rotation );
 		deserialize( attr["scale"], dest->scale );
-		deserialize( attr["length"], dest->length );
 		if( base ) {
+			deserialize( attr["length"], dest->length );
 			deserialize( attr["parentId"], dest->parent, -1 );
 		}
 	};
@@ -476,7 +476,10 @@ bool loadSkeletonDefinitionImpl( StackAllocator* allocator, StringView filename,
 				}
 				// copy base node values to relative transforms
 				for( auto i = 0, count = animation->transforms.size(); i < count; ++i ) {
-					animation->transforms[i].parent = out->baseNodes[i].parent;
+					auto dest    = &animation->transforms[i];
+					auto src     = &out->baseNodes[i];
+					dest->length = src->length;
+					dest->parent = src->parent;
 				}
 				// copy assetIndex and index from bas
 				auto copyFromBase = []( auto& entries, const auto& bases ) {
@@ -732,6 +735,14 @@ void stopAnimations( Skeleton* skeleton )
 	skeleton->animations.clear();
 	skeleton->dirty = true;
 }
+bool isAnimationFinished( Skeleton* skeleton, int32 animationIndex )
+{
+	assert( skeleton );
+	assert( skeleton->definition );
+	auto state     = &skeleton->animations[animationIndex];
+	auto animation = &skeleton->definition->animations[state->animationIndex];
+	return state->currentFrame >= animation->duration;
+}
 
 void update( Skeleton* skeleton, ParticleSystem* particleSystem, float dt )
 {
@@ -901,8 +912,10 @@ void update( Skeleton* skeleton, ParticleSystem* particleSystem, float dt )
 					}
 					processCustom( curves, currentFrame, currentKeyframes->active,
 					               &keyframeState->custom, &entry->active );
-					if( ( prev != keyframeState->custom && wasActive && entry->active ) || reset ) {
-						// force emitting of particles, because emitter was reactivated or reset
+					auto activated   = ( !wasActive && entry->active );
+					auto reactivated = prev != keyframeState->custom && wasActive && entry->active;
+					if( activated || reactivated || reset ) {
+						// set time to 0 to emit particles immediately
 						entry->time = 0;
 					}
 				}
@@ -919,7 +932,9 @@ void update( Skeleton* skeleton, ParticleSystem* particleSystem, float dt )
 					}
 					processCustom( curves, currentFrame, currentKeyframes->active,
 					               &keyframeState->custom, &entry->active );
-					if( ( prev != keyframeState->custom && wasActive && entry->active ) || reset ) {
+					auto activated   = ( !wasActive && entry->active );
+					auto reactivated = prev != keyframeState->custom && wasActive && entry->active;
+					if( activated || reactivated || reset ) {
 						// TODO: reactivation of hitboxes
 					}
 				}
@@ -997,6 +1012,7 @@ void update( Skeleton* skeleton, ParticleSystem* particleSystem, float dt )
 						}
 
 						auto pos = transformVector3( worldTransforms[state.index], {} );
+						pos.y    = -pos.y;
 						emitParticles( particleSystem, pos, emitter->emitter );
 					}
 				}
@@ -1131,6 +1147,7 @@ SkeletonDefinition loadSkeletonDefinitionAndIndices( StackAllocator* allocator, 
 template< class T >
 Array< int8 > makeIndicesArray( T* entry )
 {
+	static_assert( alignof( T ) == alignof( int8 ), "T is not properly aligned" );
 	static_assert( std::is_pod< T >::value, "T is not pod" );
 	static_assert( ( sizeof( T ) / sizeof( int8 ) ) * sizeof( int8 ) == sizeof( T ),
 	               "Cannot turn T into an array of int8" );
@@ -1144,34 +1161,62 @@ SkeletonSystem makeSkeletonSystem( StackAllocator* allocator, int32 maxSkeletons
 	result.skeletons      = makeUArray( allocator, Skeleton, maxSkeletons );
 	result.definitions    = makeUArray( allocator, SkeletonDefinition, maxDefinitions );
 
-	result.hero.definition  = result.definitions.emplace_back();
+	auto heroCollisionIds                     = makeIndicesArray( &result.hero.collisionIds );
+	result.hero.definition                    = result.definitions.emplace_back();
 	LoadSkeletonDefinitionIndicesOutput inout = {
 	    {makeArrayView( HeroAnimationNames ), makeIndicesArray( &result.hero.animationIds )},
 	    {makeArrayView( HeroNodeNames ), makeIndicesArray( &result.hero.nodeIds )},
-	    {makeArrayView( HeroCollisionNames ), makeIndicesArray( &result.hero.collisionIds )},
+	    {makeArrayView( HeroCollisionNames ), heroCollisionIds},
 	};
 	*result.hero.definition =
 	    loadSkeletonDefinitionAndIndices( allocator, "Data/voxels/hero_animations.json", inout );
 
+	auto wheelsCollisionIds  = makeIndicesArray( &result.wheels.collisionIds );
 	result.wheels.definition = result.definitions.emplace_back();
-	inout = {
-		{makeArrayView( WheelsAnimationNames ), makeIndicesArray( &result.wheels.animationIds )},
-		{},
-		{makeArrayView( WheelsCollisionNames ), makeIndicesArray( &result.wheels.collisionIds )}
+	inout                    = {
+	    {makeArrayView( WheelsAnimationNames ), makeIndicesArray( &result.wheels.animationIds )},
+	    {},
+	    {makeArrayView( WheelsCollisionNames ), wheelsCollisionIds},
+	    {},
+	    {makeArrayView( WheelsHurtboxNames ), makeIndicesArray( &result.wheels.hurtboxIds )},
 	};
 	*result.wheels.definition = loadSkeletonDefinitionAndIndices(
 	    allocator, "Data/voxels/wheels_enemy_animations.json", inout );
 
+	result.allocator = allocator;
+
+	// skeleton traits
+	if( heroCollisionIds.size() ) {
+		auto traits        = &result.skeletonTraits[Entity::type_hero];
+		traits->definition = result.hero.definition;
+		auto count         = heroCollisionIds.size();
+		if( heroCollisionIds.size() > countof( traits->collisionIdsData ) ) {
+			LOG( ERROR, "Hero collision bounds exceeds {}", countof( traits->collisionIdsData ) );
+			count = countof( traits->collisionIdsData );
+		}
+		copy( traits->collisionIdsData, heroCollisionIds.data(), count );
+		traits->hitboxesCounts[0] = auto_truncate( heroCollisionIds.size() );
+	}
+	if( wheelsCollisionIds.size() ) {
+		auto traits        = &result.skeletonTraits[Entity::type_wheels];
+		traits->definition = result.wheels.definition;
+		auto count         = wheelsCollisionIds.size();
+		if( wheelsCollisionIds.size() > countof( traits->collisionIdsData ) ) {
+			LOG( ERROR, "Wheels collision bounds exceeds {}", countof( traits->collisionIdsData ) );
+			count = countof( traits->collisionIdsData );
+		}
+		copy( traits->collisionIdsData, wheelsCollisionIds.data(), count );
+		traits->hitboxesCounts[0] = auto_truncate( wheelsCollisionIds.size() );
+	}
 	return result;
 }
 
-Skeleton* addSkeleton( StackAllocator* allocator, SkeletonSystem* system,
-                       const SkeletonDefinition& definition )
+Skeleton* addSkeleton( SkeletonSystem* system, const SkeletonDefinition& definition )
 {
 	Skeleton* result = nullptr;
 	if( system->skeletons.remaining() ) {
 		result  = system->skeletons.emplace_back();
-		*result = makeSkeleton( allocator, definition );
+		*result = makeSkeleton( system->allocator, definition );
 	}
 	return result;
 }
@@ -1187,7 +1232,11 @@ rectf getHitboxRelative( Skeleton* skeleton, int32 index )
 	if( skeleton->mirrored ) {
 		origin = -origin;
 	}
-	return translate( hitbox->relative, origin );
+	debugPrintln( "{}",origin	 );
+	auto result   = translate( hitbox->relative, origin );
+	result.top    = -result.top;
+	result.bottom = -result.bottom;
+	return result;
 }
 
 void setTransform( Skeleton* skeleton, mat4arg transform )
@@ -1212,4 +1261,45 @@ NullableInt32 getNodeIndex( Skeleton* skeleton, StringView name )
 vec3 getNode( Skeleton* skeleton, int32 index )
 {
 	return transformVector3( skeleton->worldTransforms[index], {} );
+}
+
+Entity* addEntity( EntitySystem* entitySystem, SkeletonSystem* skeletonSystem, EntityHandle handle,
+                   Entity::Type type, vec2arg position /*= {}*/ )
+{
+	assert( entitySystem );
+	assert( handle );
+	Entity* result = nullptr;
+	if( entitySystem->entries.remaining() ) {
+		auto traits         = getEntityTraits( type );
+		auto skeletonTraits = getSkeletonTraits( skeletonSystem, type );
+
+		if( traits->flags.dynamic ) {
+			result  = entitySystem->entries.emplace_back();
+			*result = {};
+		} else {
+			result = entitySystem->entries.insert(
+			    entitySystem->entries.begin() + entitySystem->entriesCount, 1, {} );
+			++entitySystem->entriesCount;
+		}
+		result->position                = position;
+		result->type                    = type;
+		result->handle                  = handle;
+		result->flags.dynamic           = traits->flags.dynamic;
+		result->gravityModifier         = traits->init.gravityModifier;
+		result->bounceModifier          = traits->init.bounceModifier;
+		result->airFrictionCoeffictient = traits->init.airFrictionCoeffictient;
+
+		if( skeletonTraits && skeletonTraits->definition ) {
+			result->skeleton = addSkeleton( skeletonSystem, *skeletonTraits->definition );
+		}
+
+		switch( type ) {
+			case Entity::type_hero: {
+				result->hero.currentAnimationIndex = -1;
+				result->hero.currentAnimation      = -1;
+				break;
+			}
+		}
+	}
+	return result;
 }

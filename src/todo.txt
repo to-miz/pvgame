@@ -2,6 +2,7 @@ todo:
 	implement deleteMesh so that meshes created with uploadMeshToGpu can be destroyed
 		DynamicVoxelCollection needs to delete created meshes
 	rework framerate independent movement, seems to have some problems
+	rethink 2d and 3d coordinate systems, there are a lot of inlined conversions between the two coordinate systems
 
 bugs:
 
@@ -10,8 +11,6 @@ gameplay:
 	screen shake
 	health, dying and restarting
 	hud display
-	different entity types
-	tick methods for all entity types
 	enemies
 	finalize room storage
 	tile layers and background sprites with scrolling

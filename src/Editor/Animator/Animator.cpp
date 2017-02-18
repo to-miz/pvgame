@@ -996,10 +996,10 @@ void closeAnimation( AnimatorState* animator, bool keep )
 
 	animator->keyframes.clear();
 	clearAnimatorGroups( animator );
-	zip_for( animator->nodes, animator->baseNodes ) {
-		auto node                = first->get();
-		auto base                = second->get();
-		assert( node->id == base->id );
+	FOR( entry : animator->baseNodes ) {
+		auto base = entry.get();
+		auto node = findNodeById( animator->nodes, base->id );
+		assert( node );
 		base->flags.visible      = node->flags.visible;
 		base->flags.interactible = node->flags.interactible;
 	}
@@ -1075,8 +1075,8 @@ void animatorSaveNodes( JsonWriter* writer, Array< T > nodes, bool baseNodes,
 				writeProperty( writer, "translation", node->translation );
 				writeProperty( writer, "rotation", node->rotation );
 				writeProperty( writer, "scale", node->scale );
-				writeProperty( writer, "length", node->length );
 				if( baseNodes ) {
+					writeProperty( writer, "length", node->length );
 					writeProperty( writer, "parentId", NullableInt32{node->parentId} );
 				}
 			writeEndObject( writer );
@@ -1151,6 +1151,7 @@ void animatorSaveNodes( JsonWriter* writer, Array< T > nodes, bool baseNodes,
 			}
 		}
 	writeEndArray( writer );
+
 	// write hurtboxes
 	writePropertyName( writer, "hurtboxes" );
 	writeStartArray( writer );
@@ -1403,6 +1404,25 @@ void animatorSave( StackAllocator* allocator, AnimatorState* animator, StringVie
 		        writeEndObject( writer );
 			}
 		writeEndArray( writer );
+
+		writePropertyName( writer, "editor_meta" );
+		writeStartObject( writer );
+			writePropertyName( writer, "nodes" );
+			writeStartArray( writer );
+				FOR( entry : animator->nodes ) {
+					auto node = entry.get();
+					writeStartObject( writer );
+						writeProperty( writer, "id", node->id );
+
+						// flags to bitmask
+						uint32 flags = 0;
+						if( node->flags.visible ) flags |= BITFIELD( 2 );
+						if( node->flags.interactible ) flags |= BITFIELD( 3 );
+						writeProperty( writer, "flags", flags );
+					writeEndObject( writer );
+				}
+			writeEndArray( writer );
+		writeEndObject( writer );
 		writeEndObject( writer );
 
 		GlobalPlatformServices->writeBufferToFile( filename, writer->data(), writer->size() );
@@ -1689,6 +1709,18 @@ bool animatorOpen( StackAllocator* allocator, AnimatorState* animator, StringVie
 				}
 			}
 		}
+
+		// editor meta data
+		if( auto meta = root["editor_meta"].getObject() ) {
+			FOR( attr : meta["nodes"].getObjectArray() ) {
+				int16 id = (int16)attr["id"].getInt( -1 );
+				if( auto node = findNodeById( animator->nodes, id ) ) {
+					auto flags               = attr["flags"].getUInt();
+					node->flags.visible      = ( flags & BITFIELD( 2 ) ) != 0;
+					node->flags.interactible = ( flags & BITFIELD( 3 ) ) != 0;
+				}
+			}
+		}
 	}
 
 	TEMPORARY_MEMORY_BLOCK( allocator ) {
@@ -1748,8 +1780,8 @@ bool animatorOpen( StackAllocator* allocator, AnimatorState* animator, StringVie
 					LOG( ERROR, "{}: Node id {} not unique", filename, node->id );
 					return false;
 				}
-				if( auto baseIndex = find_first_where( baseIds, entry == node->id ) ) {
-					auto base      = animator->nodes[*baseIndex].get();
+				if( auto baseIndex = find_index( baseIds, node->id ) ) {
+					auto base      = animator->nodes[baseIndex.get()].get();
 					entry.parentId = base->parentId;
 					entry.assetId  = base->assetId;
 				} else {
@@ -3812,7 +3844,7 @@ void doHitboxEditor( AppData* app, GameInputs* inputs, rectfarg rect )
 				auto ray =
 				    pointToWorldSpaceRay( invViewProj.matrix, mouse, app->width, app->height );
 				auto intersection = rayIntersectionWithPlane( ray, head, {0, 0, 1} ) - head;
-				if( isPointInside( hitbox, intersection.xy ) ) {
+				if( isPointInside( correct( hitbox ), intersection.xy ) ) {
 					view->selectedFeature = AnimatorEditorHitboxFeature::None;
 					editor->clickedNode   = node;
 					editor->mouseOffset   = {};
@@ -3840,7 +3872,7 @@ void doHitboxEditor( AppData* app, GameInputs* inputs, rectfarg rect )
 		auto head  = transformVector3( node->world, {} );
 		auto mouse = inputs->mouse.position - editor->mouseOffset;
 		auto ray   = pointToWorldSpaceRay( invViewProj.matrix, mouse, app->width, app->height );
-		auto destination        = rayIntersectionWithPlane( ray, head, {0, 0, 1} ) - head;
+		auto destination = rayIntersectionWithPlane( ray, head, {0, 0, 1} ) - head;
 
 		if( view->selectedFeature != AnimatorEditorHitboxFeature::None ) {
 			switch( editor->mouseMode ) {
@@ -3868,7 +3900,7 @@ void doHitboxEditor( AppData* app, GameInputs* inputs, rectfarg rect )
 							control.x = ( control.x + 2 ) % 4;
 						}
 					}
-					if( hitbox.top > hitbox.bottom ) {
+					if( hitbox.top < hitbox.bottom ) {
 						swap( hitbox.top, hitbox.bottom );
 						swapped = true;
 						if( control.y >= 0 ) {

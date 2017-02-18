@@ -117,25 +117,7 @@ global_var string_logger* GlobalDebugLogger   = nullptr;
 #include "Core/FixedSizeAllocator.cpp"
 #include "tm_bezier_wrapper.cpp"
 
-namespace GameConstants
-{
-constexpr const float Gravity                = 0.1f;
-constexpr const float MovementSpeed          = 1.1f;
-constexpr const float JumpingSpeed           = -3.3f;
-constexpr const float WalljumpingSpeed       = -3.3f;
-constexpr const float WalljumpMaxDuration    = 8;
-constexpr const float WalljumpFixDuration    = 4;
-constexpr const float WalljumpWindowDuration = 10;
-constexpr const float WalljumpMoveThreshold  = WalljumpMaxDuration - WalljumpFixDuration;
-constexpr const float WallslideFrictionCoefficient = 0.05f;
-
-constexpr const float TileWidth  = 16.0f;
-constexpr const float TileHeight = 16.0f;
-
-constexpr const float DeltaToFrameTime = 60.0f / 1000.0f;  // constant to convert elapsed
-                                                           // miliseconds to number between 0 and 1,
-                                                           // where 1 = 1/60 of a second
-}
+#include "GameConstants.h"
 
 struct DebugValues;
 
@@ -146,17 +128,7 @@ global_var IngameLog* GlobalIngameLog               = nullptr;
 global_var ImmediateModeGui* ImGui                  = nullptr;
 global_var ProfilingTable* GlobalProfilingTable     = nullptr;
 
-int32 getTimeStampString( char* buffer, int32 size )
-{
-	assert( GlobalPlatformServices );
-	return GlobalPlatformServices->getTimeStampString( buffer, size );
-}
-short_string< 50 > getTimeStampString()
-{
-	short_string< 50 > result;
-	result.resize( ::getTimeStampString( result.data(), result.capacity() ) );
-	return result;
-}
+#include "PlatformServicesHelpers.cpp"
 
 // logging needs some definitions to exists, but those definitions may need to log
 // this could be solved by splitting everything into .h/.cpp pairs, but instead its easier to only
@@ -180,95 +152,9 @@ struct DebugValues {
 	float jumpHeightError;
 };
 
-StringView toString( VirtualKeyEnumValues key )
-{
-	assert( GlobalPlatformServices );
-	return GlobalPlatformServices->getKeyboardKeyName( key );
-}
-
-// global_var allocation methods
-void* allocate( size_t size, uint32 alignment )
-{
-	assert( GlobalPlatformServices );
-	return GlobalPlatformServices->allocate( size, alignment );
-}
-void* reallocate( void* ptr, size_t newSize, size_t oldSize, uint32 alignment )
-{
-	assert( GlobalPlatformServices );
-	return GlobalPlatformServices->reallocate( ptr, newSize, oldSize, alignment );
-}
-void deallocate( void* ptr, size_t size, uint32 alignment )
-{
-	assert( GlobalPlatformServices );
-	GlobalPlatformServices->deallocate( ptr, size, alignment );
-}
-
-template < class T >
-T* allocate( size_t count = 1 )
-{
-	return (T*)::allocate( count * sizeof( T ), alignof( T ) );
-}
-template< class T >
-T* reallocate( T* ptr, size_t newCount, size_t oldCount )
-{
-	return (T*)::reallocate( ptr, newCount * sizeof( T ), oldCount * sizeof( T ), alignof( T ) );
-}
-template< class T >
-void deallocate( T* ptr, size_t count = 1 )
-{
-	::deallocate( ptr, count * sizeof( T ), alignof( T ) );
-}
-
-void* operator new( std::size_t size ) /*throw( std::bad_alloc )*/
-{
-	assert( GlobalPlatformServices );
-	return GlobalPlatformServices->malloc( size );
-}
-void operator delete( void* ptr ) /*throw()*/
-{
-	assert( GlobalPlatformServices );
-	GlobalPlatformServices->free( ptr );
-}
-void* operator new[]( std::size_t size ) /*throw(std::bad_alloc)*/
-{
-	assert( GlobalPlatformServices );
-	return GlobalPlatformServices->malloc( size );
-}
-void operator delete[]( void* ptr ) /*throw()*/
-{
-	assert( GlobalPlatformServices );
-	GlobalPlatformServices->free( ptr );
-}
-
 #include <vector>
 #include <new>
 #include <memory>
-
-FilenameString getOpenFilename( const char* filter, const char* initialDir, bool multiselect )
-{
-	FilenameString result;
-	result.resize( GlobalPlatformServices->getOpenFilename( filter, initialDir, multiselect,
-	                                                        result.data(), result.capacity() ) );
-	return result;
-}
-extern global_var PlatformServices* GlobalPlatformServices;
-FilenameString getSaveFilename( const char* filter, const char* initialDir )
-{
-	FilenameString result;
-	result.resize( GlobalPlatformServices->getSaveFilename( filter, initialDir, result.data(),
-	                                                        result.capacity() ) );
-	return result;
-}
-
-StringView readFile( StackAllocator* allocator, StringView filename )
-{
-	assert( GlobalPlatformServices );
-	auto buffer = beginVector( allocator, char );
-	buffer.resize( (int32)GlobalPlatformServices->readFileToBuffer( filename, buffer.data(),
-	                                                                buffer.capacity() ) );
-	endVector( allocator, &buffer );
-	return {buffer.data(), buffer.size()};
-}
 
 void debug_Clear()
 {
@@ -301,83 +187,8 @@ GameSettings makeDefaultGameSettings()
 
 #include "Camera.cpp"
 #include "VoxelGrid.cpp"
-
-struct VoxelCollection {
-	struct Frame {
-		MeshId mesh;
-		vec2 offset;
-	};
-
-	struct FrameInfo {
-		VoxelGridTextureMap textureMap;
-		recti textureRegion[VF_Count];
-		float frictionCoefficient;
-		aabb bounds;
-		// TODO: include more meta information like gun position
-	};
-
-	struct Animation {
-		string name;
-		rangeu16 range;
-	};
-
-	TextureId texture;
-	Array< Frame > frames;
-	Array< FrameInfo > frameInfos;
-	Array< Animation > animations;
-	string filename;        // filename of the voxel collection json
-	string voxelsFilename;  // filename of the voxel grids file .raw
-};
-
-struct TileInfo {
-	float frictionCoefficient;
-};
-struct TileSet {
-	VoxelCollection voxels;
-	Array< TileInfo > infos;
-};
-
-struct GameTile {
-	uint8 collection;
-	uint8 rotation;
-	trange< uint8 > frames;
-	inline explicit operator bool() const { return length( frames ) != 0; }
-};
-
-enum RoomLayerValues {
-	RL_Main,
-	RL_Back,
-	RL_Front,
-
-	RL_Count
-};
-typedef Grid< GameTile > TileGrid;
-struct Room {
-	struct Layer {
-		TileGrid grid;
-	};
-	Layer layers[RL_Count];
-	TileSet* tileSet;
-};
-
-rangeu16 getAnimationRange( VoxelCollection* collection, StringView name )
-{
-	rangeu16 result;
-	if( auto animation = find_first_where( collection->animations, entry.name == name ) ) {
-		result = animation->range;
-	} else {
-		result = {};
-	}
-	return result;
-}
-Array< VoxelCollection::Frame > getAnimationFrames( VoxelCollection* collection, rangeu16 range )
-{
-	return makeRangeView( collection->frames, range );
-}
-Array< VoxelCollection::Frame > getAnimationFrames( VoxelCollection* collection, StringView name )
-{
-	return makeRangeView( collection->frames, getAnimationRange( collection, name ) );
-}
+#include "VoxelCollection.cpp"
+#include "Room.cpp"
 
 #include "Editor/Common/DynamicVoxelCollection.h"
 #include "Editor/Common/EditorView.h"
@@ -401,288 +212,7 @@ CountdownTimer processTimer( CountdownTimer timer, float dt )
 	return result;
 }
 
-struct EntityHandle {
-	uint32 bits;
-
-	inline uint32 index() { return bits - 1; }
-	inline explicit operator bool() const { return bits != 0; }
-	inline bool operator==( EntityHandle other ) const { return bits == other.bits; }
-	inline bool operator!=( EntityHandle other ) const { return bits != other.bits; }
-};
-
-struct HandleManager {
-	// TODO: keep book about invalid entity handles, so that we can detect use after remove
-	uint32 ids;
-};
-
-HandleManager makeHandleManager()
-{
-	HandleManager result = {};
-	return result;
-}
-EntityHandle addEntityHandle( HandleManager* handles )
-{
-	assert( handles );
-	return {++handles->ids};
-}
-
-enum class SpatialState {
-	Grounded,
-	FallingOff,
-	Airborne,
-};
-const char* getSpatialStateString( SpatialState state )
-{
-	static const char* const SpatialStateStrings[] = {
-	    "Grounded", "FallingOff", "Airborne",
-	};
-	assert( valueof( state ) < countof( SpatialStateStrings ) );
-	return SpatialStateStrings[valueof( state )];
-}
-
-struct CollidableRef {
-	enum : int8 { None, Tile, Dynamic } type;
-	uint16 index;
-	EntityHandle handle;
-	explicit operator bool() const { return type != None; }
-	void clear() { type = None; }
-	void setTile( int32 index )
-	{
-		this->type  = Tile;
-		this->index = safe_truncate< uint16 >( index );
-	}
-	void setDynamic( int32 index, EntityHandle handle )
-	{
-		this->type   = Dynamic;
-		this->index  = safe_truncate< uint16 >( index );
-		this->handle = handle;
-	}
-
-	bool operator==( CollidableRef other ) { return type == other.type && index == other.index; }
-	bool operator!=( CollidableRef other ) { return type != other.type || index != other.index; }
-};
-enum class EntityMovement : int8 { Straight, Grounded };
-enum class CollisionResponse : int8 { FullStop, Bounce };
-enum class EntityFaceDirection : int8 { Left, Right };
-
-struct Skeleton;
-
-// this used to be CollidableComponent, but it had a lot of fields that didn't have anything to do
-// with collision detection, but with reporting back how/what happened. It behaved like a full
-// entity class, so now it is actually clear what this structure is: everything you need to know
-// about an entity is here
-// there are still "components", but for things that operate on entities as a whole, like controls
-struct Entity {
-	vec2 position;
-	vec2 velocity;
-	rectf aab;
-	CollidableRef grounded;             // collidable we are standing on
-	CollidableRef wallslideCollidable;  // collidable we are wallsliding against
-	CollidableRef lastCollision;
-	vec2 positionDelta;
-
-	CountdownTimer walljumpWindow;    // time window in which we can perform a walljump
-	CountdownTimer walljumpDuration;  // how long the player can't move towards the wall
-
-	SpatialState spatialState;
-	float spatialStateTimer;  // how long we have been in the current state
-
-	float gravityModifier;
-	float bounceModifier;  // value between 0 and 2 to specify bouncing behavior (0 = keep velocity
-	                       // on collision, 1 = slide along edge on collision, 2 = reflect)
-	float airFrictionCoeffictient;
-	float wallslideFrictionCoefficient;
-
-	CountdownTimer aliveCountdown;  // how many frames this can be alive for, used for entities that
-	                                // dissipate after a certain time
-
-	// TODO: move these into hero
-	CountdownTimer animationLockTimer;
-	CountdownTimer particleEmitTimer;
-	CountdownTimer shootingAnimationTimer;
-
-	EntityHandle handle;
-
-	EntityMovement movement;
-	CollisionResponse response;
-	vec2 forcedNormal;
-	uint8 flags;
-	EntityFaceDirection prevFaceDirection;
-	EntityFaceDirection faceDirection;
-
-	Skeleton* skeleton;
-	int8 collisionIndex;
-
-	enum { type_none, type_hero, type_projectile, type_wheels } type;
-	struct Hero {
-		int8 currentAnimationIndex;
-		int32 currentAnimation;
-	};
-	struct Wheels {
-		CountdownTimer attackTimer;
-		enum {} state;
-	};
-	union {
-		Hero hero;
-		struct {
-		} projectile;
-		Wheels wheels;
-	};
-
-	enum Flags : uint8 {
-		WalljumpLeft    = BITFIELD( 0 ),  // whether we are doing a walljump to the left or right
-		Dynamic         = BITFIELD( 1 ),  // whether collidable is a dynamic collider
-		UseForcedNormal = BITFIELD( 2 ),
-		DeathFlag       = BITFIELD( 3 ),  // whether entity is dead
-	};
-
-	bool walljumpLeft() const { return ( flags & WalljumpLeft ) != 0; }
-	bool dynamic() const { return ( flags & Dynamic ) != 0; }
-	bool useForcedNormal() const { return ( flags & UseForcedNormal ) != 0; }
-	bool dead() const { return ( flags & DeathFlag ) != 0; }
-	void setForcedNormal( vec2arg normal )
-	{
-		forcedNormal = normal;
-		flags |= UseForcedNormal;
-	}
-};
-void setSpatialState( Entity* collidable, SpatialState state )
-{
-	if( state != collidable->spatialState ) {
-		collidable->spatialState      = state;
-		collidable->spatialStateTimer = 0;
-		if( state != SpatialState::Grounded ) {
-			collidable->grounded.clear();
-		}
-	}
-}
-void processSpatialState( Entity* collidable, float dt )
-{
-	constexpr float maxFallingOffTime = 5;
-	collidable->spatialStateTimer += dt;
-	if( collidable->spatialState == SpatialState::FallingOff
-	    && collidable->spatialStateTimer >= maxFallingOffTime ) {
-		setSpatialState( collidable, SpatialState::Airborne );
-	}
-}
-bool isSpatialStateJumpable( Entity* collidable )
-{
-	return collidable->spatialState == SpatialState::Grounded
-	       || collidable->spatialState == SpatialState::FallingOff;
-}
-bool isSpatialStateWalljumpable( Entity* collidable )
-{
-	return /*collidable->spatialState == SpatialState::FallingOff
-	       ||*/ collidable->spatialState
-	       == SpatialState::Airborne;
-}
-bool canEntityShoot( Entity* collidable ) { return true; }
-
-Entity* getDynamicFromCollidableRef( Array< Entity > dynamics, CollidableRef ref )
-{
-	assert( ref.type == CollidableRef::Dynamic );
-	assert( ref.index >= 0 );
-	if( ref.index < dynamics.size() ) {
-		auto candidate = &dynamics[ref.index];
-		if( candidate->handle == ref.handle ) {
-			return candidate;
-		}
-	}
-	auto handle = ref.handle;
-	return find_first_where( dynamics, entry.handle == handle );
-}
-float getFrictionCoefficitonFromCollidableRef( Array< Entity > dynamics, TileGrid grid,
-                                               Array< TileInfo > infos, CollidableRef ref )
-{
-	switch( ref.type ) {
-		case CollidableRef::None: {
-			return 0;
-		}
-		case CollidableRef::Tile: {
-			auto tile = grid[ref.index];
-			if( tile ) {
-				return infos[tile.frames.min].frictionCoefficient;
-			}
-			break;
-		}
-		case CollidableRef::Dynamic: {
-			return dynamics[ref.index].wallslideFrictionCoefficient;
-		}
-		InvalidDefaultCase;
-	}
-	return 0;
-}
-rectf getBoundsFromCollidableRef( Array< Entity > dynamics, TileGrid grid,
-                                  CollidableRef ref )
-{
-	rectf result = {};
-	switch( ref.type ) {
-		case CollidableRef::None: {
-			break;
-		}
-		case CollidableRef::Tile: {
-			auto pos = grid.coordinatesFromIndex( ref.index );
-			using namespace GameConstants;
-			result = RectWH( pos.x * TileWidth, pos.y * TileHeight, TileWidth, TileHeight );
-			break;
-		}
-		case CollidableRef::Dynamic: {
-			auto dynamic = &dynamics[ref.index];
-			result = translate( dynamic->aab, dynamic->position );
-			break;
-		}
-		InvalidDefaultCase;
-	}
-	return result;
-}
-
-struct EntitySystem {
-	UArray< Entity > entries;
-	int32 entriesCount;  // count of entries that are not dynamic
-
-	Array< Entity > staticEntries() const
-	{
-		return makeArrayView( entries.begin(), entries.begin() + entriesCount );
-	}
-	Array< Entity > dynamicEntries() const
-	{
-		return makeArrayView( entries.begin() + entriesCount, entries.end() );
-	}
-};
-EntitySystem makeEntitySystem( StackAllocator* allocator, int32 maxCount )
-{
-	EntitySystem result = {};
-	result.entries      = makeUArray( allocator, Entity, maxCount );
-	return result;
-}
-Entity* addEntity( EntitySystem* system, EntityHandle handle, bool dynamic = false )
-{
-	assert( system );
-	assert( handle );
-	Entity* result = nullptr;
-	if( system->entries.remaining() ) {
-		if( dynamic ) {
-			result  = system->entries.emplace_back();
-			*result = {};
-		} else {
-			result =
-			    system->entries.insert( system->entries.begin() + system->entriesCount, 1, {} );
-			++system->entriesCount;
-		}
-		result->grounded.clear();
-		result->handle = handle;
-		setFlagCond( result->flags, Entity::Dynamic, dynamic );
-		result->gravityModifier         = 1;
-		result->bounceModifier          = 1;
-		result->airFrictionCoeffictient = 0.0f;
-		result->collisionIndex          = -1;
-	}
-	return result;
-}
-Entity* findEntity( EntitySystem* system, EntityHandle handle )
-{
-	return find_first_where( system->entries, entry.handle == handle );
-}
+#include "Entity.cpp"
 
 struct ControlComponent {
 	EntityHandle entity;
@@ -744,106 +274,6 @@ struct GameDebugGuiState {
 	bool initialized;
 };
 
-#define GAME_MAP_WIDTH 16
-#define GAME_MAP_HEIGHT 16
-static int8 GameDebugMapMain[] = {
-    2, 0, 0, 0, 2, 0, 0, 0, 0, 0, 0, 0, 0, 0, 2, 0,
-    2, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 0,
-    3, 3, 3, 3, 0, 0, 1, 1, 1, 1, 1, 1, 1, 1, 2, 0,
-    0, 0, 0, 3, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 0,
-    4, 0, 0, 3, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
-    4, 0, 0, 3, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
-    4, 4, 4, 4, 1, 1, 0, 0, 0, 1, 1, 1, 1, 1, 1, 0,
-    4, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
-    4, 0, 0, 0, 0, 0, 0, 0, 7, 0, 0, 0, 0, 0, 0, 1,
-    4, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1,
-    4, 0, 0, 0, 1, 1, 1, 0, 0, 0, 0, 0, 0, 0, 0, 1,
-    4, 0, 1, 0, 0, 0, 0, 0, 7, 0, 0, 0, 0, 0, 1, 1,
-    4, 0, 0, 0, 0, 0, 0, 0, 7, 0, 1, 0, 0, 0, 0, 0,
-    4, 0, 0, 0, 0, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
-    4, 0, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1,
-    6, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1,
-};
-static int8 GameDebugMapFront[] = {
-    0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
-    0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
-    0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
-    0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
-    6, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
-    4, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
-    4, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
-    4, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
-    4, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
-    4, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
-    4, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
-    4, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
-    4, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
-    4, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
-    4, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
-    6, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1,
-};
-Room makeRoom( StackAllocator* allocator, int32 width, int32 height )
-{
-	Room result = {};
-	FOR( layer : result.layers ) {
-		layer.grid = makeGrid( allocator, GameTile, width, height );
-		zeroMemory( layer.grid.data(), layer.grid.size() );
-	}
-	return result;
-}
-static Room debugGetRoom( StackAllocator* allocator, TileSet* tileSet )
-{
-	Room result = makeRoom( allocator, GAME_MAP_WIDTH, GAME_MAP_HEIGHT );
-	result.tileSet = tileSet;
-	auto back   = result.layers[RL_Back].grid;
-	fill( back.data(), {0, 0, 2, 3}, back.size() );
-	auto processLayer = []( TileGrid grid, const int8* map ) {
-		for( auto y = 0; y < GAME_MAP_HEIGHT; ++y ) {
-			for( auto x = 0; x < GAME_MAP_WIDTH; ++x ) {
-				auto index = x + y * GAME_MAP_WIDTH;
-				auto dest  = &grid[index];
-				switch( map[index] ) {
-					case 1: {
-						*dest = {0, 0, 0, 1};
-						break;
-					}
-					case 2: {
-						*dest = {0, 1, 0, 1};
-						break;
-					}
-					case 3: {
-						*dest = {0, 2, 0, 1};
-						break;
-					}
-					case 4: {
-						*dest = {0, 3, 0, 1};
-						break;
-					}
-					case 5: {
-						*dest = {0, 0, 1, 2};
-						break;
-					}
-					case 6: {
-						*dest = {0, 0, 3, 4};
-						break;
-					}
-					case 7: {
-						*dest = {0, 0, 4, 5};
-						break;
-					}
-					case 0:
-					default: {
-						*dest = {};
-						break;
-					}
-				}
-			}
-		}
-	};
-	processLayer( result.layers[RL_Main].grid, GameDebugMapMain );
-	processLayer( result.layers[RL_Front].grid, GameDebugMapFront );
-	return result;
-}
 vec2 gameToScreen( vec2 pos ) { return {pos.x, -pos.y}; }
 rectf gameToScreen( rectfarg rect )
 {
@@ -855,139 +285,7 @@ rectf gameToScreen( rectfarg rect )
 	return result;
 }
 
-enum class ParticleEmitterId {
-	Dust,
-	LandingDust,
-};
-enum class ParticleTexture : int8 {
-	Dust,
-};
-namespace ParticleEmitterFlags
-{
-enum Values : uint32 {
-	AlternateSignX = BITFIELD( 0 ),
-};
-}
-struct ParticleEmitter {
-	int32 count;
-	float maxAlive;
-	vec2 velocity;
-	ParticleTexture textureId;
-	uint32 flags;
-};
-
-struct ParticleSystem {
-	struct Particle {
-		vec3 position;
-		vec2 velocity;
-		float alive;
-		float maxAlive;
-		ParticleTexture textureId;
-	};
-	UArray< Particle > particles;
-
-	TextureId texture;
-};
-
-ParticleSystem makeParticleSystem( StackAllocator* allocator, int32 maxParticles )
-{
-	ParticleSystem result = {};
-	result.particles      = makeUArray( allocator, ParticleSystem::Particle, maxParticles );
-	return result;
-}
-static const ParticleEmitter ParticleEmitters[] = {
-    {1, 20, {0, -0.1f}, ParticleTexture::Dust},  // Dust
-    {2,
-     10,
-     {0.5f, -0.1f},
-     ParticleTexture::Dust,
-     ParticleEmitterFlags::AlternateSignX},  // LandingDust
-};
-Array< ParticleSystem::Particle > emitParticles( ParticleSystem* system, vec3arg position,
-                                                 const ParticleEmitter& emitter )
-{
-	Array< ParticleSystem::Particle > result = {};
-	auto count = min( system->particles.remaining(), emitter.count );
-	if( count > 0 ) {
-		auto start = system->particles.size();
-		system->particles.resize( start + count );
-		result = makeRangeView( system->particles, start, start + count );
-		FOR( entry : result ) {
-			entry.position  = position;
-			entry.velocity  = emitter.velocity;
-			entry.alive     = emitter.maxAlive;
-			entry.maxAlive  = emitter.maxAlive;
-			entry.textureId = emitter.textureId;
-		}
-		if( emitter.flags & ParticleEmitterFlags::AlternateSignX ) {
-			bool sign = true;
-			FOR( entry : result ) {
-				if( sign ) {
-					entry.velocity.x = -entry.velocity.x;
-					sign             = !sign;
-				}
-			}
-		}
-	}
-	return result;
-}
-Array< ParticleSystem::Particle > emitParticles( ParticleSystem* system, vec2arg position,
-                                                 ParticleEmitterId emitterId )
-{
-	assert( system );
-	assert( valueof( emitterId ) < countof( ParticleEmitters ) );
-	auto& emitter = ParticleEmitters[valueof( emitterId )];
-	return emitParticles( system, Vec3( position, 0 ), emitter );
-}
-void processParticles( ParticleSystem* system, float dt )
-{
-	auto end = system->particles.end();
-	for( auto it = system->particles.begin(); it != end; ) {
-		it->position.xy += it->velocity * dt;
-		it->alive -= dt;
-		if( it->alive <= 0 ) {
-			it  = unordered_erase( system->particles, it );
-			end = system->particles.end();
-			continue;
-		}
-		++it;
-	}
-}
-void renderParticles( RenderCommands* renderer, ParticleSystem* system )
-{
-	setRenderState( renderer, RenderStateType::DepthTest, false );
-	setTexture( renderer, 0, system->texture );
-	// TODO: use a texture map/atlas instead of hardcoding
-	static const QuadTexCoords texCoords[] = {
-		makeQuadTexCoords( scale( RectWH(  0.0f, 0, 9, 9 ), 1 / 39.0f, 1 / 9.0f ) ),
-		makeQuadTexCoords( scale( RectWH( 10.0f, 0, 9, 9 ), 1 / 39.0f, 1 / 9.0f ) ),
-		makeQuadTexCoords( scale( RectWH( 20.0f, 0, 9, 9 ), 1 / 39.0f, 1 / 9.0f ) ),
-		makeQuadTexCoords( scale( RectWH( 30.0f, 0, 9, 9 ), 1 / 39.0f, 1 / 9.0f ) )
-	};
-	MESH_STREAM_BLOCK( stream, renderer ) {
-		FOR( particle : system->particles ) {
-			auto t            = particle.alive / particle.maxAlive;
-			auto beenAliveFor = particle.maxAlive - particle.alive;
-			stream->color     = Color::White;
-			// alpha blend between first and last couple of frames of the particles life time
-			constexpr const float FadeDuration = 3;
-			constexpr const float InvFadeDuration = 1 / FadeDuration;
-			if( beenAliveFor < FadeDuration ) {
-				stream->color = setAlpha( Color::White, beenAliveFor * InvFadeDuration );
-			} else if( beenAliveFor > particle.maxAlive - FadeDuration ) {
-				beenAliveFor -= particle.maxAlive - FadeDuration;
-				stream->color = setAlpha( Color::White, 1 - beenAliveFor * InvFadeDuration );
-			}
-			rectf rect = {-4, -4, 5, 5};
-			rect = gameToScreen( translate( rect, particle.position.xy ) );
-			auto index = clamp( (int32)lerp( 1.0f - t, 0.0f, 4.0f ), 0, 3 );
-			// TODO: use a texture atlas for particles and a lookup table
-			assert( particle.textureId == ParticleTexture::Dust );
-			pushQuad( stream, rect, particle.position.z, texCoords[index] );
-		}
-	}
-	setRenderState( renderer, RenderStateType::DepthTest, true );
-}
+#include "ParticleSystem.cpp"
 
 enum class AppFocus { Game, Voxel, TexturePack, Animator, Easing };
 
@@ -1034,18 +332,13 @@ bool emitProjectile( GameState* game, vec2arg origin, vec2arg velocity )
 {
 	// TODO: emit different types of projectiles based on upgrades
 	auto projectileId = addEntityHandle( &game->entityHandles );
-	auto projectile   = addEntity( &game->entitySystem, projectileId );
+	auto projectile   = addEntity( &game->entitySystem, &game->skeletonSystem, projectileId,
+	                               Entity::type_projectile );
 	if( projectile ) {
-		projectile->position                = origin;
-		projectile->velocity                = velocity;
-		projectile->aab                     = {-3, -3, 3, 3};
-		projectile->gravityModifier         = 0;
-		projectile->bounceModifier          = 2;
-		projectile->airFrictionCoeffictient = 0;
-		projectile->movement                = EntityMovement::Straight;
-		projectile->type                    = Entity::type_projectile;
-		projectile->response                = CollisionResponse::Bounce;
-		projectile->aliveCountdown          = {60};
+		projectile->position       = origin;
+		projectile->velocity       = velocity;
+		projectile->aab            = {-3, -3, 3, 3};
+		projectile->aliveCountdown = {60};
 		return true;
 	}
 	return false;
@@ -1141,16 +434,16 @@ void processControlActions( GameState* game, ControlSystem* controlSystem,
 			if( entity && entity->skeleton
 			    && ( hero = query_variant( *entity, hero ) ) != nullptr ) {
 
-				entity->shootingAnimationTimer = {20};
-				auto shootPosIndex             = skeletonSystem->hero.nodeIds.shootPos;
-				auto gunPosition               = getNode( entity->skeleton, shootPosIndex ).xy;
-				gunPosition.y                  = -gunPosition.y;
-				vec2 velocity                  = {3, 0};
+				hero->shootingAnimationTimer = {20};
+				auto shootPosIndex           = skeletonSystem->hero.nodeIds.shootPos;
+				auto gunPosition             = getNode( entity->skeleton, shootPosIndex ).xy;
+				gunPosition.y                = -gunPosition.y;
+				vec2 velocity                = {3, 0};
 				if( entity->faceDirection == EntityFaceDirection::Left ) {
 					velocity.x = -velocity.x;
 				}
 				if( !emitProjectile( game, gunPosition, velocity ) ) {
-					entity->shootingAnimationTimer = {};
+					hero->shootingAnimationTimer = {};
 				}
 			}
 			control.shoot = false;
@@ -1360,164 +653,6 @@ RELOAD_APP( reloadApp )
 	return result;
 }
 
-bool loadVoxelCollectionTextureMapping( StackAllocator* allocator, StringView filename,
-                                        VoxelCollection* out )
-{
-	assert( out );
-
-	auto guard = StackAllocatorGuard( allocator );
-	auto primary = allocator;
-	auto scrap   = GlobalScrap;
-	TEMPORARY_MEMORY_BLOCK( scrap ) {
-		auto file = readFile( scrap, filename );
-		auto doc  = makeJsonDocument( scrap, file );
-		if( !doc || !doc.root.getObject() ) {
-			return false;
-		}
-		auto root = doc.root.getObject();
-
-		*out         = {};
-		out->texture = GlobalPlatformServices->loadTexture( root["texture"].getString() );
-		if( !out->texture ) {
-			return false;
-		}
-		auto textureInfo = getTextureInfo( out->texture );
-		auto itw         = 1.0f / textureInfo->width;
-		auto ith         = 1.0f / textureInfo->height;
-
-		auto mapping      = root["mapping"].getArray();
-		int32 framesCount = 0;
-		FOR( animationVal : mapping ) {
-			auto animation = animationVal.getObject();
-			framesCount += animation["frames"].getArray().size();
-		}
-
-		out->frames     = makeArray( primary, VoxelCollection::Frame, framesCount );
-		out->frameInfos = makeArray( primary, VoxelCollection::FrameInfo, framesCount );
-		out->animations = makeArray( primary, VoxelCollection::Animation, mapping.size() );
-
-		int32 currentFrame = 0;
-		for( int32 i = 0, count = mapping.size(); i < count; ++i ) {
-			auto animation  = mapping[i].getObject();
-			auto dest       = &out->animations[i];
-			dest->name      = makeString( primary, animation["name"].getString() );
-			dest->range.min = safe_truncate< uint16 >( currentFrame );
-
-			FOR( frameVal : animation["frames"].getArray() ) {
-				auto frame     = frameVal.getObject();
-				auto destFrame = &out->frames[currentFrame];
-				auto destInfo  = &out->frameInfos[currentFrame];
-				++currentFrame;
-
-				*destFrame                    = {};
-				*destInfo                     = {};
-				destInfo->frictionCoefficient = 1;
-
-				for( auto face = 0; face < VF_Count; ++face ) {
-					auto faceObject = frame[VoxelFaceStrings[face]].getObject();
-
-					destInfo->textureMap.texture = out->texture;
-					deserialize( faceObject["rect"], destInfo->textureRegion[face] );
-					deserialize( faceObject["texCoords"],
-					           destInfo->textureMap.entries[face].texCoords );
-					destInfo->frictionCoefficient = faceObject["frictionCoefficient"].getFloat( 1 );
-					FOR( vert : destInfo->textureMap.entries[face].texCoords.elements ) {
-						vert.x *= itw;
-						vert.y *= ith;
-					}
-				}
-				deserialize( frame["offset"], destFrame->offset );
-			}
-
-			dest->range.max = safe_truncate< uint16 >( currentFrame );
-		}
-		out->voxelsFilename = makeString( primary, root["voxels"].getString() );
-	}
-	out->filename = makeString( primary, filename );
-	guard.commit();
-	return true;
-}
-bool loadVoxelGridsFromFile( PlatformServices* platform, StringView filename,
-                             Array< VoxelGrid > grids )
-{
-	auto bytesToRead = grids.size() * sizeof( VoxelGrid );
-	if( !bytesToRead ) {
-		return false;
-	}
-	if( platform->readFileToBuffer( filename, grids.data(), bytesToRead ) != bytesToRead ) {
-		return false;
-	}
-	return true;
-}
-aabb getBoundsFromVoxelGrid( const VoxelGrid* grid )
-{
-	int32 left   = 10000;
-	int32 bottom = 10000;
-	int32 near   = 10000;
-	int32 right  = -10000;
-	int32 top    = -10000;
-	int32 far    = -10000;
-
-	for( auto z = 0, depth = grid->depth; z < depth; ++z ) {
-		for( auto y = 0, height = grid->height; y < height; ++y ) {
-			for( auto x = 0, width = grid->width; x < width; ++x ) {
-				auto index = x + y * width + z * width * height;
-				auto cell  = grid->data[index];
-				if( cell != EmptyCell ) {
-					left   = min( left, x );
-					bottom = min( bottom, height - y );
-					near   = min( near, z );
-					right  = max( right, x + 1 );
-					top    = max( top, height - y + 1 );
-					far    = max( far, z + 1 );
-				}
-			}
-		}
-	}
-	return {left * CELL_WIDTH,  bottom * CELL_HEIGHT, near * CELL_DEPTH,
-	        right * CELL_WIDTH, top * CELL_HEIGHT,    far * CELL_DEPTH};
-}
-bool loadVoxelCollection( StackAllocator* allocator, StringView filename, VoxelCollection* out )
-{
-	if( !loadVoxelCollectionTextureMapping( allocator, filename, out ) ) {
-		return false;
-	}
-	TEMPORARY_MEMORY_BLOCK( GlobalScrap ) {
-		auto grids = makeArray( GlobalScrap, VoxelGrid, out->frames.size() );
-		if( !loadVoxelGridsFromFile( GlobalPlatformServices, out->voxelsFilename, grids ) ) {
-			return false;
-		}
-		for( auto i = 0; i < grids.size(); ++i ) {
-			auto grid  = &grids[i];
-			auto frame = &out->frames[i];
-			auto info  = &out->frameInfos[i];
-			TEMPORARY_MEMORY_BLOCK( GlobalScrap ) {
-				int32 vertices = (int32)getCapacityFor< Vertex >( GlobalScrap ) / 2;
-				int32 indices  = ( vertices * sizeof( Vertex ) ) / sizeof( uint16 );
-				auto stream    = makeMeshStream( GlobalScrap, vertices, indices, nullptr );
-				generateMeshFromVoxelGrid( &stream, grid, &info->textureMap, VoxelCellSize );
-				frame->mesh = GlobalPlatformServices->uploadMesh( toMesh( &stream ) );
-				assert( frame->mesh );
-				info->bounds = getBoundsFromVoxelGrid( grid );
-			}
-		}
-	}
-	return true;
-}
-
-bool loadTileSet( StackAllocator* allocator, StringView filename, TileSet* out ) {
-	if( !loadVoxelCollection( allocator, filename, &out->voxels ) ) {
-		return false;
-	}
-	out->infos = makeArray( allocator, TileInfo, out->voxels.frameInfos.size() );
-	for( auto i = 0; i < out->infos.size(); ++i ) {
-		auto dest = &out->infos[i];
-		*dest = {};
-		dest->frictionCoefficient = out->voxels.frameInfos[i].frictionCoefficient;
-	}
-	return true;
-}
-
 static void processCamera( GameInputs* inputs, GameSettings* settings, Camera* camera, float dt )
 {
 	auto speed = 20.0f * dt;
@@ -1555,650 +690,7 @@ static void processCamera( GameInputs* inputs, GameSettings* settings, Camera* c
 #include "Editor/TexturePack/TexturePack.cpp"
 #include "Editor/Animator/Animator.cpp"
 #include "VoxelEditor.cpp"
-
-const float SafetyDistance = 0.01f;
-
-bool testPointVsAxisAlignedLineSegment( float x, float y, float deltaX, float deltaY,
-                                        float segmentX, float segmentStartY, float segmentEndY,
-                                        float* t )
-{
-	*t                 = 0;
-	auto relativePos   = segmentX - x;
-	auto intersectionT = relativePos / deltaX;
-	auto intersectionY = y + deltaY * intersectionT;
-	if( intersectionT > 0 && intersectionY >= segmentStartY && intersectionY < segmentEndY ) {
-		*t = intersectionT;
-		return true;
-	}
-	return false;
-}
-struct CollisionInfo {
-	float t;
-	vec2 normal;
-	vec2 push;
-};
-struct PushPair {
-	float push;
-	vec2 normal;
-	friend bool operator<( const PushPair& a, const PushPair& b ) { return a.push < b.push; }
-};
-bool testAabVsAab( vec2arg aPosition, rectfarg a, vec2arg delta, rectfarg b, float maxT,
-                   CollisionInfo* info )
-{
-	rectf sum = {b.left - a.right + SafetyDistance, b.top - a.bottom + SafetyDistance,
-	             b.right - a.left - SafetyDistance, b.bottom - a.top - SafetyDistance};
-
-	float intermediate;
-	bool collided = false;
-	if( isPointInside( sum, aPosition ) ) {
-		PushPair leftPush       = {aPosition.x - sum.left, -1, 0};
-		PushPair upPush         = {aPosition.y - sum.top, 0, -1};
-		PushPair rightPush      = {sum.right - aPosition.x, 1, 0};
-		PushPair downPush       = {sum.bottom - aPosition.y, 0, 1};
-		const PushPair& minPush = min( min( leftPush, upPush ), min( rightPush, downPush ) );
-		info->t                 = -1;
-		info->normal            = minPush.normal;
-		info->push              = minPush.push * minPush.normal;
-		collided                = true;
-		if( ( minPush.normal.x < 0 && delta.x < info->push.x )
-		    || ( minPush.normal.x > 0 && delta.x > info->push.x )
-		    || ( minPush.normal.y < 0 && delta.y < info->push.y )
-		    || ( minPush.normal.y > 0 && delta.y > info->push.y ) ) {
-			// if we are moving away from collision faster than the push, ignore it
-			// the collision will be resolved by just letting the point move
-			collided = false;
-		}
-	} else {
-		if( delta.x != 0 ) {
-			if( testPointVsAxisAlignedLineSegment( aPosition.x, aPosition.y, delta.x, delta.y,
-			                                       sum.left, sum.top, sum.bottom,
-			                                       &intermediate ) ) {
-				if( intermediate < maxT ) {
-					maxT         = intermediate;
-					info->t      = intermediate;
-					info->normal = {-1, 0};
-					collided     = true;
-				}
-			}
-			if( testPointVsAxisAlignedLineSegment( aPosition.x, aPosition.y, delta.x, delta.y,
-			                                       sum.right, sum.top, sum.bottom,
-			                                       &intermediate ) ) {
-				if( intermediate < maxT ) {
-					maxT         = intermediate;
-					info->t      = intermediate;
-					info->normal = {1, 0};
-					collided     = true;
-				}
-			}
-		}
-
-		if( delta.y != 0 ) {
-			if( testPointVsAxisAlignedLineSegment( aPosition.y, aPosition.x, delta.y, delta.x,
-			                                       sum.top, sum.left, sum.right, &intermediate ) ) {
-				if( intermediate < maxT ) {
-					maxT         = intermediate;
-					info->t      = intermediate;
-					info->normal = {0, -1};
-					collided     = true;
-				}
-			}
-			if( testPointVsAxisAlignedLineSegment( aPosition.y, aPosition.x, delta.y, delta.x,
-			                                       sum.bottom, sum.left, sum.right,
-			                                       &intermediate ) ) {
-				if( intermediate < maxT ) {
-					maxT         = intermediate;
-					info->t      = intermediate;
-					info->normal = {0, 1};
-					collided     = true;
-				}
-			}
-		}
-	}
-
-	return collided;
-}
-
-struct CollisionResult {
-	CollidableRef collision;
-	CollisionInfo info;
-	inline explicit operator bool() const { return static_cast< bool >( collision ); }
-};
-static CollisionResult detectCollisionVsTileGrid( Entity* collidable, vec2arg velocity,
-                                                  TileGrid grid, recti tileGridRegion, float maxT )
-{
-	using namespace GameConstants;
-
-	CollisionResult result = {};
-	result.info.t          = maxT;
-	for( auto y = tileGridRegion.top; y < tileGridRegion.bottom; ++y ) {
-		for( auto x = tileGridRegion.left; x < tileGridRegion.right; ++x ) {
-			auto index = grid.index( x, y );
-			auto tile  = grid[index];
-			if( tile ) {
-				rectf tileBounds   = RectWH( x * TileWidth, y * TileHeight, TileWidth, TileHeight );
-				CollisionInfo info = {};
-				if( testAabVsAab( collidable->position, collidable->aab, velocity, tileBounds,
-				                  result.info.t, &info ) ) {
-					if( info.t < result.info.t ) {
-						result.collision.setTile( index );
-						result.info = info;
-					}
-				}
-			}
-		}
-	}
-	return result;
-}
-static CollisionResult detectCollisionVsDynamics( Entity* collidable, vec2arg velocity,
-                                                  Array< Entity > dynamics,
-                                                  float maxT )
-{
-	using namespace GameConstants;
-
-	CollisionResult result = {};
-	result.info.t          = maxT;
-	FOR( dynamic : dynamics ) {
-		CollisionInfo info = {};
-		if( testAabVsAab( collidable->position, collidable->aab, velocity,
-		                  translate( dynamic.aab, dynamic.position ), result.info.t, &info ) ) {
-			if( info.t < result.info.t ) {
-				result.collision.setDynamic( indexof( dynamics, dynamic ), dynamic.handle );
-				result.info = info;
-			}
-		}
-	}
-	return result;
-}
-
-static recti getSweptTileGridRegion( const Entity* collidable, vec2arg velocity )
-{
-	using namespace GameConstants;
-	auto currentPlayerAab = translate( collidable->aab, collidable->position );
-	// sweep the bounding box along collidable velocity to get bounding box of the sweep region
-	auto entrySweptAab = sweep( currentPlayerAab, velocity );
-	// turn the swept bounding box to tile grid region that we need to check for collisions
-	// tiles outside this region can't possibly collide with the collidable
-	auto tileGridRegion = RectTiledIndex( entrySweptAab, TileWidth, TileHeight );
-	tileGridRegion      = RectMin( tileGridRegion, recti{0, 0, GAME_MAP_WIDTH, GAME_MAP_HEIGHT} );
-	return tileGridRegion;
-}
-
-CollisionResult findCollision( Entity* collidable, vec2arg velocity, TileGrid grid,
-                               recti tileGridRegion, Array< Entity > dynamics,
-                               float maxT, bool dynamic )
-{
-	auto collision = detectCollisionVsTileGrid( collidable, velocity, grid, tileGridRegion, maxT );
-	if( !dynamic && ( !collision || collision.info.t > 0 ) ) {
-		auto dynamicCollision = detectCollisionVsDynamics( collidable, velocity, dynamics, maxT );
-		if( !collision || ( dynamicCollision && dynamicCollision.info.t < collision.info.t ) ) {
-			if( dynamicCollision.info.t < 0 ) {
-				// calculate max movement in given push direction by doing another round of
-				// tile grid collision detection
-				auto safety      = dynamicCollision.info.normal * SafetyDistance;
-				auto adjustedVel = dynamicCollision.info.push + safety;
-				auto sweptRegion = getSweptTileGridRegion( collidable, adjustedVel );
-				auto maxMovementCollision =
-				    detectCollisionVsTileGrid( collidable, adjustedVel, grid, sweptRegion, 1 );
-				if( maxMovementCollision ) {
-					if( maxMovementCollision.info.t > 0 ) {
-						// TODO: we are being squished between dynamic and tile, handle?
-
-						collision      = dynamicCollision;
-						auto newSafety = maxMovementCollision.info.normal * SafetyDistance;
-						// recalculate push by taking into account the old and new
-						// safetyDistances
-						collision.info.push =
-						    adjustedVel * maxMovementCollision.info.t - safety + newSafety;
-					} else {
-						// TODO: we are being squished between dynamic and tile, handle?
-					}
-				} else {
-					collision = dynamicCollision;
-				}
-			} else {
-				collision = dynamicCollision;
-			}
-		}
-	}
-	return collision;
-}
-
-#include <functional>
-
-// TODO: rename function, since Entity does way more than colliding
-void processCollidables( Array< Entity > entries, TileGrid grid,
-                         Array< TileInfo > infos, Array< Entity > dynamics,
-                         bool dynamic, float dt, bool frameBoundary )
-{
-	using namespace GameConstants;
-	constexpr const float eps = 0.00001f;
-
-	// TODO: air movement should be accelerated instead of instant
-	FOR( entry : entries ) {
-		auto oldPosition = entry.position;
-
-		entry.walljumpWindow   = processTimer( entry.walljumpWindow, dt );
-		entry.walljumpDuration = processTimer( entry.walljumpDuration, dt );
-		auto wasAlive          = isCountdownActive( entry.aliveCountdown );
-		entry.aliveCountdown   = processTimer( entry.aliveCountdown, dt );
-		if( wasAlive && isCountdownTimerExpired( entry.aliveCountdown ) ) {
-			entry.flags |= Entity::DeathFlag;
-		}
-
-		// animations
-		if( !entry.grounded ) {
-			entry.animationLockTimer = {};
-		}
-		entry.animationLockTimer = processTimer( entry.animationLockTimer, dt );
-
-		entry.shootingAnimationTimer = processTimer( entry.shootingAnimationTimer, dt );
-
-		// make entry move away from the wall if a walljump was executed
-		if( entry.walljumpDuration ) {
-			// move away only for 4 frames in total
-			if( entry.walljumpDuration.value > WalljumpMoveThreshold ) {
-				if( entry.walljumpLeft() ) {
-					entry.velocity.x = -MovementSpeed;
-				} else {
-					entry.velocity.x = MovementSpeed;
-				}
-			}
-		}
-
-		// update
-		if( frameBoundary ) {
-			if( !entry.grounded || entry.movement != EntityMovement::Grounded ) {
-				entry.velocity.y += Gravity * entry.gravityModifier;
-				entry.velocity.y -= entry.airFrictionCoeffictient * entry.velocity.y;
-				if( entry.wallslideCollidable && entry.velocity.y > 0 ) {
-					// apply wallslide friction only if falling
-					auto friction = getFrictionCoefficitonFromCollidableRef(
-					    dynamics, grid, infos, entry.wallslideCollidable );
-					entry.velocity.y -= friction * WallslideFrictionCoefficient * entry.velocity.y;
-				}
-			}
-		}
-		auto oldVelocity = entry.velocity;
-
-		processSpatialState( &entry, dt );
-
-		auto vdt        = dt;
-		recti mapBounds = {0, 0, GAME_MAP_WIDTH, GAME_MAP_HEIGHT};
-
-		auto isGroundBased = entry.movement == EntityMovement::Grounded
-		                     && floatEqSoft( entry.bounceModifier, 1.0f );
-		// find position of gap and whether we should squeeze into it this frame
-		// entry must have ground based movement and bounceModifier of 1 (sliding behavior) for
-		// gap fitting
-		if( isGroundBased && oldVelocity.x != 0 && oldVelocity.y != 0 ) {
-			auto entryGridX = (int32)floor( entry.position.x / TileWidth );
-			auto entryGridY = (int32)floor( entry.position.y / TileHeight );
-			auto entryGridYNext =
-			    (int32)floor( ( entry.position.y + entry.velocity.y * vdt ) / TileHeight );
-			if( entryGridY != entryGridYNext
-			    && ( entryGridY >= 0 && entryGridY < GAME_MAP_HEIGHT ) ) {
-				if( oldVelocity.y > 0 ) {
-					++entryGridY;
-					++entryGridYNext;
-				}
-
-				bool gapExists = false;
-				int32 gapTileIndex;
-				int32 gapTileX = entryGridX;
-				int32 gapTileY = entryGridY;
-				if( oldVelocity.x < 0 ) {
-					gapTileX -= 1;
-				} else {
-					gapTileX += 1;
-				}
-				if( gapTileX >= 0 && gapTileX < GAME_MAP_WIDTH ) {
-					int32 step = 1;
-					if( oldVelocity.y < 0 ) {
-						step = -1;
-					}
-					for( gapTileY = entryGridY; gapTileY != entryGridYNext; gapTileY += step ) {
-						if( gapTileY < 0 || gapTileY >= GAME_MAP_HEIGHT ) {
-							continue;
-						}
-						gapTileIndex = grid.index( gapTileX, gapTileY );
-						auto gap     = grid[gapTileIndex];
-						if( !gap ) {
-							auto neighborTileX = gapTileX;
-							auto neighborTileY = gapTileY;
-							if( oldVelocity.y > 0 ) {
-								neighborTileY -= 1;
-							} else {
-								neighborTileY += 1;
-							}
-							if( !isPointInside( mapBounds, neighborTileX, neighborTileY ) ) {
-								continue;
-							}
-							auto neighborIndex = grid.index( neighborTileX, neighborTileY );
-							auto neighbor      = grid[neighborIndex];
-							// check whether neighbor is solid
-							if( neighbor ) {
-								// gap exists and is valid candidate for squeezing in
-								gapExists = true;
-								break;
-							}
-						}
-					}
-				}
-
-				if( gapExists ) {
-					rectf gapBounds = RectWH( gapTileX * TileWidth, gapTileY * TileHeight,
-					                          TileWidth, TileHeight );
-#if 0
-						auto nextPlayerAab =
-						    translate( entry.aab, entry.position + entry.velocity * vdt );
-						assert( abs( velocity.x ) <= TileWidth );
-
-						auto currentPlayerAab = translate( entry.aab, entry.position );
-						auto yDelta = gapBounds.top - currentPlayerAab.top;
-						entry.position.y += yDelta;
-						float xDelta;
-						if( velocity.x < 0 ) {
-							auto xBoundary = max( gapBounds.left, nextPlayerAab.left );
-							xDelta         = xBoundary - currentPlayerAab.left;
-						} else {
-							auto xBoundary = min( gapBounds.right, nextPlayerAab.right );
-							xDelta         = xBoundary - currentPlayerAab.right;
-						}
-						entry.position.x += xDelta;
-
-						auto deltaLength        = sqrt( xDelta * xDelta + yDelta * yDelta );
-						float velocityMagnitude = length( entry.velocity );
-						auto ratio              = deltaLength / velocityMagnitude;
-						vdt -= ratio;
-#else
-					// instead of calculating velocity deltas, calculate t value of how
-					// much to apply velocity to be inside gap
-					auto yDelta = gapBounds.top - ( entry.aab.top + entry.position.y );
-					auto t      = yDelta / oldVelocity.y;
-					entry.position += oldVelocity * t;
-					vdt -= t;
-#endif
-				}
-			}
-		}
-
-		// collision detection begins here
-		auto velocity = entry.velocity * vdt;
-
-		// broadphase
-		// get the region of tiles that we actually touch when moving along velocity
-		auto tileGridRegion = getSweptTileGridRegion( &entry, velocity );
-
-		// check grounded state of entry
-		if( entry.grounded ) {
-			switch( entry.grounded.type ) {
-				case CollidableRef::None: {
-					break;
-				}
-				case CollidableRef::Tile: {
-					assert_init( auto tile = grid[entry.grounded.index], tile );
-					auto p = grid.coordinatesFromIndex( entry.grounded.index );
-					auto tileBounds =
-					    RectWH( p.x * TileWidth, p.y * TileHeight, TileWidth, TileHeight );
-					CollisionInfo info = {};
-					if( !testAabVsAab( entry.position, entry.aab, {0, 1}, tileBounds, 1, &info )
-					    || info.t > SafetyDistance + eps || info.t < 0 ) {
-						entry.grounded.clear();
-					}
-					break;
-				}
-				case CollidableRef::Dynamic: {
-					auto other         = getDynamicFromCollidableRef( dynamics, entry.grounded );
-					CollisionInfo info = {};
-					if( !other
-					    || !testAabVsAab( entry.position, entry.aab, {0, 1},
-					                      translate( other->aab, other->position ), 1, &info )
-					    || info.t > SafetyDistance + eps || info.t < 0 ) {
-						entry.grounded.clear();
-					}
-					break;
-				}
-					InvalidDefaultCase;
-			}
-			if( !entry.grounded ) {
-				// try and find a static entry as new ground
-				auto findNewStaticGround = [&]() {
-					auto bottom = MIN( tileGridRegion.bottom + 1, mapBounds.bottom );
-					for( int32 y = tileGridRegion.top; y < bottom; ++y ) {
-						for( int32 x = tileGridRegion.left; x < tileGridRegion.right; ++x ) {
-							auto index = grid.index( x, y );
-							auto tile  = grid[index];
-							if( tile ) {
-								auto tileBounds =
-								    RectWH( x * TileWidth, y * TileHeight, TileWidth, TileHeight );
-								CollisionInfo info = {};
-								if( testAabVsAab( entry.position, entry.aab, {0, 1}, tileBounds, 1,
-								                  &info ) ) {
-									if( info.normal.y < 0 && info.t >= 0
-									    && info.t < SafetyDistance + eps ) {
-										entry.position.y += info.t - SafetyDistance;
-										entry.grounded.setTile( index );
-										return;
-									}
-								}
-							}
-						}
-					}
-				};
-				findNewStaticGround();
-			}
-			if( !entry.grounded ) {
-				// try and find a dynamic entry as new ground
-				auto findNewDynamicGround = [&]() {
-					FOR( other : dynamics ) {
-						if( &entry == &other ) {
-							continue;
-						}
-						CollisionInfo info = {};
-						if( testAabVsAab( entry.position, entry.aab, {0, 1},
-						                  translate( other.aab, other.position ), 1, &info ) ) {
-							if( info.normal.y < 0 && info.t >= 0
-							    && info.t < SafetyDistance + eps ) {
-								entry.position.y += info.t - SafetyDistance;
-								entry.grounded.setDynamic( indexof( dynamics, other ),
-								                           other.handle );
-								return;
-							}
-						}
-					}
-				};
-				findNewDynamicGround();
-			}
-
-			if( !entry.grounded ) {
-				setSpatialState( &entry, SpatialState::FallingOff );
-			}
-		}
-
-		if( entry.grounded && entry.grounded.type == CollidableRef::Dynamic ) {
-			if( auto dynamicGround = getDynamicFromCollidableRef( dynamics, entry.grounded ) ) {
-				velocity += dynamicGround->positionDelta;
-			}
-		}
-		// recalculate tileGridRegion with new velocity
-		tileGridRegion = getSweptTileGridRegion( &entry, velocity );
-
-		// remaining is the amount of "frame time" we want to move this frame, 1 == full one frame
-		// worth of movement. If entry is not alive for the whole frame, we want to move for the
-		// amount it will be alive for
-		float remaining = 1;
-		if( wasAlive ) {
-			remaining = min( 1.0f, entry.aliveCountdown.value );
-		}
-
-		entry.lastCollision.clear();
-		constexpr const auto maxIterations = 4;
-		for( auto iterations = 0; iterations < maxIterations && remaining > 0.0f; ++iterations ) {
-			auto collision = findCollision( &entry, velocity, grid, tileGridRegion, dynamics,
-			                                remaining, dynamic );
-
-			auto normal = collision.info.normal;
-			auto t      = collision.info.t;
-			if( entry.useForcedNormal() ) {
-				normal = entry.forcedNormal;
-				if( collision.info.normal.x < 0 ) {
-					normal.x = -normal.x;
-				}
-				if( collision.info.normal.y < 0 ) {
-					normal.y = -normal.y;
-				}
-			}
-			if( t > 0 ) {
-				bool processCollision = true;
-				if( isGroundBased ) {
-					// check whether we just fell off and are trying to get back on top of previous
-					// ground
-					if( entry.spatialState == SpatialState::FallingOff && !floatEqZero( velocity.x )
-					    && velocity.y > 0 ) {
-
-						// TODO: implement
-					}
-				}
-
-				if( processCollision ) {
-					entry.position += velocity * t;
-					if( collision ) {
-						entry.position += normal * SafetyDistance;
-					}
-					remaining -= t;
-				}
-			} else {
-				entry.position += collision.info.push + normal * SafetyDistance;
-			}
-
-			if( normal.y < 0 ) {
-				entry.grounded = collision.collision;
-				setSpatialState( &entry, SpatialState::Grounded );
-			}
-
-#ifdef GAME_DEBUG
-			if( entry.grounded ) {
-				debug_Values->groundPosition = entry.position.y;
-			}
-			if( !entry.grounded && velocity.y < 0 ) {
-				debug_Values->jumpHeight = entry.position.y - debug_Values->groundPosition;
-			}
-			if( normal.y < 0 ) {
-				if( debug_Values->jumpHeight < debug_Values->maxJumpHeight ) {
-					debug_Values->maxJumpHeight = debug_Values->jumpHeight;
-				}
-				debug_Values->jumpHeightError =
-				    abs( debug_Values->jumpHeight - debug_Values->lastJumpHeight );
-				debug_Values->lastJumpHeight = debug_Values->jumpHeight;
-			}
-#endif  // defined( GAME_DEBUG )
-
-			// response
-			if( collision ) {
-				entry.lastCollision = collision.collision;
-			}
-			if( entry.response == CollisionResponse::FullStop ) {
-				if( collision ) {
-					break;
-				}
-			} else if( entry.response == CollisionResponse::Bounce ) {
-				if( collision ) {
-					// reflect velocity based on the collision normal
-					entry.velocity -= entry.bounceModifier * normal * dot( normal, entry.velocity );
-					velocity -= entry.bounceModifier * normal * dot( normal, velocity );
-				}
-				if( collision && normal.x != 0 && normal.y == 0 && !entry.grounded
-				    && ( ( oldVelocity.x >= 0 ) == ( normal.x < 0 ) ) ) {
-
-					// we are wallsliding
-					setFlagCond( entry.flags, Entity::WalljumpLeft, ( normal.x < 0 ) );
-					entry.walljumpWindow = {WalljumpWindowDuration};
-					entry.wallslideCollidable = collision.collision;
-				}
-				auto lengthSquared = dot( entry.velocity, entry.velocity );
-				if( t >= 0 && ( t <= 0.000001f || lengthSquared < eps ) ) {
-					break;
-				}
-			} else {
-				InvalidCodePath();
-			}
-		}
-		if( remaining > 0.0f ) {
-			entry.position += velocity * remaining;
-		}
-		entry.positionDelta = entry.position - oldPosition;
-
-		if( !entry.walljumpWindow ) {
-			entry.wallslideCollidable.clear();
-		}
-		if( entry.grounded ) {
-			entry.walljumpWindow = {};
-			entry.wallslideCollidable.clear();
-		}
-		// check that we are upholding safety distance to collidables in velocity direction
-		if( isGroundBased ) {
-			auto wasAlreadySliding = (bool)entry.wallslideCollidable;
-			if( !floatEqZero( entry.velocity.x ) || entry.wallslideCollidable ) {
-				vec2 searchDir = {1, 0};
-				if( entry.velocity.x < 0 ) {
-					searchDir = {-1, 0};
-				}
-				if( entry.wallslideCollidable ) {
-					if( !entry.walljumpLeft() ) {
-						searchDir = {-1, 0};
-					}
-				}
-				auto region = getSweptTileGridRegion( &entry, searchDir );
-				auto collision =
-				    findCollision( &entry, searchDir, grid, region, dynamics, 1, dynamic );
-				if( !collision || collision.info.normal.y != 0 ) {
-					// clear wallsliding
-					entry.walljumpWindow = {};
-					entry.wallslideCollidable.clear();
-				} else {
-					if( !entry.grounded && wasAlreadySliding ) {
-						// reset wallsliding
-						// TODO: do we want to reset the walljump duration here?
-						// that means wallsliding will behave like a toggle (not requiring holding a
-						// button down)
-						entry.walljumpWindow = {WalljumpWindowDuration};
-						entry.wallslideCollidable = collision.collision;
-					}
-				}
-				// make sure that we are SafetyDistance away from the wall we are sliding against
-				if( collision && collision.info.t < SafetyDistance ) {
-					auto diff = SafetyDistance - collision.info.t;
-					entry.position.x += diff * collision.info.normal.x;
-					entry.velocity.x = 0;
-				}
-			}
-
-			// adjust face direction if we are wallsliding
-			if( entry.walljumpWindow ) {
-				if( entry.walljumpLeft() ) {
-					entry.faceDirection = EntityFaceDirection::Left;
-				} else {
-					entry.faceDirection = EntityFaceDirection::Right;
-				}
-			}
-		}
-	}
-
-}
-
-static void doCollisionDetection( Room* room, EntitySystem* system, float dt,
-                                  bool frameBoundary )
-{
-	using namespace GameConstants;
-	assert( room );
-
-	auto grid = room->layers[RL_Main].grid;
-
-	processCollidables( system->dynamicEntries(), grid, room->tileSet->infos, {}, true, dt,
-	                    frameBoundary );
-	processCollidables( system->staticEntries(), grid, room->tileSet->infos,
-	                    system->dynamicEntries(), false, dt, frameBoundary );
-}
+#include "Collision.cpp"
 
 static StringView detailedDebugOutput( AppData* app, char* buffer, int32 size )
 {
@@ -2439,17 +931,24 @@ void setHeroActionAnimation( SkeletonSystem* system, Entity* entity, float dt )
 
 	auto skeleton  = entity->skeleton;
 	auto animation = hero->currentAnimationIndex;
-	bool shooting  = (bool)entity->shootingAnimationTimer;
-	if( isCountdownTimerExpired( entity->animationLockTimer ) ) {
+	bool shooting  = (bool)hero->shootingAnimationTimer;
+
+	if( !entity->grounded ) {
+		hero->animationLockTimer = {};
+	}
+	hero->animationLockTimer     = processTimer( hero->animationLockTimer, dt );
+	hero->shootingAnimationTimer = processTimer( hero->shootingAnimationTimer, dt );
+
+	if( isCountdownTimerExpired( hero->animationLockTimer ) ) {
 		animation = ( shooting ) ? ids.idleShoot : ids.idle;
 		if( entity->grounded ) {
 			if( !shooting && entity->spatialStateTimer <= 10.0f ) {
 				animation = ids.landing;
 			} else {
 				if( !shooting && entity->faceDirection != entity->prevFaceDirection ) {
-					auto lock = skeleton->definition->animations[ids.turn].duration;
-					entity->animationLockTimer = {lock};
-					animation                  = ids.turn;
+					auto lock                = skeleton->definition->animations[ids.turn].duration;
+					hero->animationLockTimer = {lock};
+					animation                = ids.turn;
 				} else {
 					if( entity->velocity.x != 0 ) {
 						animation = ( shooting ) ? ids.walkShoot : ids.walk;
@@ -2510,33 +1009,110 @@ void removeEntity( GameState* game, EntityHandle handle )
 	append_unique( game->entityRemovalQueue, handle );
 }
 
-typedef void BehaviorFunctionType( GameState*, Entity* );
-void processHeroEntity( GameState* game, Entity* entity ) {}
-void processWheelsEntity( GameState* game, Entity* entity )
+typedef void BehaviorFunctionType( GameState*, Entity*, float, bool );
+void processHeroEntity( GameState* game, Entity* entity, float dt, bool frameBoundary ) {}
+void processWheelsEntity( GameState* game, Entity* entity, float dt, bool frameBoundary )
 {
-	if( ( entity->lastCollision && entity->lastCollision != entity->grounded )
-	    || floatEqZero( entity->velocity.x ) ) {
+	auto wheels      = &entity->wheels;
+	bool stateChange = false;
+	do {
+		bool stateJustChanged = stateChange;
+		stateChange           = false;
+		switch( entity->wheels.state ) {
+			case Entity::Wheels::Idle: {
+				entity->maxSpeed      = {1, 0};
+				entity->wheels.state  = Entity::Wheels::Moving;
+				entity->faceDirection = EntityFaceDirection::Right;
+				stateChange           = true;
+				break;
+			}
+			case Entity::Wheels::Moving: {
+				if( stateJustChanged ) {
+					stopAnimations( entity->skeleton );
+					wheels->currentAnimation = playAnimation(
+					    entity->skeleton, game->skeletonSystem.wheels.animationIds.move, true );
+				}
+				if( floatEqZero( entity->acceleration.x ) ) {
+					entity->acceleration.x =
+					    ( entity->faceDirection == EntityFaceDirection::Right ) ? 0.1f : -0.1f;
+				}
+				if( entity->lastCollision && entity->lastCollision != entity->grounded ) {
 
-		if( entity->faceDirection == EntityFaceDirection::Left ) {
-			entity->faceDirection = EntityFaceDirection::Right;
-			entity->velocity.x    = 1;
-		} else {
-			entity->faceDirection = EntityFaceDirection::Left;
-			entity->velocity.x    = -1;
+					entity->wheels.state = Entity::Wheels::Turning;
+					stateChange          = true;
+				}
+				wheels->attackTimer = processTimer( wheels->attackTimer, dt );
+				if( isCountdownTimerExpired( wheels->attackTimer ) ) {
+					wheels->attackTimer = {120};
+					entity->wheels.state = Entity::Wheels::Attacking;
+					stateChange          = true;
+				}
+				break;
+			}
+			case Entity::Wheels::Turning: {
+				if( stateJustChanged ) {
+					wheels->shouldTurn     = false;
+					entity->acceleration.x = 0;
+					entity->velocity.x     = 0;
+					stopAnimations( entity->skeleton );
+					wheels->currentAnimation = playAnimation(
+					    entity->skeleton, game->skeletonSystem.wheels.animationIds.turn );
+				} else if( isAnimationFinished( entity->skeleton, wheels->currentAnimation ) ) {
+					if( entity->faceDirection == EntityFaceDirection::Right ) {
+						entity->faceDirection = EntityFaceDirection::Left;
+					} else {
+						entity->faceDirection = EntityFaceDirection::Right;
+					}
+					entity->wheels.state = Entity::Wheels::Moving;
+					stateChange          = true;
+				}
+				if( !entity->grounded ) {
+					entity->wheels.state = Entity::Wheels::Moving;
+					stateChange          = true;
+				}
+				break;
+			}
+			case Entity::Wheels::Attacking: {
+				if( stateJustChanged ) {
+					entity->acceleration.x = -sign( entity->velocity.x ) * 0.02f;
+					stopAnimations( entity->skeleton );
+					wheels->currentAnimation = playAnimation(
+					    entity->skeleton, game->skeletonSystem.wheels.animationIds.attack );
+				} else if( isAnimationFinished( entity->skeleton, wheels->currentAnimation ) ) {
+					if( wheels->shouldTurn ) {
+						entity->wheels.state = Entity::Wheels::Turning;
+					} else {
+						entity->wheels.state = Entity::Wheels::Moving;
+					}
+					stateChange = true;
+				}
+				if( entity->lastCollision && entity->grounded
+				    && entity->lastCollision != entity->grounded ) {
+					entity->velocity.x     = -entity->prevVeloctiy.x;
+					entity->acceleration.x = -entity->acceleration.x;
+					wheels->shouldTurn     = true;
+				}
+				if( floatEqZero( entity->velocity.x )
+				    || signbit( entity->velocity.x ) == signbit( entity->acceleration.x ) ) {
+
+					entity->acceleration.x = 0;
+					entity->velocity.x     = 0;
+				}
+				break;
+			}
+				InvalidDefaultCase;
 		}
-		if( entity->skeleton && entity->skeleton->animations.empty() ) {
-			playAnimation( entity->skeleton, game->skeletonSystem.wheels.animationIds.move, true );
-		}
-	}
+	} while( stateChange );
 }
-void processProjectileEntity( GameState* game, Entity* entity )
+void processProjectileEntity( GameState* game, Entity* entity, float dt, bool frameBoundary )
 {
 	if( entity->lastCollision || entity->dead() ) {
+		emitParticles( &game->particleSystem, entity->position, ParticleEmitterId::SmallDissipate );
 		removeEntity( game, entity->handle );
 	}
 }
 
-void processEntityBehaviors( GameState* game )
+void processEntityBehaviors( GameState* game, float dt, bool frameBoundary )
 {
 	assert( game );
 
@@ -2548,7 +1124,7 @@ void processEntityBehaviors( GameState* game )
 
 	FOR( entry : game->entitySystem.staticEntries() ) {
 		assert( entry.type != Entity::type_none );
-		EntityBehaviors[entry.type - 1]( game, &entry );
+		EntityBehaviors[entry.type - 1]( game, &entry, dt, frameBoundary );
 	}
 }
 
@@ -2565,7 +1141,7 @@ static void doGame( AppData* app, GameInputs* inputs, bool focus, float dt, bool
 	if( !game->initialized ) {
 		auto allocator               = &app->stackAllocator;
 		game->particleSystem         = makeParticleSystem( allocator, 200 );
-		game->particleSystem.texture = app->platform.loadTexture( "Data/Images/dust.png" );
+		game->particleSystem.texture = app->platform.loadTexture( "Data/Images/particles.png" );
 		loadVoxelCollection( allocator, "Data/voxels/projectile.json", &game->projectile );
 
 		game->outlineShader =
@@ -2580,28 +1156,16 @@ static void doGame( AppData* app, GameInputs* inputs, bool focus, float dt, bool
 		game->controlSystem      = makeControlSystem( allocator, maxEntities );
 		game->entityRemovalQueue = makeUArray( allocator, EntityHandle, maxEntities );
 
-		auto addHeroEntity = [&]( vec2arg pos, bool dynamic ) {
-			auto handle      = addEntityHandle( &game->entityHandles );
-			auto entity      = addEntity( &game->entitySystem, handle, dynamic );
-			entity->aab      = {-5, 0, 5, 24};
-			entity->position = pos;
-			entity->movement = EntityMovement::Grounded;
-			entity->response = CollisionResponse::Bounce;
-			entity->type     = Entity::type_hero;
-			if( *game->skeletonSystem.hero.definition ) {
-				entity->skeleton = addSkeleton( allocator, &game->skeletonSystem,
-				                                *game->skeletonSystem.hero.definition );
-			}
-			entity->hero.currentAnimationIndex = -1;
-			entity->hero.currentAnimation      = -1;
-			entity->airFrictionCoeffictient    = 0.025f;
-			entity->collisionIndex             = game->skeletonSystem.hero.collisionIds.collision;
+		auto addHeroEntity = [&]( vec2arg pos ) {
+			auto handle = addEntityHandle( &game->entityHandles );
+			auto entity = addEntity( &game->entitySystem, &game->skeletonSystem, handle,
+			                         Entity::type_hero, pos );
 			return entity;
 		};
-		game->player = addHeroEntity( {16 * 2, 0}, false );
+		game->player = addHeroEntity( {16 * 2, 0} );
 		addControlComponent( &game->controlSystem, game->player->handle );
 
-		auto addMovingPlatform = [&]( vec2arg pos ) {
+		/*auto addMovingPlatform = [&]( vec2arg pos ) {
 			auto platform            = addHeroEntity( pos, true );
 			platform->movement       = EntityMovement::Straight;
 			platform->response       = CollisionResponse::Bounce;
@@ -2612,10 +1176,8 @@ static void doGame( AppData* app, GameInputs* inputs, bool focus, float dt, bool
 			platform->airFrictionCoeffictient = 0;
 		};
 		addMovingPlatform( {16 * 3} );
-		addMovingPlatform( {16 * 8} );
+		addMovingPlatform( {16 * 8} );*/
 
-		// auto followWidth         = app->width * 0.25f;
-		// auto followHeight        = app->height * 0.25f;
 		game->camera             = makeGameCamera( {0, -50, -200}, {0, 0, 1}, {0, 1, 0} );
 		game->cameraFollowRegion = {-25, -50, 25, 50};
 		game->useGameCamera      = true;
@@ -2654,18 +1216,9 @@ static void doGame( AppData* app, GameInputs* inputs, bool focus, float dt, bool
 			game->useGameCamera = !game->useGameCamera;
 		}
 		if( isKeyPressed( inputs, KC_1 ) ) {
-			auto handle                     = addEntityHandle( &game->entityHandles );
-			if( auto entity                     = addEntity( &game->entitySystem, handle ) ) {
-				entity->type                    = Entity::type_wheels;
-				entity->position                = {16 * 6, 16 * 8};
-				entity->gravityModifier         = 1;
-				entity->airFrictionCoeffictient = 0.025f;
-				entity->movement                = EntityMovement::Grounded;
-				entity->response                = CollisionResponse::Bounce;
-				entity->skeleton = addSkeleton( &app->stackAllocator, &game->skeletonSystem,
-				                                *game->skeletonSystem.wheels.definition );
-				entity->collisionIndex = game->skeletonSystem.wheels.collisionIds.collision;
-			}
+			auto handle = addEntityHandle( &game->entityHandles );
+			addEntity( &game->entitySystem, &game->skeletonSystem, handle, Entity::type_wheels,
+			           {16 * 6, 16 * 8} );
 		}
 	}
 
@@ -2682,9 +1235,17 @@ static void doGame( AppData* app, GameInputs* inputs, bool focus, float dt, bool
 	                      frameBoundary );
 	// update aab's
 	FOR( entity : game->entitySystem.entries ) {
-		if( entity.skeleton && entity.collisionIndex >= 0 ) {
-			setMirrored( entity.skeleton, entity.faceDirection == EntityFaceDirection::Left );
-			entity.aab = getHitboxRelative( entity.skeleton, entity.collisionIndex );
+		if( entity.skeleton ) {
+			auto traits = getEntityTraits( entity.type );
+			if( !traits->flags.noFaceDirection ) {
+				setMirrored( entity.skeleton, entity.faceDirection == EntityFaceDirection::Left );
+			}
+
+			auto skeletonTraits = getSkeletonTraits( &game->skeletonSystem, entity.type );
+			auto collisionIds = skeletonTraits->collisionIds();
+			if( collisionIds.size() ) {
+				entity.aab = getHitboxRelative( entity.skeleton, collisionIds[0] );
+			}
 		}
 	}
 	doCollisionDetection( &game->room, &game->entitySystem, dt, frameBoundary );
@@ -2693,7 +1254,6 @@ static void doGame( AppData* app, GameInputs* inputs, bool focus, float dt, bool
 	FOR( entity : game->entitySystem.entries ) {
 		if( entity.skeleton ) {
 			vec3 origin = Vec3( gameToScreen( entity.position ), 0 );
-			origin.y -= height( entity.aab );
 			setTransform( entity.skeleton, matrixTranslation( origin ) );
 			if( auto hero = query_variant( entity, hero ) ) {
 				setHeroActionAnimation( &game->skeletonSystem, &entity, dt );
@@ -2704,12 +1264,12 @@ static void doGame( AppData* app, GameInputs* inputs, bool focus, float dt, bool
 	processControlActions( game, &game->controlSystem, &game->entitySystem, &game->skeletonSystem );
 
 	processSkeletonSystem( &game->skeletonSystem, &game->particleSystem, dt );
-	processParticles( &game->particleSystem, dt );
 
 	// emitting particles
 	// TODO: factor this out into a processing function
 	FOR( entry : game->entitySystem.entries ) {
-		if( entry.movement == EntityMovement::Grounded ) {
+		auto traits = getEntityTraits( entry.type );
+		if( traits->movement == EntityMovement::Grounded ) {
 			// wallslide particles
 			if( entry.wallslideCollidable && entry.skeleton && entry.type == Entity::type_hero ) {
 				auto feetPosIndex = game->skeletonSystem.hero.nodeIds.feetPos;
@@ -2719,24 +1279,23 @@ static void doGame( AppData* app, GameInputs* inputs, bool focus, float dt, bool
 				if( !entry.walljumpLeft() ) {
 					searchDir = {-1, 0};
 				}
-				auto region         = getSweptTileGridRegion( &entry, searchDir );
-				auto oldBoundingBox = exchange( entry.aab, {-1, -1, 1, 1} );
-				auto oldPosition    = exchange( entry.position, feetPosition );
-				auto collisionAtFeet =
-				    findCollision( &entry, searchDir, game->room.layers[RL_Main].grid, region,
-				                   game->entitySystem.dynamicEntries(), 1, false );
-				entry.aab      = oldBoundingBox;
-				entry.position = oldPosition;
+				auto region = getSweptTileGridRegion( entry.aab, entry.position, searchDir );
+				auto collisionAtFeet = findCollision(
+				    {-1, -1, 1, 1}, feetPosition, searchDir, game->room.layers[RL_Main].grid,
+				    region, game->entitySystem.dynamicEntries(), 1, false );
 				if( collisionAtFeet ) {
-					entry.particleEmitTimer = processTimer( entry.particleEmitTimer, dt );
-					if( !entry.particleEmitTimer ) {
-						entry.particleEmitTimer = {6};
+					auto hero               = &entry.hero;
+					hero->particleEmitTimer = processTimer( hero->particleEmitTimer, dt );
+					if( !hero->particleEmitTimer ) {
+						hero->particleEmitTimer = {6};
 						emitParticles( &game->particleSystem, feetPosition,
 						               ParticleEmitterId::Dust );
 					}
 				}
 			} else {
-				entry.particleEmitTimer = {};
+				if( auto hero = query_variant( entry, hero ) ) {
+					hero->particleEmitTimer = {};
+				}
 			}
 
 			// landing particles
@@ -2744,14 +1303,14 @@ static void doGame( AppData* app, GameInputs* inputs, bool focus, float dt, bool
 			    && floatEqZero( entry.spatialStateTimer ) ) {
 
 				auto feetPosition = entry.position;
-				feetPosition.y += height( entry.aab );
-				auto emitted = emitParticles( &game->particleSystem, feetPosition,
+				auto emitted      = emitParticles( &game->particleSystem, feetPosition,
 				                              ParticleEmitterId::LandingDust );
 			}
 		}
 	}
 
-	processEntityBehaviors( game );
+	processParticles( &game->particleSystem, dt );
+	processEntityBehaviors( game, dt, frameBoundary );
 	processEntityRemovalQueue( game );
 
 	if( enableRender ) {
