@@ -26,6 +26,7 @@ static const char* const noLightingFragmentShaderSource = R"(
 precision highp float; // Video card drivers require this line to function properly
 
 uniform sampler2D texture0;
+uniform vec4 flashColor;
 
 in vec4 fragColor;
 in vec2 fragTexCoords0;
@@ -34,8 +35,8 @@ out vec4 outColor;
 
 void main()
 {
-	vec4 tex = texture2D( texture0, fragTexCoords0 );
-	outColor = tex * fragColor.bgra;
+	vec4 tex = texture2D( texture0, fragTexCoords0 ) * fragColor.bgra;
+	outColor = mix( tex, vec4( flashColor.rgb, tex.a * fragColor.b ), flashColor.a );
 }
 )";
 

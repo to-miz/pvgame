@@ -98,13 +98,18 @@ void writePropertyName( JsonWriter* writer, StringView name )
 		writer->builder << ' ';
 	}
 }
-template < class T >
+template < class T, class = std::enable_if< !std::is_enum< T >::value >::type >
 void writeValue( JsonWriter* writer, const T& value )
 {
 	writeComma( writer );
 	writer->isNotFirst    = true;
 	writer->isNotProperty = true;
 	writer->builder << value;
+}
+template < class T, class = std::enable_if< std::is_enum< T >::value >::type >
+void writeValue( JsonWriter* writer, T value )
+{
+	::writeValue( writer, valueof( value ) );
 }
 template< class T >
 void writeValue( JsonWriter* writer, Array< T > array )
@@ -220,4 +225,12 @@ void writeValue( JsonWriter* writer, trectarg< T > rect )
 	writeProperty( writer, "bottom", rect.bottom );
 	writeEndObject( writer );
 	writer->minimal = prev;
+}
+
+void writeValue( JsonWriter* writer, Color v )
+{
+	writeComma( writer );
+	writer->isNotFirst    = true;
+	writer->isNotProperty = true;
+	writer->builder.print( "\"{X}\"", v );
 }

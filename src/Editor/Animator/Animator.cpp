@@ -5,9 +5,11 @@ constexpr const float PropertiesColumnWidth  = 200;
 constexpr const float NamesWidth             = 100;
 constexpr const float RegionHeight           = 200;
 constexpr const float MenuHeight             = 18;
-constexpr const int32 KeyablePropertiesCount = 4;
+constexpr const int32 KeyablePropertiesCount = 5;
 
 static const vec3 AnimatorInitialRotation = {0, -0.2f, 0};
+const int16 AnimatorEventsId              = INT16_MAX - 1;
+extern const GroupId AnimatorEventsGroup;
 
 static const StringView EaseTypeNames[] = {
     "Lerp", "Step", "Smoothstep", "EaseOutBounce", "EaseOutElastic", "Curve",
@@ -245,6 +247,9 @@ int32 makeAnimatorGroup( int16 ownerId, AnimatorKeyframeData::Type type = {} )
 	assert( type >= 0 && type < 256 );
 	return ( int32 )( ( (uint32)ownerId << 8 ) | ( (uint32)type & 0xFF ) );
 }
+const GroupId AnimatorEventsGroup =
+    makeAnimatorGroup( AnimatorEventsId, AnimatorKeyframeData::type_event );
+
 AnimatorKeyframeData::Type getAnimatorGroupType( GroupId id )
 {
 	return ( AnimatorKeyframeData::Type )( (uint32)id & 0xFF );
@@ -378,27 +383,32 @@ AnimatorKeyframeData lerp( Array< AnimatorCurveData > curves, float t,
 	t = animatorKeyframeEase( curves, a.easeType, a.curveIndex, t );
 	switch( a.type ) {
 		case AnimatorKeyframeData::type_translation: {
-			result.type = AnimatorKeyframeData::type_translation;
+			result.type        = AnimatorKeyframeData::type_translation;
 			result.translation = lerp( t, a.translation, b.translation );
 			break;
 		}
 		case AnimatorKeyframeData::type_rotation: {
-			result.type = AnimatorKeyframeData::type_rotation;
+			result.type     = AnimatorKeyframeData::type_rotation;
 			result.rotation = lerp( t, a.rotation, b.rotation );
 			break;
 		}
 		case AnimatorKeyframeData::type_scale: {
-			result.type = AnimatorKeyframeData::type_scale;
+			result.type  = AnimatorKeyframeData::type_scale;
 			result.scale = lerp( t, a.scale, b.scale );
 			break;
 		}
+		case AnimatorKeyframeData::type_flashColor: {
+			result.type       = AnimatorKeyframeData::type_flashColor;
+			result.flashColor = lerp( t, a.flashColor, b.flashColor );
+			break;
+		}
 		case AnimatorKeyframeData::type_frame: {
-			result.type = AnimatorKeyframeData::type_frame;
+			result.type  = AnimatorKeyframeData::type_frame;
 			result.frame = auto_truncate( lerp( t, (float)a.frame, (float)b.frame ) );
 			break;
 		}
 		case AnimatorKeyframeData::type_active: {
-			result.type = AnimatorKeyframeData::type_active;
+			result.type   = AnimatorKeyframeData::type_active;
 			result.active = a.active;
 			break;
 		}
@@ -502,6 +512,7 @@ AnimatorNode getCurrentFrameNode( AnimatorState* animator, AnimatorNode* node, f
 	GroupId translationId = baseGroup + AnimatorKeyframeData::type_translation;
 	GroupId rotationId    = baseGroup + AnimatorKeyframeData::type_rotation;
 	GroupId scaleId       = baseGroup + AnimatorKeyframeData::type_scale;
+	GroupId flashColorId  = baseGroup + AnimatorKeyframeData::type_flashColor;
 	GroupId frameId       = baseGroup + AnimatorKeyframeData::type_frame;
 	GroupId activeId      = baseGroup + AnimatorKeyframeData::type_active;
 
@@ -509,11 +520,14 @@ AnimatorNode getCurrentFrameNode( AnimatorState* animator, AnimatorNode* node, f
 	    getInterpolatedKeyframe( animator, animator->currentFrame, translationId );
 	auto rotationKeyframe = getInterpolatedKeyframe( animator, animator->currentFrame, rotationId );
 	auto scaleKeyframe    = getInterpolatedKeyframe( animator, animator->currentFrame, scaleId );
+	auto flashColorKeyframe =
+	    getInterpolatedKeyframe( animator, animator->currentFrame, flashColorId );
 
 	result.translation =
 	    get_variant_or_default( translationKeyframe, translation, node->translation );
-	result.rotation = get_variant_or_default( rotationKeyframe, rotation, node->rotation );
-	result.scale    = get_variant_or_default( scaleKeyframe, scale, node->scale );
+	result.rotation   = get_variant_or_default( rotationKeyframe, rotation, node->rotation );
+	result.scale      = get_variant_or_default( scaleKeyframe, scale, node->scale );
+	result.flashColor = get_variant_or_default( flashColorKeyframe, flashColor, node->flashColor );
 	switch( node->assetType ) {
 		case AnimatorAsset::type_collection: {
 			auto frameKeyframe =
@@ -545,8 +559,6 @@ AnimatorNode getCurrentFrameNode( AnimatorState* animator, AnimatorNode* node, f
 		}
 	}
 
-	result.parent         = node->parent;
-	result.flags.selected = node->flags.selected;
 	return result;
 }
 AnimatorNode toAbsoluteNode( const AnimatorNode* base, const AnimatorNode* rel )
@@ -561,6 +573,8 @@ AnimatorNode toAbsoluteNode( const AnimatorNode* base, const AnimatorNode* rel )
 
 	result.voxel.animation = rel->voxel.animation;
 	result.active          = rel->active;
+	result.flashColor      = rel->flashColor;
+	result.worldFlashColor = rel->worldFlashColor;
 	result.emitter.time    = rel->emitter.time;
 	result.parent          = rel->parent;
 	result.assetId         = rel->assetId;
@@ -580,13 +594,15 @@ AnimatorNode toRelativeNode( const AnimatorNode* base, const AnimatorNode* abs )
 		result.voxel.frame = abs->voxel.frame - base->voxel.frame;
 	}
 
-	result.voxel.animation    = abs->voxel.animation;
-	result.active             = abs->active;
-	result.emitter.time       = abs->emitter.time;
-	result.parent             = abs->parent;
-	result.assetId            = abs->assetId;
-	result.asset              = abs->asset;
-	result.assetType          = abs->assetType;
+	result.voxel.animation = abs->voxel.animation;
+	result.active          = abs->active;
+	result.flashColor      = abs->flashColor;
+	result.worldFlashColor = abs->worldFlashColor;
+	result.emitter.time    = abs->emitter.time;
+	result.parent          = abs->parent;
+	result.assetId         = abs->assetId;
+	result.asset           = abs->asset;
+	result.assetType       = abs->assetType;
 	return result;
 }
 AnimatorKeyframe toAbsoluteKeyframe( const AnimatorNode* base, const AnimatorKeyframe* keyframe )
@@ -605,8 +621,11 @@ AnimatorKeyframe toAbsoluteKeyframe( const AnimatorNode* base, const AnimatorKey
 			result.data.scale = multiplyComponents( base->scale, result.data.scale );
 			break;
 		}
+		case AnimatorKeyframeData::type_flashColor: {
+			// TODO: what is the absolute value of color?
+			break;
+		}
 		case AnimatorKeyframeData::type_frame: {
-			result.data.frame += base->voxel.frame;
 			break;
 		}
 		case AnimatorKeyframeData::type_active: {
@@ -635,8 +654,11 @@ AnimatorKeyframe toRelativeKeyframe( const AnimatorNode* base, const AnimatorKey
 			result.data.scale.z = safeDivide( result.data.scale.z, base->scale.z, 1 );
 			break;
 		}
+		case AnimatorKeyframeData::type_flashColor: {
+			// TODO: what is the relative value of color?
+			break;
+		}
 		case AnimatorKeyframeData::type_frame: {
-			result.data.frame -= base->voxel.frame;
 			break;
 		}
 		case AnimatorKeyframeData::type_active: {
@@ -760,7 +782,9 @@ void freeCurveData( AnimatorState* animator, AnimatorKeyframe* keyframe )
 void setKeyframeEaseType( AnimatorState* animator, AnimatorKeyframe* keyframe,
                           AnimatorKeyframeData::EaseType type )
 {
-	if( keyframe->data.easeType != type ) {
+	if( keyframe->data.type != AnimatorKeyframeData::type_event
+	    && keyframe->data.easeType != type ) {
+
 		if( keyframe->data.easeType == AnimatorKeyframeData::Curve ) {
 			freeCurveData( animator, keyframe );
 		} else if( type == AnimatorKeyframeData::Curve ) {
@@ -942,15 +966,22 @@ void openAnimation( AnimatorState* animator, AnimatorAnimation* animation )
 	sortNodes( animator );
 	clearSelectedNodes( animator );
 
+	// events group
+	animator->groups.push_back( {animator->fieldNames[6], AnimatorEventsGroup, 0} );
+
 	populateVisibleGroups( animator );
 
 	animator->keyframes.end();
 	animator->keyframes.reserve( animation->keyframes.size() );
 	FOR( keyframe : animation->keyframes ) {
-		auto base = findNodeById( animator->nodes, getAnimatorKeyframeOwner( keyframe.group ) );
-		assert( base );
-		animator->keyframes.push_back(
-		    std::make_unique< AnimatorKeyframe >( toAbsoluteKeyframe( base, &keyframe ) ) );
+		if( keyframe.data.type != AnimatorKeyframeData::type_event ) {
+			auto base = findNodeById( animator->nodes, getAnimatorKeyframeOwner( keyframe.group ) );
+			assert( base );
+			animator->keyframes.push_back(
+			    std::make_unique< AnimatorKeyframe >( toAbsoluteKeyframe( base, &keyframe ) ) );
+		} else {
+			animator->keyframes.push_back( std::make_unique< AnimatorKeyframe >( keyframe ) );
+		}
 	}
 	sortKeyframes( animator );
 
@@ -980,9 +1011,13 @@ void commitAnimation( AnimatorState* animator )
 
 	animation->keyframes.resize( animator->keyframes.size() );
 	zip_for( animation->keyframes, animator->keyframes ) {
-		auto base = find_first_where(
-		    animator->nodes, entry->id == getAnimatorKeyframeOwner( second->get()->group ) );
-		*first = toRelativeKeyframe( base->get(), second->get() );
+		if( second->get()->data.type != AnimatorKeyframeData::type_event ) {
+			auto base = find_first_where(
+			    animator->nodes, entry->id == getAnimatorKeyframeOwner( second->get()->group ) );
+			*first = toRelativeKeyframe( base->get(), second->get() );
+		} else {
+			*first = *second->get();
+		}
 	}
 	animation->curves = animator->curves;
 }
@@ -1218,7 +1253,11 @@ void animatorSave( StackAllocator* allocator, AnimatorState* animator, StringVie
 						writeProperty( writer, "value", keyframe.data.active );
 						break;
 					}
-						InvalidDefaultCase;
+					case AnimatorKeyframeData::type_flashColor: {
+						writeProperty( writer, "value", keyframe.data.flashColor );
+						break;
+					}
+					InvalidDefaultCase;
 				}
 				writeEndObject( writer );
 				writer->minimal = false;
@@ -1363,9 +1402,9 @@ void animatorSave( StackAllocator* allocator, AnimatorState* animator, StringVie
 
 			        writePropertyName( writer, "keyframes" );
 			        writeStartArray( writer );
+			        auto keyframes = makeArrayView( animation.keyframes );
+			        auto curves    = makeArrayView( animation.curves );
 			        FOR( node : animation.nodes ) {
-				        auto keyframes = makeArrayView( animation.keyframes );
-				        auto curves    = makeArrayView( animation.curves );
 
 				        writeStartObject( writer );
 				        writeProperty( writer, "id", node.id );
@@ -1378,6 +1417,9 @@ void animatorSave( StackAllocator* allocator, AnimatorState* animator, StringVie
 
 				        writeKeyframes( writer, keyframes, curves, "scale",
 				                        group + AnimatorKeyframeData::type_scale );
+
+				        writeKeyframes( writer, keyframes, curves, "flashColor",
+				                        group + AnimatorKeyframeData::type_flashColor );
 
 				        switch( node.assetType ) {
 				        	case AnimatorAsset::type_none: {
@@ -1401,6 +1443,22 @@ void animatorSave( StackAllocator* allocator, AnimatorState* animator, StringVie
 				        writeEndObject( writer );
 			        }
 			        writeEndArray( writer );
+
+			        writePropertyName( writer, "events" );
+			        writeStartArray( writer );
+			        	FOR( keyframe : keyframes ) {
+			        		if( keyframe.group == AnimatorEventsGroup ) {
+			        			writeStartObject( writer );
+								writer->minimal = true;
+			        				writeProperty( writer, "t", keyframe.t );
+					                writeProperty( writer, "value",
+					                               to_string( keyframe.data.event ) );
+				                writeEndObject( writer );
+								writer->minimal = false;
+			        		}
+			        	}
+			        writeEndArray( writer );
+
 		        writeEndObject( writer );
 			}
 		writeEndArray( writer );
@@ -1436,6 +1494,7 @@ void animatorSave( StackAllocator* allocator, AnimatorState* animator, StringVie
 struct translation_tag {};
 struct rotation_tag {};
 struct scale_tag {};
+struct flashColor_tag {};
 struct frame_tag {};
 struct active_tag {};
 
@@ -1453,6 +1512,11 @@ vec3& getValue( AnimatorKeyframeData& data, scale_tag )
 {
 	data.type = AnimatorKeyframeData::type_scale;
 	return data.scale;
+}
+Color& getValue( AnimatorKeyframeData& data, flashColor_tag )
+{
+	data.type = AnimatorKeyframeData::type_flashColor;
+	return data.flashColor;
 }
 int8& getValue( AnimatorKeyframeData& data, frame_tag )
 {
@@ -1697,6 +1761,9 @@ bool animatorOpen( StackAllocator* allocator, AnimatorState* animator, StringVie
 					loadKeyframes( keyframes["scale"].getObjectArray(),
 					               group + AnimatorKeyframeData::type_scale, scale_tag{},
 					               &added->keyframes, &added->curves );
+					loadKeyframes( keyframes["flashColor"].getObjectArray(),
+					               group + AnimatorKeyframeData::type_flashColor, flashColor_tag{},
+					               &added->keyframes, &added->curves );
 					loadKeyframes( keyframes["frame"].getObjectArray(),
 					               group + AnimatorKeyframeData::type_frame, frame_tag{},
 					               &added->keyframes, &added->curves );
@@ -1707,6 +1774,16 @@ bool animatorOpen( StackAllocator* allocator, AnimatorState* animator, StringVie
 					LOG( ERROR, "{}: No node found with id {}", filename, id );
 					return false;
 				}
+			}
+
+			// events
+			FOR( event : animation["events"].getObjectArray() ) {
+				added->keyframes.emplace_back( AnimatorKeyframe{} );
+				auto keyframe   = &added->keyframes.back();
+				keyframe->group = AnimatorEventsGroup;
+				deserialize( event["t"], keyframe->t );
+				set_variant( keyframe->data, event ) =
+				    auto_from_string( event["value"].getString() );
 			}
 		}
 
@@ -1804,10 +1881,12 @@ bool animatorOpen( StackAllocator* allocator, AnimatorState* animator, StringVie
 #if GAME_DEBUG
 			// check whether all keyframes point to valid nodes
 			FOR( keyframe : animation.keyframes ) {
-				auto id = getAnimatorKeyframeOwner( keyframe.group );
-				if( !find_first_where( ids, entry == id ) ) {
-					LOG( ERROR, "{}: Invalid keyframe, no parent", filename );
-					return false;
+				if( keyframe.data.type != AnimatorKeyframeData::type_event ) {
+					auto id = getAnimatorKeyframeOwner( keyframe.group );
+					if( !find_first_where( ids, entry == id ) ) {
+						LOG( ERROR, "{}: Invalid keyframe, no parent", filename );
+						return false;
+					}
 				}
 			}
 #endif
@@ -2781,6 +2860,9 @@ void doAnimatorMenu( AppData* app, GameInputs* inputs, rectfarg rect )
 					group->name = node.name;
 				}
 			}
+			if( imguiEditbox( "Flash Color", &node.flashColor ) ) {
+				setUnsavedChanges( animator );
+			}
 			if( imguiEditbox( "Length", &node.length ) ) {
 				setUnsavedChanges( animator );
 			}
@@ -3051,11 +3133,10 @@ void doAnimatorMenu( AppData* app, GameInputs* inputs, rectfarg rect )
 			imguiEndDropGroup();
 		}
 	}
-	if( animator->currentAnimation && editor->clickedNode
+	if( animator->currentAnimation
 	    && imguiBeginDropGroup( "Keying", &editor->expandedFlags, AnimatorEditor::Keying ) ) {
 
 		auto node    = editor->clickedNode;
-		auto current = getCurrentFrameNode( animator, editor->clickedNode );
 
 		auto compareVector = []( vec3arg a, vec3arg b ) {
 			return floatEqSoft( a.x, b.x ) && floatEqSoft( a.y, b.y ) && floatEqSoft( a.z, b.z );
@@ -3065,45 +3146,70 @@ void doAnimatorMenu( AppData* app, GameInputs* inputs, rectfarg rect )
 		StringView scale       = "Scale*";
 		StringView frame       = "Frame*";
 		StringView active      = "Active*";
+		StringView flashColor  = "Flash Color*";
 
-		if( compareVector( current.translation, node->translation ) ) {
-			translation.pop_back();
+		if( node ) {
+			auto current = getCurrentFrameNode( animator, editor->clickedNode );
+			if( compareVector( current.translation, node->translation ) ) {
+				translation.pop_back();
+			}
+			if( compareVector( current.rotation, node->rotation ) ) {
+				rotation.pop_back();
+			}
+			if( compareVector( current.scale, node->scale ) ) {
+				scale.pop_back();
+			}
+			if( current.voxel.frame == node->voxel.frame ) {
+				frame.pop_back();
+			}
+			if( current.active == node->active ) {
+				active.pop_back();
+			}
+			if( current.flashColor == node->flashColor ) {
+				flashColor.pop_back();
+			}
 		}
-		if( compareVector( current.rotation, node->rotation ) ) {
-			rotation.pop_back();
-		}
-		if( compareVector( current.scale, node->scale ) ) {
-			scale.pop_back();
-		}
-		if( current.voxel.frame == node->voxel.frame ) {
-			frame.pop_back();
-		}
-		if( current.active == node->active ) {
-			active.pop_back();
-		}
+		imguiSameLine( 2 );
 		if( imguiButton( translation ) ) {
-			AnimatorKeyframe key = {};
-			key.t                = animator->currentFrame;
-			key.group = makeAnimatorGroup( node->id, AnimatorKeyframeData::type_translation );
-			set_variant( key.data, translation ) = node->translation;
-			addKeyframe( animator, key );
+			if( node ) {
+				AnimatorKeyframe key = {};
+				key.t                = animator->currentFrame;
+				key.group = makeAnimatorGroup( node->id, AnimatorKeyframeData::type_translation );
+				set_variant( key.data, translation ) = node->translation;
+				addKeyframe( animator, key );
+			}
 		}
 		if( imguiButton( rotation ) ) {
-			AnimatorKeyframe key = {};
-			key.t                = animator->currentFrame;
-			key.group = makeAnimatorGroup( node->id, AnimatorKeyframeData::type_rotation );
-			set_variant( key.data, rotation ) = node->rotation;
-			addKeyframe( animator, key );
+			if( node ) {
+				AnimatorKeyframe key = {};
+				key.t                = animator->currentFrame;
+				key.group = makeAnimatorGroup( node->id, AnimatorKeyframeData::type_rotation );
+				set_variant( key.data, rotation ) = node->rotation;
+				addKeyframe( animator, key );
+			}
 		}
+		imguiSameLine( 2 );
 		if( imguiButton( scale ) ) {
-			AnimatorKeyframe key = {};
-			key.t                = animator->currentFrame;
-			key.group            = makeAnimatorGroup( node->id, AnimatorKeyframeData::type_scale );
-			set_variant( key.data, scale ) = node->scale;
-			addKeyframe( animator, key );
+			if( node ) {
+				AnimatorKeyframe key = {};
+				key.t                = animator->currentFrame;
+				key.group            = makeAnimatorGroup( node->id, AnimatorKeyframeData::type_scale );
+				set_variant( key.data, scale ) = node->scale;
+				addKeyframe( animator, key );
+			}
 		}
+		if( imguiButton( flashColor ) ) {
+			if( node ) {
+				AnimatorKeyframe key = {};
+				key.t                = animator->currentFrame;
+				key.group = makeAnimatorGroup( node->id, AnimatorKeyframeData::type_flashColor );
+				set_variant( key.data, flashColor ) = node->flashColor;
+				addKeyframe( animator, key );
+			}
+		}
+		imguiSameLine( 2 );
 		if( imguiButton( frame ) ) {
-			if( node->assetType == AnimatorAsset::type_collection ) {
+			if( node && node->assetType == AnimatorAsset::type_collection ) {
 				AnimatorKeyframe key = {};
 				key.t                = animator->currentFrame;
 				key.group = makeAnimatorGroup( node->id, AnimatorKeyframeData::type_frame );
@@ -3112,15 +3218,21 @@ void doAnimatorMenu( AppData* app, GameInputs* inputs, rectfarg rect )
 			}
 		}
 		if( imguiButton( active ) ) {
-			if( isHitboxType( node->assetType )
-			    || node->assetType == AnimatorAsset::type_emitter ) {
-
+			if( node && ( isHitboxType( node->assetType )
+			              || node->assetType == AnimatorAsset::type_emitter ) ) {
 				AnimatorKeyframe key = {};
 				key.t                = animator->currentFrame;
 				key.group = makeAnimatorGroup( node->id, AnimatorKeyframeData::type_active );
 				set_variant( key.data, active ) = (bool)node->active;
 				addKeyframe( animator, key );
 			}
+		}
+		if( imguiButton( "Event Attack" ) ) {
+			AnimatorKeyframe key = {};
+			key.t                = animator->currentFrame;
+			key.group            = AnimatorEventsGroup;
+			set_variant( key.data, event ) = SkeletonEventType::Attack;
+			addKeyframe( animator, key );
 		}
 
 		imguiEndDropGroup();
@@ -3404,9 +3516,11 @@ void animatorUpdateAndRenderNodes( RenderCommands* renderer, AnimatorState* anim
 		auto local = matrixScale( node->scale ) * matrixRotation( node->rotation )
 		             * matrixTranslation( node->translation );
 		if( node->parent ) {
-			node->base = local * node->parent->world;
+			node->base            = local * node->parent->world;
+			node->worldFlashColor = node->parent->worldFlashColor.bits | node->flashColor.bits;
 		} else {
-			node->base = local;
+			node->base            = local;
+			node->worldFlashColor = node->flashColor;
 		}
 		node->world = matrixTranslation( node->length, 0, 0 ) * node->base;
 	}
@@ -3427,10 +3541,12 @@ void animatorUpdateAndRenderNodes( RenderCommands* renderer, AnimatorState* anim
 				auto entry = &voxels->frames[range.min + ( node->voxel.frame % width( range ) )];
 				currentMatrix( stack ) =
 				    matrixTranslation( Vec3( -entry->offset.x, entry->offset.y, 0 ) ) * node->world;
+			    renderer->flashColor = node->worldFlashColor;
 				addRenderCommandMesh( renderer, entry->mesh );
 			}
 		}
 	}
+    renderer->flashColor = 0;
 	setRenderState( renderer, RenderStateType::BackFaceCulling, true );
 	popMatrix( stack );
 
@@ -3990,8 +4106,10 @@ void doAnimator( AppData* app, GameInputs* inputs, bool focus, float dt )
 		animator->fieldNames[0] = pushString( &animator->stringPool, "Translation" );
 		animator->fieldNames[1] = pushString( &animator->stringPool, "Rotation" );
 		animator->fieldNames[2] = pushString( &animator->stringPool, "Scale" );
-		animator->fieldNames[3] = pushString( &animator->stringPool, "Frame" );
-		animator->fieldNames[4] = pushString( &animator->stringPool, "Active" );
+		animator->fieldNames[3] = pushString( &animator->stringPool, "Flash Color" );
+		animator->fieldNames[4] = pushString( &animator->stringPool, "Frame" );
+		animator->fieldNames[5] = pushString( &animator->stringPool, "Active" );
+		animator->fieldNames[6] = pushString( &animator->stringPool, "Events" );
 
 		animator->editor.view.rotation = AnimatorInitialRotation;
 		animator->editor.view.scale    = 1;

@@ -2,6 +2,7 @@ struct SkeletonTransform {
 	vec3 translation;
 	vec3 rotation;
 	vec3 scale;
+	Color flashColor;
 	float length;
 	int16 parent;
 	int16 id;
@@ -38,6 +39,7 @@ struct SkeletonKeyframesState {
 	int16 translation;
 	int16 rotation;
 	int16 scale;
+	int16 flashColor;
 	int16 custom;
 };
 struct SkeletonAnimationState {
@@ -47,14 +49,21 @@ struct SkeletonAnimationState {
 	};
 	int16 animationIndex;
 	uint16 flags;
+	float prevFrame;
 	float currentFrame;
 	float blendFactor;
 	Array< SkeletonKeyframesState > keyframeStates;
+	int16 prevEvent;
+	int16 event;
+};
+struct SkeletonWorldTransform {
+	mat4 transform;
+	Color flashColor;
 };
 struct SkeletonDefinition;
 struct Skeleton {
 	Array< SkeletonTransform > transforms;
-	Array< mat4 > worldTransforms;
+	Array< SkeletonWorldTransform > worldTransforms;
 	Array< SkeletonVoxelVisuals > visuals;
 	Array< SkeletonEmitterState > emitters;
 	Array< const VoxelCollection* > voxels;
@@ -66,7 +75,7 @@ struct Skeleton {
 	bool8 mirrored;
 	const SkeletonDefinition* definition;
 
-	mat4 rootTransform;
+	SkeletonWorldTransform rootTransform;
 };
 void setTransform( Skeleton* skeleton, mat4arg transform );
 void setMirrored( Skeleton* skeleton, bool mirrored );
@@ -88,10 +97,15 @@ struct SkeletonKeyframe {
 	SkeletonEaseType easeType;
 	int16 curveIndex;
 };
+struct SkeletonEvent {
+	float t;
+	SkeletonEventType type;
+};
 struct SkeleonKeyframes {
 	Array< SkeletonKeyframe< vec3 > > translation;
 	Array< SkeletonKeyframe< vec3 > > rotation;
 	Array< SkeletonKeyframe< vec3 > > scale;
+	Array< SkeletonKeyframe< Color > > flashColor;
 	Array< SkeletonKeyframe< int8 > > frame;
 	Array< SkeletonKeyframe< bool8 > > active;
 	int16 id;
@@ -103,6 +117,7 @@ struct SkeletonAnimation {
 	Array< SkeletonEmitterState > emitters;
 	Array< SkeletonHitboxState > hitboxes;
 	Array< SkeleonKeyframes > keyframes;
+	Array< SkeletonEvent > events;
 	Array< BezierForwardDifferencerData > curves;
 	float duration;
 };
@@ -160,6 +175,8 @@ struct HeroSkeletonDefinition {
 		int8 jumpRisingShoot;
 		int8 jumpFallingShoot;
 		int8 wallslideShoot;
+
+		int8 hurt;
 	} animationIds;
 
 	struct {
@@ -170,6 +187,10 @@ struct HeroSkeletonDefinition {
 	struct {
 		int8 collision;
 	} collisionIds;
+
+	struct {
+		int8 hurtbox;
+	} hurtboxIds;
 };
 const StringView HeroAnimationNames[] = {
     "Turn",
@@ -186,12 +207,17 @@ const StringView HeroAnimationNames[] = {
     "JumpRisingShoot",
     "JumpFallingShoot",
     "WallslideShoot",
+
+    "hurt"
 };
 const StringView HeroNodeNames[] = {
     "shoot_pos", "feet_pos",
 };
 const StringView HeroCollisionNames[] = {
     "collision",
+};
+const StringView HeroHurtboxNames[] = {
+    "hurtbox",
 };
 
 struct WheelsSkeletonDefinition {
@@ -205,6 +231,10 @@ struct WheelsSkeletonDefinition {
 	} animationIds;
 
 	struct {
+		int8 attackOrigin;
+	} nodeIds;
+
+	struct {
 		int8 collision;
 	} collisionIds;
 
@@ -214,6 +244,9 @@ struct WheelsSkeletonDefinition {
 };
 const StringView WheelsAnimationNames[] = {
     "move", "attack", "hurt", "turn",
+};
+const StringView WheelsNodeNames[] = {
+    "attack_origin",
 };
 const StringView WheelsCollisionNames[] = {
     "root",

@@ -57,6 +57,8 @@ tmp_size_t snprint( char* buffer, tmp_size_t len, const PrintFormat& initialForm
                     const rectf& value );
 tmp_size_t snprint( char* buffer, tmp_size_t len, const PrintFormat& initialFormatting,
                     const aabb& value );
+tmp_size_t snprint( char* buffer, tmp_size_t len, const PrintFormat& initialFormatting,
+                    const Color& value );
 
 #define TMP_NO_INCLUDE_TM_CONVERSION
 #define TMP_STRING_VIEW StringView
@@ -93,6 +95,11 @@ tmp_size_t snprint( char* buffer, tmp_size_t len, const PrintFormat& initialForm
 {
 	return ::snprint( buffer, len, "{{{}, {}, {}, {}, {}, {}}", initialFormatting, value.min.x,
 	                  value.min.y, value.min.z, value.max.x, value.max.y, value.max.z );
+}
+tmp_size_t snprint( char* buffer, tmp_size_t len, const PrintFormat& initialFormatting,
+                    const Color& value )
+{
+	return ::snprint( buffer, len, "{X}", initialFormatting, value.bits );
 }
 
 int32 widen32( char x ) { return x; }
@@ -296,6 +303,12 @@ template <> rectf convert_to< rectf >( StringView str, rectf def )
 {
 	auto result = def;
 	scan_values( str, makeArrayView( result.elements ) );
+	return result;
+}
+template <> Color convert_to< Color >( StringView str, Color def )
+{
+	auto result = def;
+	scan( str, 16, &result.bits );
 	return result;
 }
 

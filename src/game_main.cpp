@@ -52,9 +52,11 @@
 #include "Core/Range.h"
 
 #include "Core/ArrayView.cpp"
+#include "Core/Ring.h"
 #include "Core/StringView.cpp"
 #include "Core/String.cpp"
 #include "Core/Unicode.cpp"
+#include "Core/Color.cpp"
 #include "tm_conversion_wrapper.cpp"
 #include "tm_bin_packing_wrapper.cpp"
 
@@ -62,7 +64,6 @@
 
 #include "easing.cpp"
 
-#include "Core/Color.cpp"
 #include "Core/Normal.cpp"
 #include "ImageData.h"
 
@@ -198,10 +199,10 @@ GameSettings makeDefaultGameSettings()
 struct CountdownTimer {
 	float value;
 
-	inline explicit operator bool() const { return value > 0; }
+	inline explicit operator bool() const { return value >= Float::BigEpsilon; }
 };
 bool isCountdownTimerExpired( CountdownTimer timer ) { return timer.value < Float::BigEpsilon; }
-bool isCountdownActive( CountdownTimer timer ) { return timer.value > 0; }
+bool isCountdownActive( CountdownTimer timer ) { return timer.value >= Float::BigEpsilon; }
 CountdownTimer processTimer( CountdownTimer timer, float dt )
 {
 	CountdownTimer result = timer;
@@ -218,8 +219,7 @@ struct ControlComponent {
 	EntityHandle entity;
 
 	CountdownTimer jumpInputBuffer;
-	CountdownTimer shootInputBuffer;
-	bool shoot;
+	CountdownTimer attackInputBuffer;
 };
 struct ControlSystem {
 	UArray< ControlComponent > entries;
@@ -291,17 +291,71 @@ enum class AppFocus { Game, Voxel, TexturePack, Animator, Easing };
 
 #include "PhysicsHitTest.cpp"
 
+enum class SkeletonEventType : int8 {
+	None,
+	Attack,
+};
+StringView to_string( SkeletonEventType type )
+{
+	static const StringView Names[] = {
+		"None", "Attack"
+	};
+	assert( valueof( type ) >= 0 && valueof( type ) < countof( Names ) );
+	return Names[valueof( type )];
+}
+template <>
+SkeletonEventType convert_to< SkeletonEventType >( StringView str, SkeletonEventType def )
+{
+	auto result = def;
+	if( str.size() ) {
+		switch( str[0] ) {
+			case 'n':
+			case 'N': {
+				result = SkeletonEventType::None;
+				break;
+			}
+			case 'a':
+			case 'A': {
+				result = SkeletonEventType::Attack;
+				break;
+			}
+		}
+	}
+	return result;
+}
+
 #include "Editor/TexturePack/TexturePack.h"
 #include "Editor/Animator/Animator.h"
 
 #include "Skeleton.h"
 #include "Skeleton.cpp"
 
+struct HitboxSystem {
+	struct HitboxPair {
+		EntityHandle attacker;
+		EntityHandle defender;
+	};
+	HitboxPair pairsData[20];
+	int8 pairsCount;
+
+	UArray< HitboxPair > hitboxPairs()
+	{
+		return makeInitializedArrayView( pairsData, pairsCount, countof( pairsData ) );
+	};
+
+	void setPairsCount( int32 size )
+	{
+		assert( size >= 0 && size <= countof( pairsData ) );
+		pairsCount = auto_truncate( size );
+	}
+};
+
 struct GameState {
 	TileSet tileSet;
 	ParticleSystem particleSystem;
 	SkeletonSystem skeletonSystem;
 	VoxelCollection projectile;
+	HitboxSystem hitboxSystem;
 
 	HandleManager entityHandles;
 	EntitySystem entitySystem;
@@ -328,17 +382,18 @@ struct GameState {
 	ShaderId outlineShader;
 };
 
-bool emitProjectile( GameState* game, vec2arg origin, vec2arg velocity )
+bool emitProjectile( GameState* game, vec2arg origin, vec2arg velocity, EntityTeam team )
 {
 	// TODO: emit different types of projectiles based on upgrades
 	auto projectileId = addEntityHandle( &game->entityHandles );
 	auto projectile   = addEntity( &game->entitySystem, &game->skeletonSystem, projectileId,
-	                               Entity::type_projectile );
+	                             Entity::type_projectile );
 	if( projectile ) {
 		projectile->position       = origin;
 		projectile->velocity       = velocity;
 		projectile->aab            = {-3, -3, 3, 3};
 		projectile->aliveCountdown = {60};
+		projectile->team           = team;
 		return true;
 	}
 	return false;
@@ -352,102 +407,51 @@ void processControlSystem( GameState* game, ControlSystem* controlSystem,
 	assert( entitySystem );
 	assert( inputs );
 
-	using namespace GameConstants;
-
 	for( auto& control : controlSystem->entries ) {
-		control.shoot = false;
 		if( auto entity = findEntity( entitySystem, control.entity ) ) {
-			entity->velocity.x = 0;
+			auto entityControl = &entity->control;
 			// TODO: do keymapping to actions
-			if( isKeyDown( inputs, KC_Left ) ) {
-				if( isCountdownTimerExpired( entity->walljumpDuration )
-				    || entity->walljumpLeft() ) {
+			// TODO: input buffering
 
-					entity->velocity.x = -MovementSpeed;
-					if( entity->walljumpWindow ) {
-						entity->faceDirection = EntityFaceDirection::Right;
-					} else {
-						entity->faceDirection = EntityFaceDirection::Left;
-					}
-				}
+			entityControl->horizontal = EntityHorizontalMovement::None;
+			if( isKeyDown( inputs, KC_Left ) ) {
+				entityControl->horizontal = EntityHorizontalMovement::Left;
 			}
 			if( isKeyDown( inputs, KC_Right ) ) {
-				if( isCountdownTimerExpired( entity->walljumpDuration )
-				    || !entity->walljumpLeft() ) {
-
-					entity->velocity.x = MovementSpeed;
-					if( !entity->walljumpWindow ) {
-						entity->faceDirection = EntityFaceDirection::Right;
-					} else {
-						entity->faceDirection = EntityFaceDirection::Left;
-					}
-				}
+				entityControl->horizontal = EntityHorizontalMovement::Right;
 			}
-			if( isKeyPressed( inputs, KC_Up ) && !entity->grounded ) {
+
+			// break_if( isKeyPressed( inputs, KC_Up ) );
+			auto jumpDown = isKeyDown( inputs, KC_Up );
+			if( !jumpDown || entityControl->verticalAction == EntityVerticalAction::ConsumeInput ) {
+				control.jumpInputBuffer = {};
+			}
+			if( isKeyPressed( inputs, KC_Up ) ) {
 				control.jumpInputBuffer = {4};
 			}
-			// TODO: input buffering
-			auto jumpDown = isKeyDown( inputs, KC_Up );
-			if( entity->spatialState == SpatialState::Airborne && jumpDown
-			    && entity->velocity.y < 0 ) {
-			} else {
-				if( entity->velocity.y < 0 ) {
-					entity->velocity.y = 0;
+			if( isKeyPressed( inputs, KC_Space ) ) {
+				control.attackInputBuffer = {1};
+			}
+
+			entityControl->action = EntityActionState::None;
+			if( frameBoundary ) {
+				if( control.jumpInputBuffer ) {
+					entityControl->verticalAction = EntityVerticalAction::Jump;
 				}
-			}
-			if( frameBoundary && jumpDown && isSpatialStateJumpable( entity ) ) {
-				entity->velocity.y = JumpingSpeed;
-				setSpatialState( entity, SpatialState::Airborne );
-			}
-			// walljump
-			if( frameBoundary && control.jumpInputBuffer && isSpatialStateWalljumpable( entity )
-			    && entity->walljumpWindow ) {
+				if( !jumpDown ) {
+					entityControl->vertical       = EntityVerticalMovement::None;
+					entityControl->verticalAction = EntityVerticalAction::None;
+				} else {
+					entityControl->vertical = EntityVerticalMovement::Jump;
+				}
 
-				entity->walljumpWindow = {};
-				entity->wallslideCollidable.clear();
-				entity->velocity.y       = WalljumpingSpeed;
-				entity->walljumpDuration = {WalljumpMaxDuration};
-				// LOG( INFORMATION, "Walljump attempted" );
-			}
-
-			// shooting
-			if( isKeyPressed( inputs, KC_Space ) && canEntityShoot( entity ) ) {
-				control.shootInputBuffer = {1};
-			}
-			if( control.shootInputBuffer && frameBoundary ) {
-				// consume input
-				control.shootInputBuffer = {};
-				control.shoot            = true;
+				if( control.attackInputBuffer ) {
+					entityControl->action = EntityActionState::Attack;
+				}
 			}
 		}
-		control.jumpInputBuffer  = processTimer( control.jumpInputBuffer, dt );
-		control.shootInputBuffer = processTimer( control.shootInputBuffer, dt );
-	}
-}
-void processControlActions( GameState* game, ControlSystem* controlSystem,
-                            EntitySystem* entitySystem, SkeletonSystem* skeletonSystem )
-{
-	FOR( control : controlSystem->entries ) {
-		if( control.shoot ) {
-			auto entity        = findEntity( entitySystem, control.entity );
-			Entity::Hero* hero = nullptr;
-			if( entity && entity->skeleton
-			    && ( hero = query_variant( *entity, hero ) ) != nullptr ) {
-
-				hero->shootingAnimationTimer = {20};
-				auto shootPosIndex           = skeletonSystem->hero.nodeIds.shootPos;
-				auto gunPosition             = getNode( entity->skeleton, shootPosIndex ).xy;
-				gunPosition.y                = -gunPosition.y;
-				vec2 velocity                = {3, 0};
-				if( entity->faceDirection == EntityFaceDirection::Left ) {
-					velocity.x = -velocity.x;
-				}
-				if( !emitProjectile( game, gunPosition, velocity ) ) {
-					hero->shootingAnimationTimer = {};
-				}
-			}
-			control.shoot = false;
-		}
+		control.jumpInputBuffer   = processTimer( control.jumpInputBuffer, dt );
+		control.attackInputBuffer = processTimer( control.attackInputBuffer, dt );
 	}
 }
 
@@ -946,7 +950,7 @@ void setHeroActionAnimation( SkeletonSystem* system, Entity* entity, float dt )
 				animation = ids.landing;
 			} else {
 				if( !shooting && entity->faceDirection != entity->prevFaceDirection ) {
-					auto lock                = skeleton->definition->animations[ids.turn].duration;
+					auto lock = skeleton->definition->animations[ids.turn].duration;
 					hero->animationLockTimer = {lock};
 					animation                = ids.turn;
 				} else {
@@ -994,6 +998,16 @@ void removeEntities( EntitySystem* system, Array< EntityHandle > handles )
 		return false;
 	} );
 }
+void removeEntities( HitboxSystem* system, Array< EntityHandle > handles )
+{
+	auto pairs = system->hitboxPairs();
+	erase_if( pairs, [handles]( const auto& pair ) {
+		return exists_if( handles, [pair]( const auto& handle ) {
+			return handle == pair.attacker || handle == pair.defender;
+		} );
+	} );
+	system->setPairsCount( pairs.size() );
+}
 void processEntityRemovalQueue( GameState* game )
 {
 	assert( game );
@@ -1001,6 +1015,7 @@ void processEntityRemovalQueue( GameState* game )
 		auto handles = makeArrayView( game->entityRemovalQueue );
 		removeEntities( &game->controlSystem, handles );
 		removeEntities( &game->entitySystem, handles );
+		removeEntities( &game->hitboxSystem, handles );
 		game->entityRemovalQueue.clear();
 	}
 }
@@ -1009,12 +1024,194 @@ void removeEntity( GameState* game, EntityHandle handle )
 	append_unique( game->entityRemovalQueue, handle );
 }
 
+void emitEntityParticles( GameState* game, float dt )
+{
+	FOR( entry : game->entitySystem.entries ) {
+		auto traits = getEntityTraits( entry.type );
+		if( traits->movement == EntityMovement::Grounded ) {
+			// wallslide particles
+			if( entry.wallslideCollidable && entry.skeleton && entry.type == Entity::type_hero ) {
+				auto feetPosIndex = game->skeletonSystem.hero.nodeIds.feetPos;
+				auto feetPosition = getNode( entry.skeleton, feetPosIndex ).xy;
+				feetPosition.y    = -feetPosition.y;
+				vec2 searchDir = {1, 0};
+				if( !entry.walljumpLeft() ) {
+					searchDir = {-1, 0};
+				}
+				auto region = getSweptTileGridRegion( entry.aab, entry.position, searchDir );
+				auto collisionAtFeet = findCollision(
+				    {-1, -1, 1, 1}, feetPosition, searchDir, game->room.layers[RL_Main].grid,
+				    region, game->entitySystem.dynamicEntries(), 1, false );
+				if( collisionAtFeet ) {
+					auto hero               = &entry.hero;
+					hero->particleEmitTimer = processTimer( hero->particleEmitTimer, dt );
+					if( !hero->particleEmitTimer ) {
+						hero->particleEmitTimer = {6};
+						emitParticles( &game->particleSystem, feetPosition,
+						               ParticleEmitterId::Dust );
+					}
+				}
+			} else {
+				if( auto hero = query_variant( entry, hero ) ) {
+					hero->particleEmitTimer = {};
+				}
+			}
+
+			// landing particles
+			if( entry.spatialState == SpatialState::Grounded
+			    && floatEqZero( entry.spatialStateTimer ) ) {
+
+				auto feetPosition = entry.position;
+				auto emitted      = emitParticles( &game->particleSystem, feetPosition,
+				                              ParticleEmitterId::LandingDust );
+			}
+		}
+	}
+}
+
 typedef void BehaviorFunctionType( GameState*, Entity*, float, bool );
-void processHeroEntity( GameState* game, Entity* entity, float dt, bool frameBoundary ) {}
+void processHeroEntity( GameState* game, Entity* entity, float dt, bool frameBoundary )
+{
+	using namespace GameConstants;
+
+	// process controls
+	auto hero       = &get_variant( *entity, hero );
+	const auto& ids = game->skeletonSystem.hero.animationIds;
+
+	if( entity->flags.hurt ) {
+		entity->control.responsiveness = EntityResponsiveness::NoControl;
+		auto animation                 = ids.hurt;
+		stopAnimations( entity->skeleton );
+		hero->currentAnimation      = playAnimation( entity->skeleton, animation, false );
+		hero->currentAnimationIndex = animation;
+	}
+	if( hero->currentAnimationIndex != ids.hurt
+	    || isAnimationFinished( entity->skeleton, hero->currentAnimation ) ) {
+		entity->control.responsiveness = EntityResponsiveness::Responsive;
+	}
+
+	auto control    = entity->control;
+
+	entity->velocity.x = 0;
+	if( control.responsiveness == EntityResponsiveness::Responsive ) {
+		switch( control.horizontal ) {
+			case EntityHorizontalMovement::Left: {
+				if( isCountdownTimerExpired( entity->walljumpDuration )
+				    || entity->walljumpLeft() ) {
+					entity->velocity.x    = -MovementSpeed;
+					entity->faceDirection = EntityFaceDirection::Left;
+				}
+				break;
+			}
+			case EntityHorizontalMovement::Right: {
+				if( isCountdownTimerExpired( entity->walljumpDuration )
+				    || !entity->walljumpLeft() ) {
+					entity->velocity.x    = MovementSpeed;
+					entity->faceDirection = EntityFaceDirection::Right;
+				}
+				break;
+			}
+		}
+		if( entity->walljumpWindow ) {
+			if( !entity->walljumpLeft() ) {
+				entity->faceDirection = EntityFaceDirection::Right;
+			} else {
+				entity->faceDirection = EntityFaceDirection::Left;
+			}
+		}
+
+		// jump
+		if( frameBoundary && control.vertical == EntityVerticalMovement::Jump
+		    && isSpatialStateJumpable( entity ) ) {
+			entity->velocity.y = JumpingSpeed;
+			setSpatialState( entity, SpatialState::Airborne );
+
+			entity->control.verticalAction = EntityVerticalAction::ConsumeInput;
+		}
+
+		// variable jump height
+		if( entity->spatialState == SpatialState::Airborne
+		    && control.vertical == EntityVerticalMovement::Jump && entity->velocity.y < 0 ) {
+		} else {
+			if( entity->velocity.y < 0 ) {
+				entity->velocity.y = 0;
+			}
+		}
+
+		// walljump
+		if( frameBoundary && control.verticalAction == EntityVerticalAction::Jump
+		    && isSpatialStateWalljumpable( entity ) && entity->walljumpWindow ) {
+
+			entity->wallslideCollidable.clear();
+			entity->walljumpWindow         = {};
+			entity->velocity.y             = WalljumpingSpeed;
+			entity->walljumpDuration       = {WalljumpMaxDuration};
+			entity->control.verticalAction = EntityVerticalAction::ConsumeInput;
+		}
+
+		// shooting
+		if( control.action == EntityActionState::Attack ) {
+			assert( frameBoundary );
+
+			hero->shootingAnimationTimer = {20};
+		}
+
+		// update skeleton
+		setHeroActionAnimation( &game->skeletonSystem, entity, dt );
+
+		// emit projectile after skeleton update, since we need correct node positions
+		if( control.action == EntityActionState::Attack ) {
+			assert( frameBoundary );
+
+			if( entity->skeleton->dirty ) {
+				update( entity->skeleton, nullptr, 0 );
+			}
+			auto shootPosIndex = game->skeletonSystem.hero.nodeIds.shootPos;
+			auto gunPosition   = getNode( entity->skeleton, shootPosIndex ).xy;
+			gunPosition.y      = -gunPosition.y;
+			vec2 velocity      = {3, 0};
+			if( entity->faceDirection == EntityFaceDirection::Left ) {
+				velocity.x = -velocity.x;
+			}
+			if( !emitProjectile( game, gunPosition, velocity, entity->team ) ) {
+				hero->shootingAnimationTimer = {};
+			}
+		}
+	} else {
+		if( entity->velocity.y < 0 ) {
+			entity->velocity.y = 0;
+		}
+	}
+}
 void processWheelsEntity( GameState* game, Entity* entity, float dt, bool frameBoundary )
 {
 	auto wheels      = &entity->wheels;
 	bool stateChange = false;
+
+	auto doHurt = [&]() {
+		if( entity->flags.hurt ) {
+			stopAnimations( entity->skeleton );
+			wheels->currentAnimation = playAnimation(
+			    entity->skeleton, game->skeletonSystem.wheels.animationIds.hurt, false );
+			entity->acceleration.x = 0;
+			entity->velocity.x     = -entity->hurtNormal.x * 0.1f;
+			if( entity->hurtNormal.x < 0 ) {
+				entity->faceDirection = EntityFaceDirection::Left;
+			} else {
+				entity->faceDirection = EntityFaceDirection::Right;
+			}
+			entity->wheels.state = Entity::Wheels::Hurt;
+			stateChange          = true;
+		}
+	};
+	auto doAttack = [&]() {
+		wheels->attackTimer = processTimer( wheels->attackTimer, dt );
+		if( isCountdownTimerExpired( wheels->attackTimer ) ) {
+			wheels->attackTimer  = {120};
+			entity->wheels.state = Entity::Wheels::Attacking;
+			stateChange          = true;
+		}
+	};
 	do {
 		bool stateJustChanged = stateChange;
 		stateChange           = false;
@@ -1041,12 +1238,8 @@ void processWheelsEntity( GameState* game, Entity* entity, float dt, bool frameB
 					entity->wheels.state = Entity::Wheels::Turning;
 					stateChange          = true;
 				}
-				wheels->attackTimer = processTimer( wheels->attackTimer, dt );
-				if( isCountdownTimerExpired( wheels->attackTimer ) ) {
-					wheels->attackTimer = {120};
-					entity->wheels.state = Entity::Wheels::Attacking;
-					stateChange          = true;
-				}
+				doAttack();
+				doHurt();
 				break;
 			}
 			case Entity::Wheels::Turning: {
@@ -1057,7 +1250,10 @@ void processWheelsEntity( GameState* game, Entity* entity, float dt, bool frameB
 					stopAnimations( entity->skeleton );
 					wheels->currentAnimation = playAnimation(
 					    entity->skeleton, game->skeletonSystem.wheels.animationIds.turn );
-				} else if( isAnimationFinished( entity->skeleton, wheels->currentAnimation ) ) {
+				}
+				if( ( !stateJustChanged
+				      && isAnimationFinished( entity->skeleton, wheels->currentAnimation ) )
+				    || entity->flags.hurt ) {
 					if( entity->faceDirection == EntityFaceDirection::Right ) {
 						entity->faceDirection = EntityFaceDirection::Left;
 					} else {
@@ -1070,6 +1266,7 @@ void processWheelsEntity( GameState* game, Entity* entity, float dt, bool frameB
 					entity->wheels.state = Entity::Wheels::Moving;
 					stateChange          = true;
 				}
+				doHurt();
 				break;
 			}
 			case Entity::Wheels::Attacking: {
@@ -1086,11 +1283,31 @@ void processWheelsEntity( GameState* game, Entity* entity, float dt, bool frameB
 					}
 					stateChange = true;
 				}
+
+				auto events = getAnimationEvents( entity->skeleton, wheels->currentAnimation );
+				FOR( event : events ) {
+					if( event.type == SkeletonEventType::Attack ) {
+						vec2 velocity = {};
+						velocity.x    = ( entity->faceDirection == EntityFaceDirection::Left )
+						                 ? ( -1.0f )
+						                 : 1.0f;
+						auto origin = getNode( entity->skeleton,
+						                       game->skeletonSystem.wheels.nodeIds.attackOrigin )
+						                  .xy;
+						origin.y = -origin.y;
+						emitProjectile( game, origin, velocity, entity->team );
+					}
+				}
+
 				if( entity->lastCollision && entity->grounded
 				    && entity->lastCollision != entity->grounded ) {
 					entity->velocity.x     = -entity->prevVeloctiy.x;
 					entity->acceleration.x = -entity->acceleration.x;
 					wheels->shouldTurn     = true;
+				}
+				if( entity->flags.hurt ) {
+					entity->velocity.x     = 0;
+					entity->acceleration.x = 0;
 				}
 				if( floatEqZero( entity->velocity.x )
 				    || signbit( entity->velocity.x ) == signbit( entity->acceleration.x ) ) {
@@ -1100,7 +1317,18 @@ void processWheelsEntity( GameState* game, Entity* entity, float dt, bool frameB
 				}
 				break;
 			}
-				InvalidDefaultCase;
+			case Entity::Wheels::Hurt: {
+				if( !stateJustChanged ) {
+					doHurt();
+				}
+				if( isAnimationFinished( entity->skeleton, wheels->currentAnimation ) ) {
+					entity->wheels.state = Entity::Wheels::Moving;
+					stateChange          = true;
+				}
+				doAttack();
+				break;
+			}
+			InvalidDefaultCase;
 		}
 	} while( stateChange );
 }
@@ -1115,6 +1343,8 @@ void processProjectileEntity( GameState* game, Entity* entity, float dt, bool fr
 void processEntityBehaviors( GameState* game, float dt, bool frameBoundary )
 {
 	assert( game );
+
+	emitEntityParticles( game, dt );
 
 	static BehaviorFunctionType* const EntityBehaviors[] = {
 		processHeroEntity,
@@ -1239,81 +1469,143 @@ static void doGame( AppData* app, GameInputs* inputs, bool focus, float dt, bool
 			auto traits = getEntityTraits( entity.type );
 			if( !traits->flags.noFaceDirection ) {
 				setMirrored( entity.skeleton, entity.faceDirection == EntityFaceDirection::Left );
+				update( entity.skeleton, nullptr, 0 );
 			}
 
 			auto skeletonTraits = getSkeletonTraits( &game->skeletonSystem, entity.type );
 			auto collisionIds = skeletonTraits->collisionIds();
 			if( collisionIds.size() ) {
-				entity.aab = getHitboxRelative( entity.skeleton, collisionIds[0] );
+				entity.aab = getHitboxRelative( entity.skeleton, collisionIds[0] ).first;
 			}
 		}
 	}
 	doCollisionDetection( &game->room, &game->entitySystem, dt, frameBoundary );
+
+	// hit detection
+	{
+		auto hitboxSystem = &game->hitboxSystem;
+		auto pairs        = hitboxSystem->hitboxPairs();
+		auto testHit      = [&]( Entity* entity, EntityHandle attacker, rectfarg hitbox,
+		                    vec2arg position, vec2arg delta ) {
+			if( entity->skeleton ) {
+				auto defender     = entity->handle;
+				auto existingPair = find_index_if( pairs, [=]( const auto& entry ) {
+					return entry.attacker == attacker && entry.defender == defender;
+				} );
+				if( !existingPair ) {
+					auto otherSkeletonTraits =
+					    getSkeletonTraits( &game->skeletonSystem, entity->type );
+					auto combinedDelta = delta - entity->positionDelta;
+					FOR( hurtboxId : otherSkeletonTraits->hurtboxIds() ) {
+						auto otherHurtbox = getHitboxAbsolute( entity->skeleton, hurtboxId );
+						if( !otherHurtbox.second ) {
+							continue;
+						}
+						auto otherBounds  = translate( otherHurtbox.first, -entity->positionDelta );
+						CollisionInfo info;
+						if( testAabVsAab( hitbox, position, combinedDelta, otherBounds, 1,
+						                  &info ) ) {
+							entity->flags.hurt = true;
+							entity->hurtNormal = info.normal;
+							auto offset        = multiplyComponents( info.normal,
+							                                  {width( hitbox ), height( hitbox )} );
+							auto hitPos = position + combinedDelta * info.t - offset;
+							/*emitParticles( &game->particleSystem, hitPos,
+							               ParticleEmitterId::SmallExplosion );*/
+							pairs.push_back( {attacker, defender} );
+							return true;
+						}
+					}
+				}
+			}
+			return false;
+		};
+		// clear hurt flags
+		auto staticEntries = game->entitySystem.staticEntries();
+		FOR( entity : staticEntries ) {
+			entity.flags.hurt = false;
+		}
+		for( auto i = 0, count = staticEntries.size(); i < count; ++i ) {
+			auto entity = &staticEntries[i];
+			if( entity->skeleton ) {
+				auto skeletonTraits = getSkeletonTraits( &game->skeletonSystem, entity->type );
+				auto delta          = entity->positionDelta;
+				auto prevPosition   = entity->position - entity->positionDelta;
+				FOR( hitboxId : skeletonTraits->hitboxIds() ) {
+					auto hitbox = getHitboxRelative( entity->skeleton, hitboxId );
+					if( !hitbox.second ) {
+						continue;
+					}
+					FOR( other : staticEntries ) {
+						if( &other == entity || other.team == entity->team ) {
+							continue;
+						}
+						testHit( &other, entity->handle, hitbox.first, prevPosition, delta );
+					}
+				}
+			} else if( entity->type == Entity::type_projectile ) {
+				auto hitbox       = entity->aab;
+				auto delta        = entity->positionDelta;
+				auto prevPosition = entity->position - entity->positionDelta;
+				FOR( other : staticEntries ) {
+					if( &other == entity || other.team == entity->team ) {
+						continue;
+					}
+					if( other.flags.hurt ) {
+						// FIXME: find a better solution for not hurting hurt entities multiple
+						// times. If an entity turns invincible after a hit, removing the continue
+						// means they might still get hit multiple times, if the hits all happen on
+						// the exact same frame because invincibility only starts after hit
+						// detection
+						continue;
+					}
+					if( testHit( &other, entity->handle, hitbox, prevPosition, delta ) ) {
+						entity->flags.deathFlag = true;
+					};
+				}
+			}
+		}
+		hitboxSystem->setPairsCount( pairs.size() );
+	}
+	// hurt flashing
+	FOR( entry : game->entitySystem.staticEntries() ) {
+		entry.hurtFlashCountdown = processTimer( entry.hurtFlashCountdown, dt );
+		if( entry.flags.hurt ) {
+			entry.hurtFlashCountdown = {3};
+		}
+		if( entry.skeleton ) {
+			if( entry.hurtFlashCountdown ) {
+				entry.skeleton->rootTransform.flashColor = 0xD0D9EFFF;
+			} else {
+				entry.skeleton->rootTransform.flashColor = 0;
+			}
+		}
+	}
 
 	// update skeleton transform
 	FOR( entity : game->entitySystem.entries ) {
 		if( entity.skeleton ) {
 			vec3 origin = Vec3( gameToScreen( entity.position ), 0 );
 			setTransform( entity.skeleton, matrixTranslation( origin ) );
-			if( auto hero = query_variant( entity, hero ) ) {
-				setHeroActionAnimation( &game->skeletonSystem, &entity, dt );
-			}
 		}
 	}
-
-	processControlActions( game, &game->controlSystem, &game->entitySystem, &game->skeletonSystem );
-
-	processSkeletonSystem( &game->skeletonSystem, &game->particleSystem, dt );
-
-	// emitting particles
-	// TODO: factor this out into a processing function
-	FOR( entry : game->entitySystem.entries ) {
-		auto traits = getEntityTraits( entry.type );
-		if( traits->movement == EntityMovement::Grounded ) {
-			// wallslide particles
-			if( entry.wallslideCollidable && entry.skeleton && entry.type == Entity::type_hero ) {
-				auto feetPosIndex = game->skeletonSystem.hero.nodeIds.feetPos;
-				auto feetPosition = getNode( entry.skeleton, feetPosIndex ).xy;
-				feetPosition.y    = -feetPosition.y;
-				vec2 searchDir = {1, 0};
-				if( !entry.walljumpLeft() ) {
-					searchDir = {-1, 0};
-				}
-				auto region = getSweptTileGridRegion( entry.aab, entry.position, searchDir );
-				auto collisionAtFeet = findCollision(
-				    {-1, -1, 1, 1}, feetPosition, searchDir, game->room.layers[RL_Main].grid,
-				    region, game->entitySystem.dynamicEntries(), 1, false );
-				if( collisionAtFeet ) {
-					auto hero               = &entry.hero;
-					hero->particleEmitTimer = processTimer( hero->particleEmitTimer, dt );
-					if( !hero->particleEmitTimer ) {
-						hero->particleEmitTimer = {6};
-						emitParticles( &game->particleSystem, feetPosition,
-						               ParticleEmitterId::Dust );
-					}
-				}
-			} else {
-				if( auto hero = query_variant( entry, hero ) ) {
-					hero->particleEmitTimer = {};
-				}
-			}
-
-			// landing particles
-			if( entry.spatialState == SpatialState::Grounded
-			    && floatEqZero( entry.spatialStateTimer ) ) {
-
-				auto feetPosition = entry.position;
-				auto emitted      = emitParticles( &game->particleSystem, feetPosition,
-				                              ParticleEmitterId::LandingDust );
-			}
-		}
-	}
-
-	processParticles( &game->particleSystem, dt );
 	processEntityBehaviors( game, dt, frameBoundary );
 	processEntityRemovalQueue( game );
 
+	// entity behaviors might have changed face direction
+	FOR( entity : game->entitySystem.entries ) {
+		if( entity.skeleton ) {
+			auto traits = getEntityTraits( entity.type );
+			if( !traits->flags.noFaceDirection ) {
+				setMirrored( entity.skeleton, entity.faceDirection == EntityFaceDirection::Left );
+			}
+		}
+	}
+	processSkeletonSystem( &game->skeletonSystem, &game->particleSystem, dt );
+	processParticles( &game->particleSystem, dt );
+
 	if( enableRender ) {
+		// TODO: refactor
 		setRenderState( renderer, RenderStateType::Lighting, game->lighting );
 		setProjection( renderer, ProjectionType::Perspective );
 		auto cameraTranslation = matrixTranslation( 0, -50, 0 );
@@ -1369,6 +1661,8 @@ static void doGame( AppData* app, GameInputs* inputs, bool focus, float dt, bool
 		// render entities
 		for( auto& entry : game->entitySystem.entries ) {
 			if( entry.skeleton ) {
+				static float x = 0;
+				x += dt * 0.1f;
 				render( renderer, entry.skeleton );
 			} else {
 				VoxelCollection::Frame* currentFrame = nullptr;
@@ -1679,6 +1973,7 @@ UPDATE_AND_RENDER( updateAndRender )
 	clear( renderer );
 	renderer->ambientStrength = 0.1f;
 	renderer->lightColor      = Color::White;
+	renderer->flashColor      = 0;
 
 	setProjectionMatrix( renderer, ProjectionType::Perspective, app->perspective );
 	setProjectionMatrix( renderer, ProjectionType::Orthogonal, app->orthogonal );

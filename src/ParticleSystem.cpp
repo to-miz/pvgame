@@ -1,7 +1,8 @@
 enum class ParticleEmitterId {
 	Dust,
 	LandingDust,
-	SmallDissipate
+	SmallDissipate,
+	SmallExplosion,
 };
 enum class ParticleTexture : int8 {
 	Dust,
@@ -53,6 +54,7 @@ static const ParticleEmitter ParticleEmitters[] = {
      ParticleTexture::Dust,
      ParticleEmitterFlags::AlternateSignX},           // LandingDust
     {1, 10, {}, ParticleTexture::SmallDissipate, 0},  // SmallDissipate
+    {1, 20, {}, ParticleTexture::SmallExplosion, 0},  // SmallExplosion
 };
 Array< ParticleSystem::Particle > emitParticles( ParticleSystem* system, vec3arg position,
                                                  const ParticleEmitter& emitter )

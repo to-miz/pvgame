@@ -78,6 +78,14 @@ void deserialize( const JsonValue& value, vec3& out )
 	out.y     = attr[1].getFloat();
 	out.z     = attr[2].getFloat();
 }
+void deserialize( const JsonValue& value, Color& out, Color def = {0xFFFFFFFF} )
+{
+	if( value.type == JVAL_STRING ) {
+		out = convert_to< Color >( value.getString() );
+	} else {
+		out = value.getUInt( def );
+	}
+}
 
 void deserialize( const JsonValue& value, float& out, float def = {} )
 {

@@ -4,6 +4,11 @@ todo:
 	rework framerate independent movement, seems to have some problems
 	rethink 2d and 3d coordinate systems, there are a lot of inlined conversions between the two coordinate systems
 
+	animator
+	skeleton animation
+		implement color blending
+		implement color flashing (for hitflashing)
+		implement events
 bugs:
 
 gameplay:

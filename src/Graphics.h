@@ -75,6 +75,7 @@ struct RenderCommandStaticMesh {
 
 	MeshId meshId;
 	mat4 matrix;
+	Color flashColor;
 	float screenDepthOffset;
 };
 struct RenderCommandSetTexture {
@@ -131,6 +132,7 @@ struct RenderCommandLineMesh {
 
 #define MeshRenderOptionsEntries \
 	Color color;                 \
+	Color flashColor;            \
 	float lineWidth;             \
 	float pointSize
 struct MeshRenderOptions {
@@ -892,13 +894,13 @@ RenderCommandStaticMesh* addRenderCommandMesh( RenderCommands* renderCommands, M
 	auto allocator = &renderCommands->allocator;
 
 	allocateRenderCommandHeader( allocator, RenderCommandStaticMesh );
-	auto body    = allocateStruct( allocator, RenderCommandStaticMesh );
-	*body        = {};
-	body->meshId = meshId;
-	body->matrix = currentMatrix( renderCommands->matrixStack );
+	auto body               = allocateStruct( allocator, RenderCommandStaticMesh );
+	*body                   = {};
+	body->meshId            = meshId;
+	body->matrix            = currentMatrix( renderCommands->matrixStack );
+	body->flashColor        = renderCommands->flashColor;
 	return body;
 }
-
 
 MeshStream addRenderCommandMeshStream( RenderCommands* renderCommands, int32 verticesCount,
                                        int32 indicesCount )

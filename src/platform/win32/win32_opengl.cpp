@@ -390,6 +390,7 @@ struct OpenGlIngameShader {
 	GLint ambientStrength;
 	GLint lightColor;
 	GLint lightPosition;
+	GLint flashColor;
 };
 struct OpenGlNoLightingShader {
 	GLuint vertexShader;
@@ -399,6 +400,7 @@ struct OpenGlNoLightingShader {
 	// uniform locations
 	GLint worldViewProj;
 	GLint screenDepthOffset;
+	GLint flashColor;
 };
 struct OpenGlVertexBuffer {
 	GLuint vertexArrayObjectId;
@@ -431,6 +433,7 @@ struct OpenGlContext {
 	GLint worldViewProj;
 	GLint model;
 	GLint screenDepthOffset;
+	GLint flashColor;
 
 	OpenGlIngameShader shader;
 	OpenGlNoLightingShader noLightingShader;
@@ -578,6 +581,7 @@ static void win32RenderBuffers( OpenGlContext* context, mat4* projections, GLenu
 	auto identity = matrixIdentity();
 	glUniformMatrix4fv( context->model, 1, GL_FALSE, identity.m );
 	glUniform1f( context->screenDepthOffset, 0 );
+	glUniform4f( context->flashColor, 0, 0, 0, 0 );
 	glDrawElementsBaseVertex( mode, vb->indicesCount, GL_UNSIGNED_SHORT,
 	                          BUFFER_OFFSET( vb->lastIndicesCount * sizeof( uint16 ) ),
 	                          vb->lastVerticesCount );
@@ -913,6 +917,7 @@ static bool win32InitIngameShaders( OpenGlContext* context )
 	shader->worldViewProj     = glGetUniformLocation( prog.program, "worldViewProj" );
 	shader->model             = glGetUniformLocation( prog.program, "model" );
 	shader->screenDepthOffset = glGetUniformLocation( prog.program, "screenDepthOffset" );
+	shader->flashColor        = glGetUniformLocation( prog.program, "flashColor" );
 	shader->ambientStrength   = glGetUniformLocation( prog.program, "ambientStrength" );
 	shader->lightColor        = glGetUniformLocation( prog.program, "lightColor" );
 	shader->lightPosition     = glGetUniformLocation( prog.program, "lightPosition" );
@@ -937,6 +942,7 @@ static bool win32InitGuiShaders( OpenGlContext* context )
 
 	shader->worldViewProj     = glGetUniformLocation( prog.program, "worldViewProj" );
 	shader->screenDepthOffset = glGetUniformLocation( prog.program, "screenDepthOffset" );
+	shader->flashColor        = glGetUniformLocation( prog.program, "flashColor" );
 	return true;
 }
 static bool win32InitShaders( OpenGlContext* context )
@@ -1021,7 +1027,7 @@ void openGlPrepareIngameRender( OpenGlContext* context )
 	context->worldViewProj     = shader->worldViewProj;
 	context->model             = shader->model;
 	context->screenDepthOffset = shader->screenDepthOffset;
-
+	context->flashColor        = shader->flashColor;
 }
 void openGlPrepareNoLightingRender( OpenGlContext* context )
 {
@@ -1038,6 +1044,7 @@ void openGlPrepareNoLightingRender( OpenGlContext* context )
 	context->worldViewProj     = shader->worldViewProj;
 	context->model             = -1;
 	context->screenDepthOffset = shader->screenDepthOffset;
+	context->flashColor        = shader->flashColor;
 }
 
 void openGlPrepareRender( OpenGlContext* context, bool wireframe )
@@ -1245,6 +1252,9 @@ static void win32ProcessRenderCommands( OpenGlContext* context, RenderCommands* 
 					glUniformMatrix4fv( context->worldViewProj, 1, GL_FALSE, matrix.m );
 					glUniformMatrix4fv( context->model, 1, GL_FALSE, body->matrix.m );
 					glUniform1f( context->screenDepthOffset, body->screenDepthOffset );
+					auto flashColor = getColorF( body->flashColor );
+					glUniform4f( context->flashColor, flashColor.r, flashColor.g,
+					             flashColor.b, flashColor.a );
 					glDrawElements( GL_TRIANGLES, mesh->indicesCount, GL_UNSIGNED_SHORT, nullptr );
 					glBindVertexArray( vb->vertexArrayObjectId );
 

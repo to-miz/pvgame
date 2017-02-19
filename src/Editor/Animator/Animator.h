@@ -64,6 +64,7 @@ struct AnimatorNode {
 	vec3 translation = {};
 	vec3 rotation    = {};
 	vec3 scale       = {1, 1, 1};
+	Color flashColor = {};
 	float length     = {};
 
 	int16 id             = -1;
@@ -85,16 +86,17 @@ struct AnimatorNode {
 	struct {
 		int8 animation;
 		int8 frame;
-	} voxel = {-1, 0};
-	bool8 active = {1}; // whether asset is active (valid for hitboxes and emitters)
+	} voxel      = {-1, 0};
+	bool8 active = {1};  // whether asset is active (valid for hitboxes and emitters)
 	struct {
 		float time;
 	} emitter = {};
 
-	mat4 base  = {};
-	mat4 world = {};
+	mat4 base             = {};
+	mat4 world            = {};
+	Color worldFlashColor = {};
 
-	short_string< 10 > name = {};
+	short_string< 25 > name = {};
 
 	bool selectable() const { return flags.interactible && flags.visible; }
 };
@@ -111,8 +113,10 @@ struct AnimatorKeyframeData {
 		type_translation,
 		type_rotation,
 		type_scale,
+		type_flashColor,
 		type_frame,
 		type_active,
+		type_event,
 
 		type_count
 	} type;
@@ -124,6 +128,8 @@ struct AnimatorKeyframeData {
 		vec3 scale;
 		int8 frame;
 		bool8 active;
+		Color flashColor;
+		SkeletonEventType event;
 	};
 };
 
@@ -289,7 +295,7 @@ struct AnimatorState {
 	AnimatorEditor editor;
 
 	StringPool stringPool;
-	StringView fieldNames[5];
+	StringView fieldNames[7];
 
 	FilenameString filename;
 

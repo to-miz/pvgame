@@ -120,6 +120,17 @@ Color multiply( Color a, Color b )
 	return Color::argb( multiplyComponents( af, bf ) );
 }
 Color multiply( Color a, uint32 b ) { return multiply( a, Color{b} ); }
+Color lerp( float t, Color a, Color b )
+{
+	auto af = getColorF( a );
+	auto bf = getColorF( b );
+	auto c = lerp( clamp( t ), af, bf );
+	return Color::argb( c );
+}
+Color inverse( Color c )
+{
+	return {~c.bits};
+}
 
 const Color Color::White  = {0xFFFFFFFF};
 const Color Color::Black  = {0xFF000000};

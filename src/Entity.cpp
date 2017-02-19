@@ -61,6 +61,20 @@ struct CollidableRef {
 enum class EntityMovement : int8 { Straight, Grounded };
 enum class CollisionResponse : int8 { FullStop, Bounce };
 enum class EntityFaceDirection : int8 { Left, Right };
+enum class EntityTeam : int8 { None, Players, Robots };
+
+enum class EntityResponsiveness : uint8 { Responsive, NoControl };
+enum class EntityHorizontalMovement : uint8 { None, Left, Right };
+enum class EntityVerticalAction : uint8 { None, Jump, Crouch, ConsumeInput };
+enum class EntityVerticalMovement : uint8 { None, Jump, Crouch };
+enum class EntityActionState : uint8 { None, Attack };
+struct EntityControl {
+	EntityResponsiveness responsiveness : 1;
+	EntityHorizontalMovement horizontal : 2;
+	EntityVerticalAction verticalAction : 2;  // whether a new action has been input
+	EntityVerticalMovement vertical : 2;  // whether old action is still valid (button held down)
+	EntityActionState action : 1;
+};
 
 struct Skeleton;
 
@@ -95,16 +109,21 @@ struct Entity {
 
 	CountdownTimer aliveCountdown;  // how many frames this can be alive for, used for entities that
 	                                // dissipate after a certain time
+	CountdownTimer hurtFlashCountdown;
 
 	EntityHandle handle;
 
 	struct {
 		uint8 walljumpLeft : 1;  // whether we are doing a walljump to the left or right
 		uint8 dynamic : 1;       // whether collidable is a dynamic collider
-		uint8 deathFlag : 1;  // whether entity is dead
+		uint8 deathFlag : 1;     // whether entity is dead
+		uint8 hurt : 1;          // whether entity was hurt this frame
 	} flags;
 	EntityFaceDirection prevFaceDirection;
 	EntityFaceDirection faceDirection;
+	EntityTeam team;
+	EntityControl control;
+	vec2 hurtNormal;
 
 	Skeleton* skeleton;
 
@@ -127,7 +146,7 @@ struct Entity {
 	struct Wheels {
 		CountdownTimer attackTimer;
 		int32 currentAnimation;
-		enum : int8 { Idle, Moving, Turning, Stopping, Attacking } state;
+		enum : int8 { Idle, Moving, Turning, Stopping, Attacking, Hurt } state;
 		bool8 shouldTurn;
 	};
 	union {
@@ -171,7 +190,6 @@ bool isSpatialStateWalljumpable( Entity* collidable )
 	       ||*/ collidable->spatialState
 	       == SpatialState::Airborne;
 }
-bool canEntityShoot( Entity* collidable ) { return true; }
 
 Entity* getDynamicFromCollidableRef( Array< Entity > dynamics, CollidableRef ref )
 {
@@ -269,6 +287,7 @@ struct EntityTraitsData {
 	} flags;
 	EntityMovement movement;
 	CollisionResponse response;
+	EntityTeam team;
 	vec2 forcedNormal;
 
 	struct {
@@ -301,6 +320,7 @@ const EntityTraitsData* const getEntityTraits( Entity::Type type )
 	        makeEntityTraitsFlags( EntityTraitsFlags::CanWalljump ),
 	        EntityMovement::Grounded,
 	        CollisionResponse::Bounce,
+	        EntityTeam::Players,
 	        {},
 	        {
 	            1,                                             // gravityModifier
@@ -315,6 +335,7 @@ const EntityTraitsData* const getEntityTraits( Entity::Type type )
 	        makeEntityTraitsFlags( EntityTraitsFlags::NoFaceDirection ),
 	        EntityMovement::Straight,
 	        CollisionResponse::Bounce,
+	        EntityTeam::None,
 	        {},
 	        {
 	            0,  // gravityModifier
@@ -329,6 +350,7 @@ const EntityTraitsData* const getEntityTraits( Entity::Type type )
 	        {},
 	        EntityMovement::Grounded,
 	        CollisionResponse::Bounce,
+	        EntityTeam::Robots,
 	        {},
 	        {
 	            1,                                             // gravityModifier

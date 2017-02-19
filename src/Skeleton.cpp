@@ -24,6 +24,7 @@ void readNodes( StackAllocator* allocator, const JsonObject& attr,
 		deserialize( attr["translation"], dest->translation );
 		deserialize( attr["rotation"], dest->rotation );
 		deserialize( attr["scale"], dest->scale );
+		deserialize( attr["flashColor"], dest->flashColor, {} );
 		if( base ) {
 			deserialize( attr["length"], dest->length );
 			deserialize( attr["parentId"], dest->parent, -1 );
@@ -59,8 +60,7 @@ void readNodes( StackAllocator* allocator, const JsonObject& attr,
 	*hitboxes            = makeArray( allocator, SkeletonHitboxState,
 	                       collisionsArray.size() + hitboxesArray.size() + hurtboxesArray.size() );
 
-	SkeletonHitboxState::Type type = SkeletonHitboxState::Collision;
-	auto readHitbox = [base, type]( const JsonObject& attr, SkeletonHitboxState* dest ) {
+	auto readHitbox = [base]( const JsonObject& attr, SkeletonHitboxState* dest ) {
 		*dest = {};
 		deserialize( attr["id"], dest->id, -1 );
 		dest->index = -1;
@@ -68,20 +68,22 @@ void readNodes( StackAllocator* allocator, const JsonObject& attr,
 			deserialize( attr["assetId"], dest->assetIndex, -1 );
 		}
 		deserialize( attr["active"], dest->active );
-		dest->type = type;
 	};
 	auto currentHitbox = 0;
-	type               = SkeletonHitboxState::Collision;
 	FOR( entry : collisionsArray ) {
-		readHitbox( entry, &hitboxes->at( currentHitbox++ ) );
+		auto dest = &hitboxes->at( currentHitbox++ );
+		readHitbox( entry, dest );
+		dest->type = SkeletonHitboxState::Collision;
 	}
-	type = SkeletonHitboxState::Hitbox;
 	FOR( entry : hitboxesArray ) {
-		readHitbox( entry, &hitboxes->at( currentHitbox++ ) );
+		auto dest = &hitboxes->at( currentHitbox++ );
+		readHitbox( entry, dest );
+		dest->type = SkeletonHitboxState::Hitbox;
 	}
-	type = SkeletonHitboxState::Hurtbox;
 	FOR( entry : hurtboxesArray ) {
-		readHitbox( entry, &hitboxes->at( currentHitbox++ ) );
+		auto dest = &hitboxes->at( currentHitbox++ );
+		readHitbox( entry, dest );
+		dest->type = SkeletonHitboxState::Hurtbox;
 	}
 }
 
@@ -267,7 +269,7 @@ bool loadSkeletonDefinitionImpl( StackAllocator* allocator, StringView filename,
 #define ABORT_ERROR( str, ... )                            \
 	do {                                                   \
 		LOG( ERROR, "{}: " str, filename, ##__VA_ARGS__ ); \
-		/*__debugbreak();*/                                    \
+		__debugbreak();                                    \
 		return false;                                      \
 	} while( false )
 
@@ -354,7 +356,7 @@ bool loadSkeletonDefinitionImpl( StackAllocator* allocator, StringView filename,
 				deserialize( attr["id"], ident->id, -1 );
 				ident->nameLength = (int16)copyToString( attr["name"].getString(), ident->name );
 				ident->assetIndex = auto_truncate( currentHitbox );
-				ident->type       = AnimatorAsset::type_collision;
+				ident->type       = AnimatorAsset::type_hitbox;
 
 				deserialize( attr["bounds"], *dest );
 				++currentHitbox;
@@ -366,7 +368,7 @@ bool loadSkeletonDefinitionImpl( StackAllocator* allocator, StringView filename,
 				deserialize( attr["id"], ident->id, -1 );
 				ident->nameLength = (int16)copyToString( attr["name"].getString(), ident->name );
 				ident->assetIndex = auto_truncate( currentHitbox );
-				ident->type       = AnimatorAsset::type_collision;
+				ident->type       = AnimatorAsset::type_hurtbox;
 
 				deserialize( attr["bounds"], *dest );
 				++currentHitbox;
@@ -503,6 +505,7 @@ bool loadSkeletonDefinitionImpl( StackAllocator* allocator, StringView filename,
 					dest->index      = base->index;
 				}
 
+				auto compare = []( const auto& a, const auto& b ) { return a.t < b.t; };
 				// keyframes
 				TEMPORARY_MEMORY_BLOCK( scrap ) {
 					auto curves = beginVector( scrap, BezierForwardDifferencerData );
@@ -529,7 +532,6 @@ bool loadSkeletonDefinitionImpl( StackAllocator* allocator, StringView filename,
 						}
 						deserialize( attr["value"], out->data );
 					};
-					auto compare = []( const auto& a, const auto& b ) { return a.t < b.t; };
 
 					auto keyframes = attr["keyframes"].getObjectArray();
 					const auto keyframesCount = keyframes.size();
@@ -575,6 +577,16 @@ bool loadSkeletonDefinitionImpl( StackAllocator* allocator, StringView filename,
 						}
 						sort( dest->scale.begin(), dest->scale.end(), compare );
 
+						// flashColor
+						auto flashColor       = keyframesAttr["flashColor"].getObjectArray();
+						const auto flashColorCount = flashColor.size();
+						dest->flashColor =
+						    makeArray( allocator, SkeletonKeyframe< Color >, flashColorCount );
+						for( auto j = 0; j < flashColorCount; ++j ) {
+							deserializeKeyframe( flashColor[j], &dest->flashColor[j] );
+						}
+						sort( dest->flashColor.begin(), dest->flashColor.end(), compare );
+
 						// frame
 						auto frame            = keyframesAttr["frame"].getObjectArray();
 						const auto frameCount = frame.size();
@@ -595,7 +607,7 @@ bool loadSkeletonDefinitionImpl( StackAllocator* allocator, StringView filename,
 						sort( dest->active.begin(), dest->active.end(), compare );
 
 						// calculate duration
-						float durations[5] = {};
+						float durations[6] = {};
 						if( dest->translation.size() ) {
 							durations[0] = dest->translation.back().t;
 						}
@@ -605,17 +617,20 @@ bool loadSkeletonDefinitionImpl( StackAllocator* allocator, StringView filename,
 						if( dest->scale.size() ) {
 							durations[2] = dest->scale.back().t;
 						}
+						if( dest->flashColor.size() ) {
+							durations[3] = dest->flashColor.back().t;
+						}
 						if( dest->frame.size() ) {
-							durations[3] = dest->frame.back().t;
+							durations[4] = dest->frame.back().t;
 						}
 						if( dest->active.size() ) {
-							durations[4] = dest->active.back().t;
+							durations[5] = dest->active.back().t;
 						}
 						auto currentDuration = *max_element( begin( durations ), end( durations ) );
 						animation->duration  = max( currentDuration, animation->duration );
-						dest->hasKeyframes  = dest->translation.size() || dest->rotation.size()
-						                     || dest->scale.size() || dest->frame.size()
-						                     || dest->active.size();
+						dest->hasKeyframes   = dest->translation.size() || dest->rotation.size()
+						                     || dest->scale.size() || dest->flashColor.size()
+						                     || dest->frame.size() || dest->active.size();
 					}
 					if( !success ) {
 						ABORT_ERROR( "Out of memory" );
@@ -627,10 +642,29 @@ bool loadSkeletonDefinitionImpl( StackAllocator* allocator, StringView filename,
 				if( !applyPermutationByIds( animation->keyframes, nodeIds ) ) {
 					ABORT_ERROR( "Invalid keyframes" );
 				}
+
+				// events
+				auto events = attr["events"].getObjectArray();
+				const auto eventsCount = events.size();
+				animation->events = makeArray( allocator, SkeletonEvent, eventsCount );
+				for( auto i = 0; i < eventsCount; ++i ) {
+					auto event = events[i];
+					auto dest  = &animation->events[i];
+
+					deserialize( event["t"], dest->t );
+					dest->type = auto_from_string( event["value"].getString() );
+				}
+				if( animation->events.size() ) {
+					sort( animation->events.begin(), animation->events.end(), compare );
+					auto eventsDuration = animation->events.back().t;
+					animation->duration = max( animation->duration, eventsDuration );
+				}
 			}
+
 		} else {
 			ABORT_ERROR( "No animations defined" );
 		}
+
 	}
 #undef ABORT_ERROR
 	guard.commit();
@@ -654,13 +688,13 @@ SkeletonDefinition loadSkeletonDefinition( StackAllocator* allocator, StringView
 Skeleton makeSkeleton( StackAllocator* allocator, const SkeletonDefinition& definition )
 {
 	assert( definition );
-	Skeleton result       = {};
-	result.rootTransform  = matrixIdentity();
-	const auto nodesCount = definition.baseNodes.size();
-	result.transforms     = makeArray( allocator, SkeletonTransform, nodesCount );
+	Skeleton result                = {};
+	result.rootTransform.transform = matrixIdentity();
+	const auto nodesCount          = definition.baseNodes.size();
+	result.transforms              = makeArray( allocator, SkeletonTransform, nodesCount );
 	result.transforms.assign( definition.baseNodes );
 
-	result.worldTransforms = makeArray( allocator, mat4, nodesCount );
+	result.worldTransforms = makeArray( allocator, SkeletonWorldTransform, nodesCount );
 
 	result.visuals = makeArray( allocator, SkeletonVoxelVisuals, definition.baseVisuals.size() );
 	result.visuals.assign( definition.baseVisuals );
@@ -709,10 +743,13 @@ int32 playAnimation( Skeleton* skeleton, int32 animationIndex, bool repeating = 
 		state->animationIndex = auto_truncate( animationIndex );
 		state->flags          = SkeletonAnimationState::Playing;
 		setFlagCond( state->flags, SkeletonAnimationState::Repeating, repeating );
+		state->prevFrame      = 0;
 		state->currentFrame   = 0;
 		state->keyframeStates = skeleton->keyframeStatesPool[result];
-		fill( state->keyframeStates.data(), {-1, -1, -1, -1}, state->keyframeStates.size() );
-		skeleton->dirty = true;
+		fill( state->keyframeStates.data(), {-1, -1, -1, -1, -1}, state->keyframeStates.size() );
+		state->prevEvent = -1;
+		state->event     = -1;
+		skeleton->dirty  = true;
 		return result;
 	}
 	return -1;
@@ -742,6 +779,38 @@ bool isAnimationFinished( Skeleton* skeleton, int32 animationIndex )
 	auto state     = &skeleton->animations[animationIndex];
 	auto animation = &skeleton->definition->animations[state->animationIndex];
 	return state->currentFrame >= animation->duration;
+}
+
+Ring< const SkeletonEvent > getAnimationEvents( Skeleton* skeleton, int32 animationIndex )
+{
+	assert( skeleton );
+	assert( skeleton->definition );
+	auto state           = &skeleton->animations[animationIndex];
+	const auto animation = &skeleton->definition->animations[state->animationIndex];
+
+	auto prevFrame    = state->prevFrame;
+	auto currentFrame = state->currentFrame;
+
+	bool full  = false;
+	auto first = state->prevEvent;
+	auto last  = state->event + 1;
+	if( first < 0 ) {
+		full  = false;
+		first = 0;
+	}
+	if( last < 0 ) {
+		last = 0;
+	}
+
+	auto result = makeRingView< const SkeletonEvent >(
+	    animation->events.data(), animation->events.size(), first, last, full );
+	while( !result.empty() && result.front().t < prevFrame ) {
+		result.pop_front();
+	}
+	while( !result.empty() && result.back().t > currentFrame ) {
+		result.pop_back();
+	}
+	return result;
 }
 
 void update( Skeleton* skeleton, ParticleSystem* particleSystem, float dt )
@@ -844,6 +913,13 @@ void update( Skeleton* skeleton, ParticleSystem* particleSystem, float dt )
 			*data  = multiplyComponents(
 			    interpolateKeyframeData( curves, currentFrame, keyframes, *index, def ), *data );
 		};
+		auto processColor = [findCurrentKeyframe, interpolateKeyframeData](
+		    Array< BezierForwardDifferencerData > curves, float currentFrame, const auto& keyframes,
+		    int16* index, auto* data ) {
+			typeof( keyframes )::value_type::value_type def = {};
+			*index = findCurrentKeyframe( currentFrame, keyframes, *index );
+			*data  = interpolateKeyframeData( curves, currentFrame, keyframes, *index, def );
+		};
 		auto processCustom = [findCurrentKeyframe]( Array< BezierForwardDifferencerData > curves,
 		                                            float currentFrame, const auto& keyframes,
 		                                            int16* index, auto* data ) {
@@ -856,88 +932,100 @@ void update( Skeleton* skeleton, ParticleSystem* particleSystem, float dt )
 			}
 		};
 
-		FOR( state : animationStates ) {
-			if( !( state.flags & SkeletonAnimationState::Playing ) ) {
-				continue;
-			}
-			auto animation = &animations[state.animationIndex];
-			auto keyframes = animation->keyframes;
-			auto curves    = animation->curves;
-			state.currentFrame += dt;
-			bool reset = false;
-			if( state.currentFrame > animation->duration ) {
-				if( state.flags & SkeletonAnimationState::Repeating ) {
-					state.currentFrame -= animation->duration;
-					reset = true;
-				} else {
-					clearFlag( state.flags, SkeletonAnimationState::Playing );
+		if( dt > 0 ) {
+			FOR( state : animationStates ) {
+				if( !( state.flags & SkeletonAnimationState::Playing ) ) {
+					continue;
 				}
-			}
-			auto currentFrame = state.currentFrame;
-			// apply keyframe animations
-			for( auto i = 0; i < transformsCount; ++i ) {
-				auto currentKeyframes = &keyframes[i];
-				if( currentKeyframes->hasKeyframes ) {
-					auto transform     = &transforms[i];
-					auto keyframeState = &state.keyframeStates[i];
-					if( reset ) {
-						*keyframeState = {-1, -1, -1, -1};
-					}
-					processKeyframe( curves, currentFrame, currentKeyframes->translation,
-					                 &keyframeState->translation, &transform->translation );
-					processKeyframe( curves, currentFrame, currentKeyframes->rotation,
-					                 &keyframeState->rotation, &transform->rotation );
-					processScale( curves, currentFrame, currentKeyframes->scale,
-					              &keyframeState->scale, &transform->scale );
-				}
-			}
-			for( auto i = 0; i < visualsCount; ++i ) {
-				auto entry            = &visuals[i];
-				auto currentKeyframes = &keyframes[entry->index];
-				if( currentKeyframes->hasKeyframes ) {
-					auto keyframeState = &state.keyframeStates[entry->index];
-					processCustom( curves, currentFrame, currentKeyframes->frame,
-					               &keyframeState->custom, &entry->frame );
-				}
-			}
-			for( auto i = 0; i < emittersCount; ++i ) {
-				auto entry            = &emitters[i];
-				auto currentKeyframes = &keyframes[entry->index];
-				if( currentKeyframes->hasKeyframes ) {
-					auto keyframeState = &state.keyframeStates[entry->index];
-					bool8 wasActive    = {false};
-					auto prev          = keyframeState->custom;
-					if( prev >= 0 && currentKeyframes->active.size() ) {
-						wasActive = currentKeyframes->active[prev].data;
-					}
-					processCustom( curves, currentFrame, currentKeyframes->active,
-					               &keyframeState->custom, &entry->active );
-					auto activated   = ( !wasActive && entry->active );
-					auto reactivated = prev != keyframeState->custom && wasActive && entry->active;
-					if( activated || reactivated || reset ) {
-						// set time to 0 to emit particles immediately
-						entry->time = 0;
+				auto animation  = &animations[state.animationIndex];
+				auto keyframes  = animation->keyframes;
+				auto curves     = animation->curves;
+				state.prevFrame = state.currentFrame;
+				state.currentFrame += dt;
+				bool reset = false;
+				if( state.currentFrame > animation->duration ) {
+					if( state.flags & SkeletonAnimationState::Repeating ) {
+						state.currentFrame -= animation->duration;
+						reset = true;
+					} else {
+						clearFlag( state.flags, SkeletonAnimationState::Playing );
 					}
 				}
-			}
-			for( auto i = 0; i < hitboxesCount; ++i ) {
-				auto entry            = &hitboxes[i];
-				auto currentKeyframes = &keyframes[entry->index];
-				if( currentKeyframes->hasKeyframes ) {
-					auto keyframeState = &state.keyframeStates[entry->index];
-					bool8 wasActive    = {false};
-					auto prev          = keyframeState->custom;
-					if( prev >= 0 && currentKeyframes->active.size() ) {
-						wasActive = currentKeyframes->active[prev].data;
-					}
-					processCustom( curves, currentFrame, currentKeyframes->active,
-					               &keyframeState->custom, &entry->active );
-					auto activated   = ( !wasActive && entry->active );
-					auto reactivated = prev != keyframeState->custom && wasActive && entry->active;
-					if( activated || reactivated || reset ) {
-						// TODO: reactivation of hitboxes
+				auto currentFrame = state.currentFrame;
+				// apply keyframe animations
+				for( auto i = 0; i < transformsCount; ++i ) {
+					auto currentKeyframes = &keyframes[i];
+					if( currentKeyframes->hasKeyframes ) {
+						auto transform     = &transforms[i];
+						auto keyframeState = &state.keyframeStates[i];
+						if( reset ) {
+							*keyframeState = {-1, -1, -1, -1, -1};
+						}
+						processKeyframe( curves, currentFrame, currentKeyframes->translation,
+						                 &keyframeState->translation, &transform->translation );
+						processKeyframe( curves, currentFrame, currentKeyframes->rotation,
+						                 &keyframeState->rotation, &transform->rotation );
+						processScale( curves, currentFrame, currentKeyframes->scale,
+						              &keyframeState->scale, &transform->scale );
+						processColor( curves, currentFrame, currentKeyframes->flashColor,
+						              &keyframeState->flashColor, &transform->flashColor );
 					}
 				}
+				for( auto i = 0; i < visualsCount; ++i ) {
+					auto entry            = &visuals[i];
+					auto currentKeyframes = &keyframes[entry->index];
+					if( currentKeyframes->hasKeyframes ) {
+						auto keyframeState = &state.keyframeStates[entry->index];
+						processCustom( curves, currentFrame, currentKeyframes->frame,
+						               &keyframeState->custom, &entry->frame );
+					}
+				}
+				for( auto i = 0; i < emittersCount; ++i ) {
+					auto entry            = &emitters[i];
+					auto currentKeyframes = &keyframes[entry->index];
+					if( currentKeyframes->hasKeyframes ) {
+						auto keyframeState = &state.keyframeStates[entry->index];
+						bool8 wasActive    = {false};
+						auto prev          = keyframeState->custom;
+						if( prev >= 0 && currentKeyframes->active.size() ) {
+							wasActive = currentKeyframes->active[prev].data;
+						}
+						processCustom( curves, currentFrame, currentKeyframes->active,
+						               &keyframeState->custom, &entry->active );
+						auto activated   = ( !wasActive && entry->active );
+						auto reactivated = prev != keyframeState->custom && wasActive && entry->active;
+						if( activated || reactivated || reset ) {
+							// set time to 0 to emit particles immediately
+							entry->time = 0;
+						}
+					}
+				}
+				for( auto i = 0; i < hitboxesCount; ++i ) {
+					auto entry            = &hitboxes[i];
+					auto currentKeyframes = &keyframes[entry->index];
+					if( currentKeyframes->hasKeyframes ) {
+						auto keyframeState = &state.keyframeStates[entry->index];
+						bool8 wasActive    = {false};
+						auto prev          = keyframeState->custom;
+						if( prev >= 0 && currentKeyframes->active.size() ) {
+							wasActive = currentKeyframes->active[prev].data;
+						}
+						processCustom( curves, currentFrame, currentKeyframes->active,
+						               &keyframeState->custom, &entry->active );
+						auto activated   = ( !wasActive && entry->active );
+						auto reactivated = prev != keyframeState->custom && wasActive && entry->active;
+						if( activated || reactivated || reset ) {
+							// TODO: reactivation of hitboxes
+						}
+					}
+				}
+
+				// events
+				state.prevEvent = state.event;
+				if( reset ) {
+					state.event = -1;
+				}
+				state.event = findCurrentKeyframe( currentFrame, animation->events, state.event );
 			}
 		}
 
@@ -977,7 +1065,7 @@ void update( Skeleton* skeleton, ParticleSystem* particleSystem, float dt )
 		auto worldTransforms = skeleton->worldTransforms;
 		auto rootTransform   = skeleton->rootTransform;
 		if( skeleton->mirrored ) {
-			rootTransform = matrixScale( -1, 1, 1 ) * rootTransform;
+			rootTransform.transform = matrixScale( -1, 1, 1 ) * rootTransform.transform;
 		}
 
 		auto count = skeleton->transforms.size();
@@ -991,9 +1079,12 @@ void update( Skeleton* skeleton, ParticleSystem* particleSystem, float dt )
 
 			assert( transform->parent < i );
 			if( transform->parent >= 0 ) {
-				*world = local * worldTransforms[transform->parent];
+				auto parent       = &worldTransforms[transform->parent];
+				world->transform  = local * parent->transform;
+				world->flashColor = transform->flashColor.bits | parent->flashColor;
 			} else {
-				*world = local * rootTransform;
+				world->transform  = local * rootTransform.transform;
+				world->flashColor = transform->flashColor.bits | rootTransform.flashColor.bits;
 			}
 		}
 
@@ -1011,7 +1102,7 @@ void update( Skeleton* skeleton, ParticleSystem* particleSystem, float dt )
 							state.time = FLOAT32_MAX;
 						}
 
-						auto pos = transformVector3( worldTransforms[state.index], {} );
+						auto pos = transformVector3( worldTransforms[state.index].transform, {} );
 						pos.y    = -pos.y;
 						emitParticles( particleSystem, pos, emitter->emitter );
 					}
@@ -1020,9 +1111,8 @@ void update( Skeleton* skeleton, ParticleSystem* particleSystem, float dt )
 		}
 
 		// calculate hitbox origins
-		auto rootOrigin = transformVector3( rootTransform, {} );
 		FOR( entry : skeleton->hitboxes ) {
-			entry.origin = transformVector3( worldTransforms[entry.index], {} ) - rootOrigin;
+			entry.origin = transformVector3( worldTransforms[entry.index].transform, {} );
 		}
 	}
 }
@@ -1052,18 +1142,21 @@ void render( RenderCommands* renderer, const Skeleton* skeleton )
 	pushMatrix( stack );
 	FOR( visual : skeleton->visuals ) {
 		if( visual.animation >= 0 ) {
-			auto& world     = worldTransforms[visual.index];
+			auto world      = &worldTransforms[visual.index];
 			auto collection = voxels[visual.assetIndex];
 			setTexture( renderer, 0, collection->texture );
 			auto range = collection->animations[visual.animation].range;
 			if( range ) {
 				auto entry = &collection->frames[range.min + ( visual.frame % width( range ) )];
 				currentMatrix( stack ) =
-				    matrixTranslation( Vec3( -entry->offset.x, entry->offset.y, 0 ) ) * world;
+				    matrixTranslation( Vec3( -entry->offset.x, entry->offset.y, 0 ) )
+				    * world->transform;
+				renderer->flashColor = world->flashColor;
 				addRenderCommandMesh( renderer, entry->mesh );
 			}
 		}
 	}
+	renderer->flashColor = 0;
 	popMatrix( stack );
 	setRenderState( renderer, RenderStateType::BackFaceCulling, true );
 }
@@ -1162,23 +1255,27 @@ SkeletonSystem makeSkeletonSystem( StackAllocator* allocator, int32 maxSkeletons
 	result.definitions    = makeUArray( allocator, SkeletonDefinition, maxDefinitions );
 
 	auto heroCollisionIds                     = makeIndicesArray( &result.hero.collisionIds );
+	auto heroHurtboxIds                       = makeIndicesArray( &result.hero.hurtboxIds );
 	result.hero.definition                    = result.definitions.emplace_back();
 	LoadSkeletonDefinitionIndicesOutput inout = {
 	    {makeArrayView( HeroAnimationNames ), makeIndicesArray( &result.hero.animationIds )},
 	    {makeArrayView( HeroNodeNames ), makeIndicesArray( &result.hero.nodeIds )},
 	    {makeArrayView( HeroCollisionNames ), heroCollisionIds},
+	    {},
+	    {makeArrayView( HeroHurtboxNames ), heroHurtboxIds},
 	};
 	*result.hero.definition =
 	    loadSkeletonDefinitionAndIndices( allocator, "Data/voxels/hero_animations.json", inout );
 
 	auto wheelsCollisionIds  = makeIndicesArray( &result.wheels.collisionIds );
+	auto wheelsHurtboxIds    = makeIndicesArray( &result.wheels.hurtboxIds );
 	result.wheels.definition = result.definitions.emplace_back();
 	inout                    = {
 	    {makeArrayView( WheelsAnimationNames ), makeIndicesArray( &result.wheels.animationIds )},
-	    {},
+	    {makeArrayView( WheelsNodeNames ), makeIndicesArray( &result.wheels.nodeIds )},
 	    {makeArrayView( WheelsCollisionNames ), wheelsCollisionIds},
 	    {},
-	    {makeArrayView( WheelsHurtboxNames ), makeIndicesArray( &result.wheels.hurtboxIds )},
+	    {makeArrayView( WheelsHurtboxNames ), wheelsHurtboxIds},
 	};
 	*result.wheels.definition = loadSkeletonDefinitionAndIndices(
 	    allocator, "Data/voxels/wheels_enemy_animations.json", inout );
@@ -1189,24 +1286,50 @@ SkeletonSystem makeSkeletonSystem( StackAllocator* allocator, int32 maxSkeletons
 	if( heroCollisionIds.size() ) {
 		auto traits        = &result.skeletonTraits[Entity::type_hero];
 		traits->definition = result.hero.definition;
-		auto count         = heroCollisionIds.size();
-		if( heroCollisionIds.size() > countof( traits->collisionIdsData ) ) {
-			LOG( ERROR, "Hero collision bounds exceeds {}", countof( traits->collisionIdsData ) );
-			count = countof( traits->collisionIdsData );
+		{
+			auto count = heroCollisionIds.size();
+			if( heroCollisionIds.size() > countof( traits->collisionIdsData ) ) {
+				LOG( ERROR, "Hero collision bounds exceeds {}",
+				     countof( traits->collisionIdsData ) );
+				count = countof( traits->collisionIdsData );
+			}
+			copy( traits->collisionIdsData, heroCollisionIds.data(), count );
+			traits->hitboxesCounts[0] = auto_truncate( heroCollisionIds.size() );
 		}
-		copy( traits->collisionIdsData, heroCollisionIds.data(), count );
-		traits->hitboxesCounts[0] = auto_truncate( heroCollisionIds.size() );
+		{
+			auto count = heroHurtboxIds.size();
+			if( heroHurtboxIds.size() > countof( traits->hurtboxIdsData ) ) {
+				LOG( ERROR, "Wheels hurtbox bounds exceeds {}",
+				     countof( traits->hurtboxIdsData ) );
+				count = countof( traits->hurtboxIdsData );
+			}
+			copy( traits->hurtboxIdsData, heroHurtboxIds.data(), count );
+			traits->hitboxesCounts[2] = auto_truncate( heroHurtboxIds.size() );
+		}
 	}
 	if( wheelsCollisionIds.size() ) {
 		auto traits        = &result.skeletonTraits[Entity::type_wheels];
 		traits->definition = result.wheels.definition;
-		auto count         = wheelsCollisionIds.size();
-		if( wheelsCollisionIds.size() > countof( traits->collisionIdsData ) ) {
-			LOG( ERROR, "Wheels collision bounds exceeds {}", countof( traits->collisionIdsData ) );
-			count = countof( traits->collisionIdsData );
+		{
+			auto count = wheelsCollisionIds.size();
+			if( wheelsCollisionIds.size() > countof( traits->collisionIdsData ) ) {
+				LOG( ERROR, "Wheels collision bounds exceeds {}",
+				     countof( traits->collisionIdsData ) );
+				count = countof( traits->collisionIdsData );
+			}
+			copy( traits->collisionIdsData, wheelsCollisionIds.data(), count );
+			traits->hitboxesCounts[0] = auto_truncate( wheelsCollisionIds.size() );
 		}
-		copy( traits->collisionIdsData, wheelsCollisionIds.data(), count );
-		traits->hitboxesCounts[0] = auto_truncate( wheelsCollisionIds.size() );
+		{
+			auto count = wheelsHurtboxIds.size();
+			if( wheelsHurtboxIds.size() > countof( traits->hurtboxIdsData ) ) {
+				LOG( ERROR, "Wheels hurtbox bounds exceeds {}",
+				     countof( traits->hurtboxIdsData ) );
+				count = countof( traits->hurtboxIdsData );
+			}
+			copy( traits->hurtboxIdsData, wheelsHurtboxIds.data(), count );
+			traits->hitboxesCounts[2] = auto_truncate( wheelsHurtboxIds.size() );
+		}
 	}
 	return result;
 }
@@ -1221,33 +1344,49 @@ Skeleton* addSkeleton( SkeletonSystem* system, const SkeletonDefinition& definit
 	return result;
 }
 
-rectf getHitboxRelative( Skeleton* skeleton, int32 index )
+pair< rectf, bool > getHitboxRelative( Skeleton* skeleton, int32 index )
 {
 	assert( skeleton );
-	if( skeleton->dirty ) {
-		update( skeleton, nullptr, 0 );
-	}
-	auto hitbox = &skeleton->hitboxes[index];
-	auto origin = hitbox->origin.xy;
+	assert( !skeleton->dirty );
+
+	auto rootOrigin = transformVector3( skeleton->rootTransform.transform, {} );
+	auto hitbox     = &skeleton->hitboxes[index];
+	auto origin     = hitbox->origin.xy - rootOrigin.xy;
 	if( skeleton->mirrored ) {
 		origin = -origin;
 	}
-	debugPrintln( "{}",origin	 );
-	auto result   = translate( hitbox->relative, origin );
-	result.top    = -result.top;
-	result.bottom = -result.bottom;
+	pair< rectf, bool > result;
+	result.first        = translate( hitbox->relative, origin );
+	result.first.top    = -result.first.top;
+	result.first.bottom = -result.first.bottom;
+
+	result.second = (bool)hitbox->active;
+	return result;
+}
+pair< rectf, bool > getHitboxAbsolute( Skeleton* skeleton, int32 index )
+{
+	assert( skeleton );
+	assert( !skeleton->dirty );
+
+	auto hitbox = &skeleton->hitboxes[index];
+	pair< rectf, bool > result;
+	result.first        = translate( hitbox->relative, hitbox->origin.xy );
+	result.first.top    = -result.first.top;
+	result.first.bottom = -result.first.bottom;
+
+	result.second       = (bool)hitbox->active;
 	return result;
 }
 
 void setTransform( Skeleton* skeleton, mat4arg transform )
 {
-	skeleton->rootTransform = transform;
-	skeleton->dirty         = true;
+	skeleton->rootTransform.transform = transform;
+	skeleton->dirty                   = true;
 }
 void setMirrored( Skeleton* skeleton, bool mirrored )
 {
+	skeleton->dirty    = skeleton->mirrored != mirrored;
 	skeleton->mirrored = mirrored;
-	skeleton->dirty    = true;
 }
 
 NullableInt32 getNodeIndex( Skeleton* skeleton, StringView name )
@@ -1260,7 +1399,7 @@ NullableInt32 getNodeIndex( Skeleton* skeleton, StringView name )
 }
 vec3 getNode( Skeleton* skeleton, int32 index )
 {
-	return transformVector3( skeleton->worldTransforms[index], {} );
+	return transformVector3( skeleton->worldTransforms[index].transform, {} );
 }
 
 Entity* addEntity( EntitySystem* entitySystem, SkeletonSystem* skeletonSystem, EntityHandle handle,
@@ -1288,9 +1427,11 @@ Entity* addEntity( EntitySystem* entitySystem, SkeletonSystem* skeletonSystem, E
 		result->gravityModifier         = traits->init.gravityModifier;
 		result->bounceModifier          = traits->init.bounceModifier;
 		result->airFrictionCoeffictient = traits->init.airFrictionCoeffictient;
+		result->team                    = traits->team;
 
-		if( skeletonTraits && skeletonTraits->definition ) {
+		if( skeletonTraits && skeletonTraits->definition && *skeletonTraits->definition ) {
 			result->skeleton = addSkeleton( skeletonSystem, *skeletonTraits->definition );
+			update( result->skeleton, nullptr, 0 );
 		}
 
 		switch( type ) {
