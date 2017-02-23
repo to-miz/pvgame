@@ -213,6 +213,13 @@ CountdownTimer processTimer( CountdownTimer timer, float dt )
 	return result;
 }
 
+enum class ProjectileType {
+	Hero,
+	Wheels,
+
+	Count
+};
+
 #include "Entity.cpp"
 
 struct ControlComponent {
@@ -350,12 +357,146 @@ struct HitboxSystem {
 	}
 };
 
+struct ProjectileTraits {
+	float speed;
+	float maxSpeed;
+	float acceleration;
+	float alive;
+	int8 durability;
+	struct {
+		uint8 hasHurtbox : 1;
+		uint8 bounce : 1;
+	} flags;
+};
+
+const ProjectileTraits* getProjectileTraits( ProjectileType type )
+{
+	static const ProjectileTraits ProjectileTraitsEntries[] = {
+	    // Hero
+	    {
+	        3,   // speed
+	        0,   // maxSpeed
+	        0,   // acceleration
+	        60,  // alive
+	        1,   // durability
+	        {
+	            false,  // hasHurtbox
+	            false,  // bounce
+	        },
+	    },
+
+	    // Wheels
+	    {
+	        1,   // speed
+	        0,   // maxSpeed
+	        0,   // acceleration
+	        0,  // alive
+	        1,   // durability
+	        {
+	            false,  // hasHurtbox
+	            true,   // bounce
+	        },
+	    },
+	};
+
+	assert( valueof( type ) >= 0 && valueof( type ) < valueof( ProjectileType::Count ) );
+	return &ProjectileTraitsEntries[valueof( type )];
+}
+
+struct ProjectileData {
+	rectf collision;
+	rectf hitbox;
+	rectf hurtbox;
+
+	TextureId texture;
+	VoxelCollection::Frame frame;
+	float z;
+};
+struct ProjectileSystem {
+	ProjectileData init[valueof( ProjectileType::Count )];
+};
+
+const ProjectileData* getProjectileData( ProjectileSystem* system, ProjectileType type )
+{
+	assert( valueof( type ) >= 0 && valueof( type ) < valueof( ProjectileType::Count ) );
+	return &system->init[valueof( type )];
+}
+
+ProjectileSystem makeProjectileSystem()
+{
+	ProjectileSystem result = {};
+	static const StringView Files[] = {
+	    "Data/voxels/projectile_anim.json",   // Hero
+	    "Data/voxels/green_projectile.json",  // Wheels
+	};
+
+	for( auto i = 0, count = valueof( ProjectileType::Count ); i < count; ++i ) {
+		TEMPORARY_MEMORY_BLOCK( GlobalScrap ) {
+			auto allocator = makeStackAllocator( GlobalScrap, kilobytes( 10 ) );
+			auto filename  = Files[i];
+			auto dest      = &result.init[i];
+
+			auto definition = loadSkeletonDefinition( &allocator, filename, 0 );
+			if( !definition ) {
+				LOG( ERROR, "{}: Failed to load projectile skeleton definition", filename );
+				// TODO: display error message and kill program
+				break;
+			}
+
+			auto hitboxes = definition.baseHitboxes;
+			auto collision =
+			    getHitboxIndex( &definition, "collision", SkeletonHitboxState::Collision );
+			auto hitbox  = getHitboxIndex( &definition, "hitbox", SkeletonHitboxState::Hitbox );
+			auto hurtbox = getHitboxIndex( &definition, "hurtbox", SkeletonHitboxState::Hurtbox );
+
+			if( !collision || !hitbox || !definition.baseVisuals.size()
+			    || !definition.baseNodes.size()
+			    || ( getProjectileTraits( (ProjectileType)i )->flags.hasHurtbox && !hurtbox ) ) {
+
+				LOG( ERROR, "{}: Invalid projectile skeleton", filename );
+				// TODO: display error message and kill program
+				break;
+			}
+
+			dest->collision        = hitboxes[collision.get()].relative;
+			dest->collision.top    = -dest->collision.top;
+			dest->collision.bottom = -dest->collision.bottom;
+			dest->hitbox           = hitboxes[hitbox.get()].relative;
+			dest->hitbox.top       = -dest->hitbox.top;
+			dest->hitbox.bottom    = -dest->hitbox.bottom;
+			if( hurtbox ) {
+				dest->hurtbox        = hitboxes[hurtbox.get()].relative;
+				dest->hurtbox.top    = -dest->hurtbox.top;
+				dest->hurtbox.bottom = -dest->hurtbox.bottom;
+			}
+			auto visual     = definition.baseVisuals[0];
+			auto collection = &definition.voxels[visual.assetIndex];
+			auto range      = collection->animations[visual.animation].range;
+			if( !range || !collection->texture ) {
+				LOG( ERROR, "{}: Invalid projectile skeleton", filename );
+				// TODO: display error message and kill program
+				break;
+			}
+			dest->texture = collection->texture;
+			dest->frame   = collection->frames[range.min];
+			if( !dest->frame.mesh ) {
+				LOG( ERROR, "{}: Invalid projectile skeleton", filename );
+				// TODO: display error message and kill program
+				break;
+			}
+			dest->z = definition.baseNodes[0].translation.z;
+		}
+	}
+	return result;
+};
+
 struct GameState {
 	TileSet tileSet;
 	ParticleSystem particleSystem;
 	SkeletonSystem skeletonSystem;
 	VoxelCollection projectile;
 	HitboxSystem hitboxSystem;
+	ProjectileSystem projectileSystem;
 
 	HandleManager entityHandles;
 	EntitySystem entitySystem;
@@ -382,18 +523,30 @@ struct GameState {
 	ShaderId outlineShader;
 };
 
-bool emitProjectile( GameState* game, vec2arg origin, vec2arg velocity, EntityTeam team )
+bool emitProjectile( GameState* game, vec2arg origin, vec2arg direction, ProjectileType type,
+                     EntityTeam team )
 {
+	assert( floatEq( length( direction ), 1 ) );
 	// TODO: emit different types of projectiles based on upgrades
-	auto projectileId = addEntityHandle( &game->entityHandles );
-	auto projectile   = addEntity( &game->entitySystem, &game->skeletonSystem, projectileId,
-	                             Entity::type_projectile );
-	if( projectile ) {
-		projectile->position       = origin;
-		projectile->velocity       = velocity;
-		projectile->aab            = {-3, -3, 3, 3};
-		projectile->aliveCountdown = {60};
-		projectile->team           = team;
+	// TODO: put this code also into addEntity
+	auto skeletonSystem = &game->skeletonSystem;
+	auto projectileId   = addEntityHandle( &game->entityHandles );
+	auto entity =
+	    addEntity( &game->entitySystem, skeletonSystem, projectileId, Entity::type_projectile );
+	if( entity ) {
+		auto traits            = getProjectileTraits( type );
+		entity->position       = origin;
+		entity->velocity       = direction * traits->speed;
+		entity->aliveCountdown = {traits->alive};
+		entity->team           = team;
+		if( !floatEqZero( traits->maxSpeed ) ) {
+			entity->maxSpeed = direction * traits->maxSpeed;
+		}
+
+		auto data                     = getProjectileData( &game->projectileSystem, type );
+		entity->projectile.type       = type;
+		entity->projectile.durability = traits->durability;
+		entity->aab                   = data->collision;
 		return true;
 	}
 	return false;
@@ -1008,11 +1161,22 @@ void removeEntities( HitboxSystem* system, Array< EntityHandle > handles )
 	} );
 	system->setPairsCount( pairs.size() );
 }
+void removeEntities( EntitySystem* entitySystem, SkeletonSystem* system,
+                     Array< EntityHandle > handles )
+{
+	FOR( entity : entitySystem->entries ) {
+		if( entity.skeleton && exists( handles, entity.handle ) ) {
+			deleteSkeleton( system, entity.skeleton );
+			entity.skeleton = nullptr;
+		}
+	}
+}
 void processEntityRemovalQueue( GameState* game )
 {
 	assert( game );
 	if( game->entityRemovalQueue.size() ) {
 		auto handles = makeArrayView( game->entityRemovalQueue );
+		removeEntities( &game->entitySystem, &game->skeletonSystem, handles );
 		removeEntities( &game->controlSystem, handles );
 		removeEntities( &game->entitySystem, handles );
 		removeEntities( &game->hitboxSystem, handles );
@@ -1169,11 +1333,12 @@ void processHeroEntity( GameState* game, Entity* entity, float dt, bool frameBou
 			auto shootPosIndex = game->skeletonSystem.hero.nodeIds.shootPos;
 			auto gunPosition   = getNode( entity->skeleton, shootPosIndex ).xy;
 			gunPosition.y      = -gunPosition.y;
-			vec2 velocity      = {3, 0};
+			vec2 direction     = {1, 0};
 			if( entity->faceDirection == EntityFaceDirection::Left ) {
-				velocity.x = -velocity.x;
+				direction.x = -direction.x;
 			}
-			if( !emitProjectile( game, gunPosition, velocity, entity->team ) ) {
+			if( !emitProjectile( game, gunPosition, direction, ProjectileType::Hero,
+			                     entity->team ) ) {
 				hero->shootingAnimationTimer = {};
 			}
 		}
@@ -1187,6 +1352,14 @@ void processWheelsEntity( GameState* game, Entity* entity, float dt, bool frameB
 {
 	auto wheels      = &entity->wheels;
 	bool stateChange = false;
+
+	if( entity->flags.hurt ) {
+		--wheels->stats.hp;
+		if( wheels->stats.hp <= 0 ) {
+			entity->flags.deathFlag = true;
+			removeEntity( game, entity->handle );
+		}
+	}
 
 	auto doHurt = [&]() {
 		if( entity->flags.hurt ) {
@@ -1295,7 +1468,8 @@ void processWheelsEntity( GameState* game, Entity* entity, float dt, bool frameB
 						                       game->skeletonSystem.wheels.nodeIds.attackOrigin )
 						                  .xy;
 						origin.y = -origin.y;
-						emitProjectile( game, origin, velocity, entity->team );
+						emitProjectile( game, origin, velocity, ProjectileType::Wheels,
+						                entity->team );
 					}
 				}
 
@@ -1347,10 +1521,11 @@ void processEntityBehaviors( GameState* game, float dt, bool frameBoundary )
 	emitEntityParticles( game, dt );
 
 	static BehaviorFunctionType* const EntityBehaviors[] = {
-		processHeroEntity,
-		processProjectileEntity,
-		processWheelsEntity,
+	    processProjectileEntity, processHeroEntity, processWheelsEntity,
 	};
+	static_assert( Entity::type_projectile == 1, "Wrong entity type order" );
+	static_assert( Entity::type_hero == 2, "Wrong entity type order" );
+	static_assert( Entity::type_wheels == 3, "Wrong entity type order" );
 
 	FOR( entry : game->entitySystem.staticEntries() ) {
 		assert( entry.type != Entity::type_none );
@@ -1372,13 +1547,14 @@ static void doGame( AppData* app, GameInputs* inputs, bool focus, float dt, bool
 		auto allocator               = &app->stackAllocator;
 		game->particleSystem         = makeParticleSystem( allocator, 200 );
 		game->particleSystem.texture = app->platform.loadTexture( "Data/Images/particles.png" );
-		loadVoxelCollection( allocator, "Data/voxels/projectile.json", &game->projectile );
+
+		game->projectileSystem = makeProjectileSystem();
 
 		game->outlineShader =
 		    app->platform.loadShader( "Shaders/scale_by_normal.vsh", "Shaders/single_color.fsh" );
 
 		loadTileSet( allocator, "Data/voxels/default_tileset.json", &app->gameState.tileSet );
-		game->skeletonSystem = makeSkeletonSystem( allocator, 10, 10 );
+		game->skeletonSystem = makeSkeletonSystem();
 
 		auto maxEntities         = 10;
 		game->entityHandles      = makeHandleManager();
@@ -1537,18 +1713,20 @@ static void doGame( AppData* app, GameInputs* inputs, bool focus, float dt, bool
 						continue;
 					}
 					FOR( other : staticEntries ) {
-						if( &other == entity || other.team == entity->team ) {
+						if( &other == entity || other.team == entity->team
+						    || other.flags.deathFlag ) {
 							continue;
 						}
 						testHit( &other, entity->handle, hitbox.first, prevPosition, delta );
 					}
 				}
 			} else if( entity->type == Entity::type_projectile ) {
-				auto hitbox       = entity->aab;
-				auto delta        = entity->positionDelta;
-				auto prevPosition = entity->position - entity->positionDelta;
+				auto data = getProjectileData( &game->projectileSystem, entity->projectile.type );
+				const auto& hitbox = data->hitbox;
+				auto delta         = entity->positionDelta;
+				auto prevPosition  = entity->position - entity->positionDelta;
 				FOR( other : staticEntries ) {
-					if( &other == entity || other.team == entity->team ) {
+					if( &other == entity || other.team == entity->team || other.flags.deathFlag ) {
 						continue;
 					}
 					if( other.flags.hurt ) {
@@ -1561,6 +1739,7 @@ static void doGame( AppData* app, GameInputs* inputs, bool focus, float dt, bool
 					}
 					if( testHit( &other, entity->handle, hitbox, prevPosition, delta ) ) {
 						entity->flags.deathFlag = true;
+						break;
 					};
 				}
 			}
@@ -1661,16 +1840,17 @@ static void doGame( AppData* app, GameInputs* inputs, bool focus, float dt, bool
 		// render entities
 		for( auto& entry : game->entitySystem.entries ) {
 			if( entry.skeleton ) {
-				static float x = 0;
-				x += dt * 0.1f;
 				render( renderer, entry.skeleton );
 			} else {
-				VoxelCollection::Frame* currentFrame = nullptr;
+				const VoxelCollection::Frame* currentFrame = nullptr;
+				float z                                    = 0;
 				switch( entry.type ) {
 					case Entity::type_projectile: {
-						setTexture( renderer, 0, game->projectile.texture );
-						auto frames  = game->projectile.frames;
-						currentFrame = &frames[0];
+						auto data =
+						    getProjectileData( &game->projectileSystem, entry.projectile.type );
+						currentFrame = &data->frame;
+						setTexture( renderer, 0, data->texture );
+						z = data->z;
 						break;
 					}
 					default: {
@@ -1679,18 +1859,10 @@ static void doGame( AppData* app, GameInputs* inputs, bool focus, float dt, bool
 				}
 				if( currentFrame ) {
 					// 2d game world coordinates to 3d space coordinates
-					auto offset = currentFrame->offset;
-					// offset.x = -offset.x;
-					auto position = ( entry.position - offset ) * CELL_WIDTH;
-					position.y    = -position.y - CELL_HEIGHT * height( entry.aab );
-					// position.x -= CELL_WIDTH * entry.aab.right;
+					auto offset   = currentFrame->offset;
+					auto position = gameToScreen( entry.position - offset );
 					pushMatrix( matrixStack );
-					translate( matrixStack, position, 0 );
-					if( entry.faceDirection == EntityFaceDirection::Left ) {
-						translate( matrixStack, 2 * currentFrame->offset.x, 0 );
-						auto rot = matrixRotationY( Pi32 );
-						multMatrix( matrixStack, rot );
-					}
+					translate( matrixStack, position, z );
 					auto mesh               = addRenderCommandMesh( renderer, currentFrame->mesh );
 					mesh->screenDepthOffset = -0.01f;
 					popMatrix( matrixStack );

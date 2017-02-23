@@ -139,6 +139,7 @@ template< class T, class U > tvec3< T > Vec3( tvec3arg< U > v );
 vec3 cross( vec3arg a, vec3arg b );
 float dot( vec3arg a, vec3arg b );
 float length( vec3arg v );
+bool hasMagnitude( vec3arg v );
 vec3 normalize( vec3arg v );
 vec3 normalize( vec3arg v, float* length );
 vec3 safeNormalize( vec3arg v, vec3arg def = {} );

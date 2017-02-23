@@ -3996,6 +3996,9 @@ void doHitboxEditor( AppData* app, GameInputs* inputs, rectfarg rect )
 					break;
 				}
 				case AnimatorMouseMode::Translate: {
+					if( !isKeyDown( inputs, KC_Alt ) ) {
+						destination = round( destination );
+					}
 					assert( node->asset );
 					auto& hitbox = *getHitboxRect( node->asset );
 					auto index = valueof( view->selectedFeature ) - 1;

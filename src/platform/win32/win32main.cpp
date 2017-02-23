@@ -50,6 +50,7 @@
 #include <Core/StringView.cpp>
 #include <Core/String.cpp>
 #include <Core/Unicode.cpp>
+#include <Core/Color.cpp>
 #include <tm_conversion_wrapper.cpp>
 
 #include <Core/ScopeGuard.h>
@@ -62,7 +63,6 @@
 
 #include <gl/gl.h>
 
-#include <Core/Color.cpp>
 #include <Core/Normal.cpp>
 #include <ImageData.h>
 

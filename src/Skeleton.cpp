@@ -266,6 +266,10 @@ bool applyPermutationByIds( Array< T > array, Array< T > base )
 bool loadSkeletonDefinitionImpl( StackAllocator* allocator, StringView filename,
                                  SkeletonDefinition* out )
 {
+	// allocator can't be GlobalScrap because this function uses GlobalScrap itself and out will be
+	// wiped as a result at the end
+	assert( allocator != GlobalScrap );
+
 #define ABORT_ERROR( str, ... )                            \
 	do {                                                   \
 		LOG( ERROR, "{}: " str, filename, ##__VA_ARGS__ ); \
@@ -665,6 +669,81 @@ bool loadSkeletonDefinitionImpl( StackAllocator* allocator, StringView filename,
 			ABORT_ERROR( "No animations defined" );
 		}
 
+		for( auto i = 0, count = out->nodeIds.size(); i < count; ++i ) {
+			out->nodeIds[i].index = auto_truncate( i );
+		}
+
+		// remove trivial nodes
+		// TODO: implement removal of trivial nodes even if animations are present
+		if( !out->animations.size() ) {
+			auto isTrivial = []( const SkeletonTransform& node ) {
+				return node.parent >= 0 && !hasMagnitude( node.translation )
+				       && !hasMagnitude( node.rotation ) && floatEq( node.scale.x, 1 )
+				       && floatEq( node.scale.y, 1 ) && floatEq( node.scale.z, 1 )
+				       && node.flashColor.bits == 0 && floatEqZero( node.length );
+			};
+			bool trivialFound = false;
+			const auto count  = out->baseNodes.size();
+			do {
+				trivialFound = false;
+				for( auto i = 0; i < count; ++i ) {
+					auto& node = out->baseNodes[i];
+					if( isTrivial( node ) ) {
+						FOR( asset : out->baseVisuals ) {
+							if( asset.index == i ) {
+								asset.index  = node.parent;
+								trivialFound = true;
+							}
+						}
+						FOR( asset : out->baseEmitters ) {
+							if( asset.index == i ) {
+								asset.index  = node.parent;
+								trivialFound = true;
+							}
+						}
+						FOR( asset : out->baseHitboxes ) {
+							if( asset.index == i ) {
+								asset.index  = node.parent;
+								trivialFound = true;
+							}
+						}
+						FOR( id : out->nodeIds ) {
+							if( id.index == i ) {
+								id.index = node.parent;
+							}
+						}
+						node.id = -1;
+					}
+				}
+			} while( trivialFound );
+
+			auto fixIndices = [out]( int16 index ) {
+				FOR( asset : out->baseVisuals ) {
+					if( asset.index > index ) {
+						--asset.index;
+					}
+				}
+				FOR( asset : out->baseEmitters ) {
+					if( asset.index > index ) {
+						--asset.index;
+					}
+				}
+				FOR( asset : out->baseHitboxes ) {
+					if( asset.index > index ) {
+						--asset.index;
+					}
+				}
+			};
+			auto view = makeInitializedArrayView( out->baseNodes.data(), out->baseNodes.size() );
+			erase_if( view, [&]( const auto& entry ) {
+				if( entry.id < 0 ) {
+					fixIndices( (int16)indexof( view, entry ) );
+					return true;
+				}
+				return false;
+			} );
+			out->baseNodes = makeArrayView( view );
+		}
 	}
 #undef ABORT_ERROR
 	guard.commit();
@@ -676,51 +755,71 @@ SkeletonDefinition loadSkeletonDefinition( StackAllocator* allocator, StringView
 {
 	assert( id >= 0 );
 	SkeletonDefinition result = {};
-	result.id = -1;
+	result.id                 = -1;
+	auto prevSize             = allocator->size;
 	if( loadSkeletonDefinitionImpl( allocator, filename, &result ) ) {
-		result.id = id;
+		result.id          = id;
+		result.sizeInBytes = auto_truncate( allocator->size - prevSize );
 
 		LOG( INFORMATION, "{}: Success loading skeleton definition", filename );
+	} else {
+		LOG( ERROR, "{}: Failed to load skeleton definition", filename );
 	}
 	return result;
 }
 
-Skeleton makeSkeleton( StackAllocator* allocator, const SkeletonDefinition& definition )
+Skeleton* makeSkeleton( const SkeletonDefinition& definition )
 {
 	assert( definition );
-	Skeleton result                = {};
-	result.rootTransform.transform = matrixIdentity();
-	const auto nodesCount          = definition.baseNodes.size();
-	result.transforms              = makeArray( allocator, SkeletonTransform, nodesCount );
-	result.transforms.assign( definition.baseNodes );
 
-	result.worldTransforms = makeArray( allocator, SkeletonWorldTransform, nodesCount );
+	auto allocator = DynamicStackAllocator{safe_truncate< size_t >(
+	    definition.sizeInBytes + sizeof( Skeleton ) + alignof( Skeleton ) )};
 
-	result.visuals = makeArray( allocator, SkeletonVoxelVisuals, definition.baseVisuals.size() );
-	result.visuals.assign( definition.baseVisuals );
+	Skeleton* result                = allocateStruct( &allocator, Skeleton );
+	*result                         = {};
+	result->rootTransform.transform = matrixIdentity();
+	const auto nodesCount           = definition.baseNodes.size();
+	result->transforms              = makeArray( &allocator, SkeletonTransform, nodesCount );
+	result->transforms.assign( definition.baseNodes );
 
-	result.emitters = makeArray( allocator, SkeletonEmitterState, definition.baseEmitters.size() );
-	result.emitters.assign( definition.baseEmitters );
+	result->worldTransforms = makeArray( &allocator, SkeletonWorldTransform, nodesCount );
 
-	result.hitboxes = makeArray( allocator, SkeletonHitboxState, definition.baseHitboxes.size() );
-	result.hitboxes.assign( definition.baseHitboxes );
+	result->visuals = makeArray( &allocator, SkeletonVoxelVisuals, definition.baseVisuals.size() );
+	result->visuals.assign( definition.baseVisuals );
+
+	result->emitters =
+	    makeArray( &allocator, SkeletonEmitterState, definition.baseEmitters.size() );
+	result->emitters.assign( definition.baseEmitters );
+
+	result->hitboxes = makeArray( &allocator, SkeletonHitboxState, definition.baseHitboxes.size() );
+	result->hitboxes.assign( definition.baseHitboxes );
 
 	const auto voxelsCount = definition.voxels.size();
-	result.voxels          = makeArray( allocator, const VoxelCollection*, voxelsCount );
+	result->voxels         = makeArray( &allocator, const VoxelCollection*, voxelsCount );
 	for( auto i = 0; i < voxelsCount; ++i ) {
-		result.voxels[i] = &definition.voxels[i];
+		result->voxels[i] = &definition.voxels[i];
 	}
 
-	const int32 MaxAnimationStates = 4;
-	result.animations   = makeUArray( allocator, SkeletonAnimationState, MaxAnimationStates );
-	result.keyframeStatesPool =
-	    makeArray( allocator, Array< SkeletonKeyframesState >, MaxAnimationStates );
-	FOR( states : result.keyframeStatesPool ) {
-		states = makeArray( allocator, SkeletonKeyframesState, nodesCount );
+	if( definition.animations.size() ) {
+		const int32 MaxAnimationStates = 4;
+		result->animations = makeUArray( &allocator, SkeletonAnimationState, MaxAnimationStates );
+		result->keyframeStatesPool =
+		    makeArray( &allocator, Array< SkeletonKeyframesState >, MaxAnimationStates );
+		FOR( states : result->keyframeStatesPool ) {
+			states = makeArray( &allocator, SkeletonKeyframesState, nodesCount );
+		}
+	} else {
+		result->animations         = {};
+		result->keyframeStatesPool = {};
 	}
-	result.definition   = &definition;
-	result.definitionId = definition.id;
-	result.dirty        = true;
+	result->definition   = &definition;
+	result->definitionId = definition.id;
+	result->dirty        = true;
+
+	result->base = allocator.ptr;
+	allocator.fitToSize();
+	allocator.releaseOwnership();
+
 	return result;
 }
 
@@ -807,7 +906,7 @@ Ring< const SkeletonEvent > getAnimationEvents( Skeleton* skeleton, int32 animat
 	while( !result.empty() && result.front().t < prevFrame ) {
 		result.pop_front();
 	}
-	while( !result.empty() && result.back().t > currentFrame ) {
+	while( !result.empty() && result.back().t >= currentFrame ) {
 		result.pop_back();
 	}
 	return result;
@@ -1167,7 +1266,7 @@ void processSkeletonSystem( SkeletonSystem* system, ParticleSystem* particleSyst
 	assert( particleSystem );
 
 	FOR( skeleton : system->skeletons ) {
-		update( &skeleton, particleSystem, dt );
+		update( skeleton, particleSystem, dt );
 	}
 }
 
@@ -1175,14 +1274,18 @@ NullableInt32 getHitboxIndex( SkeletonDefinition* definition, StringView name,
                               SkeletonHitboxState::Type type )
 {
 	assert( definition );
-	return find_index_if( definition->baseHitboxes, [definition, name, type]( const auto& cur ) {
-		if( cur.type == type ) {
-			auto ident = &definition->nodeIds[cur.index];
-			return ident->getName() == name;
-		} else {
-			return false;
+	const auto count = definition->baseHitboxes.size();
+	FOR( id : definition->nodeIds ) {
+		if( id.getName() == name ) {
+			for( auto i = 0; i < count; ++i ) {
+				auto hitbox = &definition->baseHitboxes[i];
+				if( hitbox->index == id.index && hitbox->type == type ) {
+					return {i};
+				}
+			}
 		}
-	} );
+	}
+	return NullableInt32::makeNull();
 }
 struct LoadSkeletonDefinitionNamesOutputPair {
 	Array< const StringView > names;
@@ -1194,6 +1297,8 @@ struct LoadSkeletonDefinitionIndicesOutput {
 	LoadSkeletonDefinitionNamesOutputPair collisions;
 	LoadSkeletonDefinitionNamesOutputPair hitboxes;
 	LoadSkeletonDefinitionNamesOutputPair hurtboxes;
+
+	EntitySkeletonTraits traits;
 };
 SkeletonDefinition loadSkeletonDefinitionAndIndices( StackAllocator* allocator, StringView filename,
                                                      LoadSkeletonDefinitionIndicesOutput& out )
@@ -1206,142 +1311,139 @@ SkeletonDefinition loadSkeletonDefinitionAndIndices( StackAllocator* allocator, 
 	assert( out.hurtboxes.names.size() == out.hurtboxes.indices.size() );
 
 	SkeletonDefinition result = loadSkeletonDefinition( allocator, filename, 0 );
+	if( result ) {
+		for( auto i = 0, count = out.animations.indices.size(); i < count; ++i ) {
+			auto name  = out.animations.names[i];
+			auto index = find_index_if( result.animationIds, [name]( const auto& entry ) {
+				return entry.getName() == name;
+			} );
+			out.animations.indices[i] = auto_truncate( index.value );
+		}
+		for( auto i = 0, count = out.nodes.indices.size(); i < count; ++i ) {
+			auto name   = out.nodes.names[i];
+			int8 index = -1;
+			auto id     = find_if( result.nodeIds,
+			                   [name]( const auto& entry ) { return entry.getName() == name; } );
+			if( id != result.animationIds.end() ) {
+				index = auto_truncate( id->index );
+			}
+			out.nodes.indices[i] = index;
+		}
+		for( auto i = 0, count = out.collisions.indices.size(); i < count; ++i ) {
+			auto name  = out.collisions.names[i];
+			auto index = getHitboxIndex( &result, name, SkeletonHitboxState::Collision );
+			out.collisions.indices[i] = auto_truncate( index.value );
+		}
+		for( auto i = 0, count = out.hitboxes.indices.size(); i < count; ++i ) {
+			auto name               = out.hitboxes.names[i];
+			auto index              = getHitboxIndex( &result, name, SkeletonHitboxState::Hitbox );
+			out.hitboxes.indices[i] = auto_truncate( index.value );
+		}
+		for( auto i = 0, count = out.hurtboxes.indices.size(); i < count; ++i ) {
+			auto name  = out.hurtboxes.names[i];
+			auto index = getHitboxIndex( &result, name, SkeletonHitboxState::Hurtbox );
+			out.hurtboxes.indices[i] = auto_truncate( index.value );
+		}
 
-	for( auto i = 0, count = out.animations.indices.size(); i < count; ++i ) {
-		auto name  = out.animations.names[i];
-		auto index = find_index_if(
-		    result.animationIds, [name]( const auto& entry ) { return entry.getName() == name; } );
-		out.animations.indices[i] = auto_truncate( index.value );
-	}
-	for( auto i = 0, count = out.nodes.indices.size(); i < count; ++i ) {
-		auto name  = out.nodes.names[i];
-		auto index = find_index_if(
-		    result.nodeIds, [name]( const auto& entry ) { return entry.getName() == name; } );
-		out.nodes.indices[i] = auto_truncate( index.value );
-	}
-	for( auto i = 0, count = out.collisions.indices.size(); i < count; ++i ) {
-		auto name  = out.collisions.names[i];
-		auto index = getHitboxIndex( &result, name, SkeletonHitboxState::Collision );
-		out.collisions.indices[i] = auto_truncate( index.value );
-	}
-	for( auto i = 0, count = out.hitboxes.indices.size(); i < count; ++i ) {
-		auto name  = out.hitboxes.names[i];
-		auto index = getHitboxIndex( &result, name, SkeletonHitboxState::Hitbox );
-		out.hitboxes.indices[i] = auto_truncate( index.value );
-	}
-	for( auto i = 0, count = out.hurtboxes.indices.size(); i < count; ++i ) {
-		auto name  = out.hurtboxes.names[i];
-		auto index = getHitboxIndex( &result, name, SkeletonHitboxState::Hurtbox );
-		out.hurtboxes.indices[i] = auto_truncate( index.value );
+		auto traits      = &out.traits;
+		auto copyIndices = [filename]( Array< const int8 > ids, Array< int8 > dest ) {
+			auto count = ids.size();
+			if( count > dest.size() ) {
+				LOG( ERROR, "{}: exceeds max hitbox count of {}, truncating", filename,
+				     dest.size() );
+				count = dest.size();
+			}
+			if( count ) {
+				copy( dest.data(), ids.data(), count );
+			}
+			return safe_truncate< int8 >( count );
+		};
+		traits->hitboxesCounts[0] =
+		    copyIndices( out.collisions.indices, makeArrayView( traits->collisionIdsData ) );
+		traits->hitboxesCounts[1] =
+		    copyIndices( out.hitboxes.indices, makeArrayView( traits->hitboxIdsData ) );
+		traits->hitboxesCounts[2] =
+		    copyIndices( out.hurtboxes.indices, makeArrayView( traits->hurtboxIdsData ) );
 	}
 
 	return result;
 }
-template< class T >
-Array< int8 > makeIndicesArray( T* entry )
+template < class T >
+bool loadTypedSkeletonDefinitionAndTraits( SkeletonSystem* system, StringView filename,
+                                           T* typedDefinition, EntitySkeletonTraits* traits )
 {
-	static_assert( alignof( T ) == alignof( int8 ), "T is not properly aligned" );
-	static_assert( std::is_pod< T >::value, "T is not pod" );
-	static_assert( ( sizeof( T ) / sizeof( int8 ) ) * sizeof( int8 ) == sizeof( T ),
-	               "Cannot turn T into an array of int8" );
-	return makeArrayView( (int8*)entry, sizeof( T ) / sizeof( int8 ) );
-};
+	if( system->definitions.remaining() ) {
+		auto definition  = system->definitions.emplace_back();
+		*typedDefinition = {};
+		*traits          = {};
 
-SkeletonSystem makeSkeletonSystem( StackAllocator* allocator, int32 maxSkeletons,
-                                   int32 maxDefinitions )
+		LoadSkeletonDefinitionIndicesOutput inout = {
+		    {T::AnimationNames, typedDefinition->getAnimationIds()},
+		    {T::NodeNames, typedDefinition->getNodeIds()},
+		    {T::CollisionNames, typedDefinition->getCollisionIds()},
+		    {T::HitboxNames, typedDefinition->getHitboxIds()},
+		    {T::HurtboxNames, typedDefinition->getHurtboxIds()},
+		};
+		auto allocator = DynamicStackAllocator{megabytes( 1 )};
+		*definition    = loadSkeletonDefinitionAndIndices( &allocator, filename, inout );
+		if( *definition ) {
+			typedDefinition->definition = definition;
+			*traits                     = inout.traits;
+			traits->definition          = definition;
+			allocator.fitToSize();
+			allocator.releaseOwnership();
+			return true;
+		}
+		system->definitions.pop_back();
+	}
+	return false;
+}
+
+SkeletonSystem makeSkeletonSystem()
 {
 	SkeletonSystem result = {};
-	result.skeletons      = makeUArray( allocator, Skeleton, maxSkeletons );
-	result.definitions    = makeUArray( allocator, SkeletonDefinition, maxDefinitions );
+	const int32 SkeletonCount   = 20;
+	const int32 DefinitionCount = 5;
+	result.skeletons =
+	    makeUninitializedArrayView( allocate< Skeleton* >( SkeletonCount ), SkeletonCount );
+	result.definitions = makeUninitializedArrayView(
+	    allocate< SkeletonDefinition >( DefinitionCount ), DefinitionCount );
 
-	auto heroCollisionIds                     = makeIndicesArray( &result.hero.collisionIds );
-	auto heroHurtboxIds                       = makeIndicesArray( &result.hero.hurtboxIds );
-	result.hero.definition                    = result.definitions.emplace_back();
-	LoadSkeletonDefinitionIndicesOutput inout = {
-	    {makeArrayView( HeroAnimationNames ), makeIndicesArray( &result.hero.animationIds )},
-	    {makeArrayView( HeroNodeNames ), makeIndicesArray( &result.hero.nodeIds )},
-	    {makeArrayView( HeroCollisionNames ), heroCollisionIds},
-	    {},
-	    {makeArrayView( HeroHurtboxNames ), heroHurtboxIds},
-	};
-	*result.hero.definition =
-	    loadSkeletonDefinitionAndIndices( allocator, "Data/voxels/hero_animations.json", inout );
-
-	auto wheelsCollisionIds  = makeIndicesArray( &result.wheels.collisionIds );
-	auto wheelsHurtboxIds    = makeIndicesArray( &result.wheels.hurtboxIds );
-	result.wheels.definition = result.definitions.emplace_back();
-	inout                    = {
-	    {makeArrayView( WheelsAnimationNames ), makeIndicesArray( &result.wheels.animationIds )},
-	    {makeArrayView( WheelsNodeNames ), makeIndicesArray( &result.wheels.nodeIds )},
-	    {makeArrayView( WheelsCollisionNames ), wheelsCollisionIds},
-	    {},
-	    {makeArrayView( WheelsHurtboxNames ), wheelsHurtboxIds},
-	};
-	*result.wheels.definition = loadSkeletonDefinitionAndIndices(
-	    allocator, "Data/voxels/wheels_enemy_animations.json", inout );
-
-	result.allocator = allocator;
-
-	// skeleton traits
-	if( heroCollisionIds.size() ) {
-		auto traits        = &result.skeletonTraits[Entity::type_hero];
-		traits->definition = result.hero.definition;
-		{
-			auto count = heroCollisionIds.size();
-			if( heroCollisionIds.size() > countof( traits->collisionIdsData ) ) {
-				LOG( ERROR, "Hero collision bounds exceeds {}",
-				     countof( traits->collisionIdsData ) );
-				count = countof( traits->collisionIdsData );
-			}
-			copy( traits->collisionIdsData, heroCollisionIds.data(), count );
-			traits->hitboxesCounts[0] = auto_truncate( heroCollisionIds.size() );
-		}
-		{
-			auto count = heroHurtboxIds.size();
-			if( heroHurtboxIds.size() > countof( traits->hurtboxIdsData ) ) {
-				LOG( ERROR, "Wheels hurtbox bounds exceeds {}",
-				     countof( traits->hurtboxIdsData ) );
-				count = countof( traits->hurtboxIdsData );
-			}
-			copy( traits->hurtboxIdsData, heroHurtboxIds.data(), count );
-			traits->hitboxesCounts[2] = auto_truncate( heroHurtboxIds.size() );
-		}
-	}
-	if( wheelsCollisionIds.size() ) {
-		auto traits        = &result.skeletonTraits[Entity::type_wheels];
-		traits->definition = result.wheels.definition;
-		{
-			auto count = wheelsCollisionIds.size();
-			if( wheelsCollisionIds.size() > countof( traits->collisionIdsData ) ) {
-				LOG( ERROR, "Wheels collision bounds exceeds {}",
-				     countof( traits->collisionIdsData ) );
-				count = countof( traits->collisionIdsData );
-			}
-			copy( traits->collisionIdsData, wheelsCollisionIds.data(), count );
-			traits->hitboxesCounts[0] = auto_truncate( wheelsCollisionIds.size() );
-		}
-		{
-			auto count = wheelsHurtboxIds.size();
-			if( wheelsHurtboxIds.size() > countof( traits->hurtboxIdsData ) ) {
-				LOG( ERROR, "Wheels hurtbox bounds exceeds {}",
-				     countof( traits->hurtboxIdsData ) );
-				count = countof( traits->hurtboxIdsData );
-			}
-			copy( traits->hurtboxIdsData, wheelsHurtboxIds.data(), count );
-			traits->hitboxesCounts[2] = auto_truncate( wheelsHurtboxIds.size() );
-		}
-	}
+	loadTypedSkeletonDefinitionAndTraits( &result, "Data/voxels/hero_animations.json", &result.hero,
+	                                      &result.skeletonTraits[Entity::type_hero] );
+	loadTypedSkeletonDefinitionAndTraits( &result, "Data/voxels/wheels_enemy_animations.json",
+	                                      &result.wheels,
+	                                      &result.skeletonTraits[Entity::type_wheels] );
 	return result;
 }
 
 Skeleton* addSkeleton( SkeletonSystem* system, const SkeletonDefinition& definition )
 {
-	Skeleton* result = nullptr;
-	if( system->skeletons.remaining() ) {
-		result  = system->skeletons.emplace_back();
-		*result = makeSkeleton( system->allocator, definition );
+	auto findEmptySkeleton = []( SkeletonSystem* system ) -> Skeleton** {};
+	if( !system->skeletons.remaining() ) {
+		const auto newSize = system->skeletons.capacity() * 2;
+		system->skeletons  = makeInitializedArrayView(
+		    reallocate( system->skeletons.data(), newSize, system->skeletons.capacity() ),
+		    system->skeletons.size(), newSize );
 	}
-	return result;
+	if( system->skeletons.remaining() ) {
+		auto entry = system->skeletons.emplace_back();
+		*entry     = makeSkeleton( definition );
+		return *entry;
+	}
+	return nullptr;
+}
+
+void deleteSkeleton( SkeletonSystem* system, Skeleton* skeleton )
+{
+	assert( system );
+	assert( skeleton );
+
+	assert( GlobalPlatformServices );
+	auto base = skeleton->base;
+	*skeleton = {};
+	GlobalPlatformServices->free( base );
+	unordered_remove( system->skeletons, skeleton );
 }
 
 pair< rectf, bool > getHitboxRelative( Skeleton* skeleton, int32 index )
@@ -1410,7 +1512,6 @@ Entity* addEntity( EntitySystem* entitySystem, SkeletonSystem* skeletonSystem, E
 	Entity* result = nullptr;
 	if( entitySystem->entries.remaining() ) {
 		auto traits         = getEntityTraits( type );
-		auto skeletonTraits = getSkeletonTraits( skeletonSystem, type );
 
 		if( traits->flags.dynamic ) {
 			result  = entitySystem->entries.emplace_back();
@@ -1429,15 +1530,25 @@ Entity* addEntity( EntitySystem* entitySystem, SkeletonSystem* skeletonSystem, E
 		result->airFrictionCoeffictient = traits->init.airFrictionCoeffictient;
 		result->team                    = traits->team;
 
-		if( skeletonTraits && skeletonTraits->definition && *skeletonTraits->definition ) {
-			result->skeleton = addSkeleton( skeletonSystem, *skeletonTraits->definition );
-			update( result->skeleton, nullptr, 0 );
+		if( type != Entity::type_projectile ) {
+			auto skeletonTraits = getSkeletonTraits( skeletonSystem, type );
+			if( skeletonTraits && skeletonTraits->definition && *skeletonTraits->definition ) {
+				result->skeleton = addSkeleton( skeletonSystem, *skeletonTraits->definition );
+				assert( result->skeleton );
+				update( result->skeleton, nullptr, 0 );
+			}
 		}
 
 		switch( type ) {
 			case Entity::type_hero: {
+				result->hero.stats                 = traits->stats;
 				result->hero.currentAnimationIndex = -1;
 				result->hero.currentAnimation      = -1;
+				break;
+			}
+			case Entity::type_wheels: {
+				result->wheels.stats            = traits->stats;
+				result->wheels.currentAnimation = -1;
 				break;
 			}
 		}

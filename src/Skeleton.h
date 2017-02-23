@@ -76,6 +76,8 @@ struct Skeleton {
 	const SkeletonDefinition* definition;
 
 	SkeletonWorldTransform rootTransform;
+
+	void* base;
 };
 void setTransform( Skeleton* skeleton, mat4arg transform );
 void setMirrored( Skeleton* skeleton, bool mirrored );
@@ -124,6 +126,7 @@ struct SkeletonAnimation {
 struct SkeletonId {
 	int16 id;
 	int16 nameLength;
+	int16 index;
 	char name[25];
 
 	StringView getName() const { return {name, nameLength}; }
@@ -152,14 +155,44 @@ struct SkeletonDefinition {
 	Array< rectf > hitboxes;
 	int16 id;
 
+	int32 sizeInBytes;
 	inline explicit operator bool() const { return id >= 0; };
 };
+
+#define GenerateNames( type, prefix, ... )                  \
+	const StringView type##prefix[]        = {__VA_ARGS__}; \
+	Array< const StringView > type::prefix = makeArrayView( type##prefix );
+#define GenerateEmpty( type, prefix ) Array< const StringView > type::prefix = {};
+template < class T >
+Array< int8 > makeIndicesArray( T& entry )
+{
+	static_assert( alignof( T ) == alignof( int8 ), "T is not properly aligned" );
+	static_assert( std::is_pod< T >::value, "T is not pod" );
+	static_assert( ( sizeof( T ) / sizeof( int8 ) ) * sizeof( int8 ) == sizeof( T ),
+	               "Cannot turn T into an array of int8" );
+	return makeArrayView( (int8*)&entry, sizeof( T ) / sizeof( int8 ) );
+};
+Array< int8 > makeIndicesArray( nullptr_t )
+{
+	return {};
+};
+#define GenerateMembers( animationIds, nodeIds, collisionIds, hitboxIds, hurtboxIds ) \
+	Array< int8 > getAnimationIds() { return makeIndicesArray( animationIds ); }      \
+	Array< int8 > getNodeIds() { return makeIndicesArray( nodeIds ); }                \
+	Array< int8 > getCollisionIds() { return makeIndicesArray( collisionIds ); }      \
+	Array< int8 > getHitboxIds() { return makeIndicesArray( hitboxIds ); }            \
+	Array< int8 > getHurtboxIds() { return makeIndicesArray( hurtboxIds ); }          \
+	static Array< const StringView > AnimationNames;                                  \
+	static Array< const StringView > NodeNames;                                       \
+	static Array< const StringView > CollisionNames;                                  \
+	static Array< const StringView > HitboxNames;                                     \
+	static Array< const StringView > HurtboxNames;
 
 struct HeroSkeletonDefinition {
 	SkeletonDefinition* definition; // if this is null, definition is not loaded
 
 	// these ids need to be contiguous
-	// must be same order as HeroAnimationNames
+	// must be same order as AnimationNames (see GenerateNames below)
 	struct {
 		int8 turn;
 		int8 landing;
@@ -191,34 +224,16 @@ struct HeroSkeletonDefinition {
 	struct {
 		int8 hurtbox;
 	} hurtboxIds;
-};
-const StringView HeroAnimationNames[] = {
-    "Turn",
-    "Landing",
 
-    "Idle",
-    "Walk",
-    "JumpRising",
-    "JumpFalling",
-    "Wallslide",
-
-    "IdleShoot",
-    "WalkShoot",
-    "JumpRisingShoot",
-    "JumpFallingShoot",
-    "WallslideShoot",
-
-    "hurt"
+	GenerateMembers( animationIds, nodeIds, collisionIds, nullptr, hurtboxIds );
 };
-const StringView HeroNodeNames[] = {
-    "shoot_pos", "feet_pos",
-};
-const StringView HeroCollisionNames[] = {
-    "collision",
-};
-const StringView HeroHurtboxNames[] = {
-    "hurtbox",
-};
+GenerateNames( HeroSkeletonDefinition, AnimationNames, "Turn", "Landing", "Idle", "Walk",
+               "JumpRising", "JumpFalling", "Wallslide", "IdleShoot", "WalkShoot",
+               "JumpRisingShoot", "JumpFallingShoot", "WallslideShoot", "hurt" );
+GenerateNames( HeroSkeletonDefinition, NodeNames, "shoot_pos", "feet_pos" );
+GenerateNames( HeroSkeletonDefinition, CollisionNames, "collision" );
+GenerateEmpty( HeroSkeletonDefinition, HitboxNames );
+GenerateNames( HeroSkeletonDefinition, HurtboxNames, "hurtbox" );
 
 struct WheelsSkeletonDefinition {
 	SkeletonDefinition* definition;
@@ -241,19 +256,32 @@ struct WheelsSkeletonDefinition {
 	struct {
 		int8 hurtbox;
 	} hurtboxIds;
+
+	GenerateMembers( animationIds, nodeIds, collisionIds, nullptr, hurtboxIds );
 };
-const StringView WheelsAnimationNames[] = {
-    "move", "attack", "hurt", "turn",
+GenerateNames( WheelsSkeletonDefinition, AnimationNames, "move", "attack", "hurt", "turn" );
+GenerateNames( WheelsSkeletonDefinition, NodeNames, "attack_origin" );
+GenerateNames( WheelsSkeletonDefinition, CollisionNames, "root" );
+GenerateEmpty( WheelsSkeletonDefinition, HitboxNames );
+GenerateNames( WheelsSkeletonDefinition, HurtboxNames, "hurtbox" );
+
+struct ProjectileSkeletonDefinition {
+	SkeletonDefinition* definition;
+	struct {
+		int8 collision;
+	} collisionIds;
+
+	struct {
+		int8 hitbox;
+	} hitboxIds;
+
+	GenerateMembers( nullptr, nullptr, collisionIds, hitboxIds, nullptr );
 };
-const StringView WheelsNodeNames[] = {
-    "attack_origin",
-};
-const StringView WheelsCollisionNames[] = {
-    "root",
-};
-const StringView WheelsHurtboxNames[] = {
-    "hurtbox",
-};
+GenerateEmpty( ProjectileSkeletonDefinition, AnimationNames );
+GenerateEmpty( ProjectileSkeletonDefinition, NodeNames );
+GenerateNames( ProjectileSkeletonDefinition, CollisionNames, "collision" );
+GenerateNames( ProjectileSkeletonDefinition, HitboxNames, "hitbox" );
+GenerateEmpty( ProjectileSkeletonDefinition, HurtboxNames );
 
 struct EntitySkeletonTraits {
 	const SkeletonDefinition* definition;
@@ -277,18 +305,18 @@ struct EntitySkeletonTraits {
 };
 
 struct SkeletonSystem {
-	UArray< Skeleton > skeletons;
+	UArray< Skeleton* > skeletons;
 	UArray< SkeletonDefinition > definitions;
 
 	EntitySkeletonTraits skeletonTraits[Entity::type_count];
 	HeroSkeletonDefinition hero;
 	WheelsSkeletonDefinition wheels;
-	// FIXME: don't use a stack allocator
-	StackAllocator* allocator;
+	ProjectileSkeletonDefinition projectile;
 };
 
 const EntitySkeletonTraits* const getSkeletonTraits( SkeletonSystem* system, Entity::Type type )
 {
 	assert( type >= 0 && type < Entity::type_count );
+	assert( type != Entity::type_projectile );
 	return &system->skeletonTraits[type];
 }

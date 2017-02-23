@@ -76,6 +76,10 @@ struct EntityControl {
 	EntityActionState action : 1;
 };
 
+struct EntityStats {
+	int16 hp;
+};
+
 struct Skeleton;
 
 // this used to be CollidableComponent, but it had a lot of fields that didn't have anything to do
@@ -130,13 +134,14 @@ struct Entity {
 	enum Type {
 		type_none,
 
-		type_hero,
 		type_projectile,
+		type_hero,
 		type_wheels,
 
 		type_count,
 	} type;
 	struct Hero {
+		EntityStats stats;
 		int8 currentAnimationIndex;
 		int32 currentAnimation;
 		CountdownTimer animationLockTimer;
@@ -144,15 +149,19 @@ struct Entity {
 		CountdownTimer shootingAnimationTimer;
 	};
 	struct Wheels {
+		EntityStats stats;
 		CountdownTimer attackTimer;
 		int32 currentAnimation;
 		enum : int8 { Idle, Moving, Turning, Stopping, Attacking, Hurt } state;
 		bool8 shouldTurn;
 	};
+	struct Projectile {
+		ProjectileType type;
+		int8 durability;
+	};
 	union {
 		Hero hero;
-		struct {
-		} projectile;
+		Projectile projectile;
 		Wheels wheels;
 	};
 
@@ -298,6 +307,8 @@ struct EntityTraitsData {
 		float airFrictionCoeffictient;
 		float wallslideFrictionCoefficient;
 	} init;
+
+	EntityStats stats;
 };
 EntityTraitsData::Flags makeEntityTraitsFlags( uint8 flags )
 {
@@ -315,21 +326,6 @@ const EntityTraitsData* const getEntityTraits( Entity::Type type )
 	    // none
 	    {},
 
-	    // hero
-	    {
-	        makeEntityTraitsFlags( EntityTraitsFlags::CanWalljump ),
-	        EntityMovement::Grounded,
-	        CollisionResponse::Bounce,
-	        EntityTeam::Players,
-	        {},
-	        {
-	            1,                                             // gravityModifier
-	            1,                                             // bounceModifier
-	            GameConstants::DefaultAirFrictionCoefficient,  // airFrictionCoeffictient
-	            0                                              // wallslideFrictionCoefficient
-	        },
-	    },
-
 	    // projectile
 	    {
 	        makeEntityTraitsFlags( EntityTraitsFlags::NoFaceDirection ),
@@ -345,6 +341,22 @@ const EntityTraitsData* const getEntityTraits( Entity::Type type )
 	        },
 	    },
 
+	    // hero
+	    {
+	        makeEntityTraitsFlags( EntityTraitsFlags::CanWalljump ),
+	        EntityMovement::Grounded,
+	        CollisionResponse::Bounce,
+	        EntityTeam::Players,
+	        {},
+	        {
+	            1,                                             // gravityModifier
+	            1,                                             // bounceModifier
+	            GameConstants::DefaultAirFrictionCoefficient,  // airFrictionCoeffictient
+	            0                                              // wallslideFrictionCoefficient
+	        },
+	        {10},
+	    },
+
 	    // wheels
 	    {
 	        {},
@@ -358,6 +370,7 @@ const EntityTraitsData* const getEntityTraits( Entity::Type type )
 	            GameConstants::DefaultAirFrictionCoefficient,  // airFrictionCoeffictient
 	            0                                              // wallslideFrictionCoefficient
 	        },
+	        {3},
 	    },
 	};
 

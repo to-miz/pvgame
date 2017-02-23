@@ -24,6 +24,7 @@
 #ifdef GAME_DEBUG
 	#define assert_m( x, msg ) assert( ( x ) && ( msg ) )
 	#define debug_error( x ) assert( 0 && ( x ) )
+	#define debug_break() __debugbreak()
 
 	#if GAME_OUT_OF_MEMORY_ASSERTION
 		#define OutOfMemory() assert( 0 && "Out Of Memory" )
@@ -44,6 +45,7 @@
 	#define assert_m( x, msg ) ( (void)0 )
 	#define OutOfMemory() ( (void)0 )
 	#define debug_error( x ) ( (void)0 )
+	#define debug_break() ( (void)0 )
 	#define break_if( x ) ( (void)0 )
 	#define InvalidCodePath() ( (void)0 )
 

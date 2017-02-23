@@ -87,5 +87,11 @@ void LOG_IMPL( int32 level, const char* format, const char* file, size_t line,
 		    debugLogln( format, args... );
 		}
 		// TODO: also log to a file
-	}
+
+#if GAME_BREAK_ON_ERROR_LOG
+	    if( level == ERROR ) {
+		    debug_break();
+	    }
+#endif
+    }
 #endif // _LOG_IMPLEMENTATION_

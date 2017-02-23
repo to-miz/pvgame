@@ -112,6 +112,10 @@ float length( vec3arg v )
 	auto lengthSquared = dot( v, v );
 	return math::sqrt( lengthSquared );
 }
+bool hasMagnitude( vec3arg v )
+{
+	return dot( v, v ) > Float::Epsilon;
+}
 vec3 normalize( vec3arg v )
 {
 	auto lengthSquared = dot( v, v );

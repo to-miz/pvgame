@@ -55,6 +55,11 @@ void* reallocate( void* ptr, size_t newSize, size_t oldSize, uint32 alignment )
 	assert( GlobalPlatformServices );
 	return GlobalPlatformServices->reallocate( ptr, newSize, oldSize, alignment );
 }
+void* reallocateInPlace( void* ptr, size_t newSize, size_t oldSize, uint32 alignment )
+{
+	assert( GlobalPlatformServices );
+	return GlobalPlatformServices->reallocateInPlace( ptr, newSize, oldSize, alignment );
+}
 void deallocate( void* ptr, size_t size, uint32 alignment )
 {
 	assert( GlobalPlatformServices );
@@ -70,6 +75,12 @@ template < class T >
 T* reallocate( T* ptr, size_t newCount, size_t oldCount )
 {
 	return (T*)::reallocate( ptr, newCount * sizeof( T ), oldCount * sizeof( T ), alignof( T ) );
+}
+template < class T >
+T* reallocateInPlace( T* ptr, size_t newCount, size_t oldCount )
+{
+	return (T*)::reallocateInPlace( ptr, newCount * sizeof( T ), oldCount * sizeof( T ),
+	                                alignof( T ) );
 }
 template < class T >
 void deallocate( T* ptr, size_t count = 1 )
@@ -96,4 +107,64 @@ void operator delete[]( void* ptr ) /*throw()*/
 {
 	assert( GlobalPlatformServices );
 	GlobalPlatformServices->free( ptr );
+}
+
+struct DynamicStackAllocator : StackAllocator {
+	DynamicStackAllocator() : StackAllocator{} {}
+	DynamicStackAllocator( size_t capacity )
+	: StackAllocator{(char*)GlobalPlatformServices->malloc( capacity ), 0, capacity, 0}
+	{
+	}
+	~DynamicStackAllocator()
+	{
+		if( ptr ) {
+			GlobalPlatformServices->free( ptr );
+			ptr = nullptr;
+		}
+	}
+	DynamicStackAllocator( DynamicStackAllocator&& other )
+	: StackAllocator{other.ptr, other.size, other.capacity, other.lastPoppedAlignment}
+	{
+		other.releaseOwnership();
+	}
+	DynamicStackAllocator& operator=( DynamicStackAllocator&& other )
+	{
+		if( this != &other ) {
+			if( ptr ) {
+				GlobalPlatformServices->free( ptr );
+			}
+			ptr                 = other.ptr;
+			size                = other.size;
+			capacity            = other.capacity;
+			lastPoppedAlignment = other.lastPoppedAlignment;
+			other.releaseOwnership();
+		}
+		return *this;
+	}
+
+	DynamicStackAllocator( const DynamicStackAllocator& ) = delete;
+	DynamicStackAllocator& operator=( const DynamicStackAllocator& ) = delete;
+
+	void fitToSize()
+	{
+		if( GlobalPlatformServices->reallocInPlace( ptr, size ) ) {
+			capacity = size;
+		} else {
+			assert( 0 );
+		}
+	}
+
+	void releaseOwnership()
+	{
+		ptr                 = nullptr;
+		size                = 0;
+		capacity            = 0;
+		lastPoppedAlignment = 0;
+	}
+};
+
+template < class T >
+Array< T > allocateArrayView( int32 size )
+{
+	return makeArrayView( allocate< T >( size ), size );
 }
