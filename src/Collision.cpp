@@ -209,11 +209,12 @@ CollisionResult findCollision( rectfarg aab, vec2arg position, vec2arg velocity,
 // TODO: rename function, since this does way more than colliding
 void processCollidables( Array< Entity > entries, TileGrid grid,
                          Array< TileInfo > infos, Array< Entity > dynamics,
-                         bool dynamic, float dt, bool frameBoundary )
+                         bool dynamic, float dt )
 {
 	using namespace GameConstants;
 	constexpr const float eps = 0.00001f;
 
+	const recti mapBounds = {0, 0, GAME_MAP_WIDTH, GAME_MAP_HEIGHT};
 	// TODO: air movement should be accelerated instead of instant
 	FOR( entry : entries ) {
 		auto traits      = getEntityTraits( entry.type );
@@ -221,9 +222,9 @@ void processCollidables( Array< Entity > entries, TileGrid grid,
 
 		entry.walljumpWindow   = processTimer( entry.walljumpWindow, dt );
 		entry.walljumpDuration = processTimer( entry.walljumpDuration, dt );
-		auto wasAlive          = isCountdownActive( entry.aliveCountdown );
+		auto alive             = entry.aliveCountdown;
 		entry.aliveCountdown   = processTimer( entry.aliveCountdown, dt );
-		if( wasAlive && isCountdownTimerExpired( entry.aliveCountdown ) ) {
+		if( alive && isCountdownTimerExpired( entry.aliveCountdown ) ) {
 			entry.flags.deathFlag = true;
 		}
 
@@ -241,139 +242,33 @@ void processCollidables( Array< Entity > entries, TileGrid grid,
 
 		// update
 		entry.prevVeloctiy = entry.velocity;
-		if( frameBoundary ) {
-			// no need for dt multiplication, because we are on frame boundary
-			entry.velocity += entry.acceleration;
-			if( !entry.grounded || traits->movement != EntityMovement::Grounded ) {
-				entry.velocity.y += Gravity * entry.gravityModifier;
-				entry.velocity.y -= entry.airFrictionCoeffictient * entry.velocity.y;
-				if( entry.wallslideCollidable && entry.velocity.y > 0 ) {
-					// apply wallslide friction only if falling
-					auto friction = getFrictionCoefficitonFromCollidableRef(
-					    dynamics, grid, infos, entry.wallslideCollidable );
-					entry.velocity.y -= friction * WallslideFrictionCoefficient * entry.velocity.y;
-				}
+		// no need for dt multiplication, because we are on frame boundary
+		entry.velocity += entry.acceleration;
+		if( !entry.grounded || traits->movement != EntityMovement::Grounded ) {
+			entry.velocity.y += Gravity * entry.gravityModifier;
+			entry.velocity.y -= entry.airFrictionCoeffictient * entry.velocity.y;
+			if( entry.wallslideCollidable && entry.velocity.y > 0 ) {
+				// apply wallslide friction only if falling
+				auto friction = getFrictionCoefficitonFromCollidableRef(
+				    dynamics, grid, infos, entry.wallslideCollidable );
+				entry.velocity.y -= friction * WallslideFrictionCoefficient * entry.velocity.y;
 			}
-			if( !floatEqZero( entry.maxSpeed.x ) ) {
-				entry.velocity.x = clamp( entry.velocity.x, -entry.maxSpeed.x, entry.maxSpeed.x );
-			}
-			if( !floatEqZero( entry.maxSpeed.y ) ) {
-				entry.velocity.y = clamp( entry.velocity.y, -entry.maxSpeed.y, entry.maxSpeed.y );
-			}
+		}
+		if( !floatEqZero( entry.maxSpeed.x ) ) {
+			entry.velocity.x = clamp( entry.velocity.x, -entry.maxSpeed.x, entry.maxSpeed.x );
+		}
+		if( !floatEqZero( entry.maxSpeed.y ) ) {
+			entry.velocity.y = clamp( entry.velocity.y, -entry.maxSpeed.y, entry.maxSpeed.y );
 		}
 		auto oldVelocity = entry.velocity;
 
 		processSpatialState( &entry, dt );
 
-		auto vdt        = dt;
-		recti mapBounds = {0, 0, GAME_MAP_WIDTH, GAME_MAP_HEIGHT};
-
 		auto isGroundBased = traits->movement == EntityMovement::Grounded
 		                     && floatEqSoft( entry.bounceModifier, 1.0f );
 
-		// FIXME: gap fitting assumes that aab origin is at the top of the aab, it was changed to be
-		// at the bottom of aab's, so it fails now. But then again there are no more player sized
-		// gaps, so gap fitting is technically not needed anymore
-		// TODO: maybe remove?
-#if 0
-		// find position of gap and whether we should squeeze into it this frame
-		// entry must have ground based movement and bounceModifier of 1 (sliding behavior) for
-		// gap fitting
-		if( isGroundBased && oldVelocity.x != 0 && oldVelocity.y != 0 ) {
-			auto entryGridX = (int32)floor( entry.position.x / TileWidth );
-			auto entryGridY = (int32)floor( entry.position.y / TileHeight );
-			auto entryGridYNext =
-			    (int32)floor( ( entry.position.y + entry.velocity.y * vdt ) / TileHeight );
-			if( entryGridY != entryGridYNext
-			    && ( entryGridY >= 0 && entryGridY < GAME_MAP_HEIGHT ) ) {
-				if( oldVelocity.y > 0 ) {
-					++entryGridY;
-					++entryGridYNext;
-				}
-
-				bool gapExists = false;
-				int32 gapTileIndex;
-				int32 gapTileX = entryGridX;
-				int32 gapTileY = entryGridY;
-				if( oldVelocity.x < 0 ) {
-					gapTileX -= 1;
-				} else {
-					gapTileX += 1;
-				}
-				if( gapTileX >= 0 && gapTileX < GAME_MAP_WIDTH ) {
-					int32 step = 1;
-					if( oldVelocity.y < 0 ) {
-						step = -1;
-					}
-					for( gapTileY = entryGridY; gapTileY != entryGridYNext; gapTileY += step ) {
-						if( gapTileY < 0 || gapTileY >= GAME_MAP_HEIGHT ) {
-							continue;
-						}
-						gapTileIndex = grid.index( gapTileX, gapTileY );
-						auto gap     = grid[gapTileIndex];
-						if( !gap ) {
-							auto neighborTileX = gapTileX;
-							auto neighborTileY = gapTileY;
-							if( oldVelocity.y > 0 ) {
-								neighborTileY -= 1;
-							} else {
-								neighborTileY += 1;
-							}
-							if( !isPointInside( mapBounds, neighborTileX, neighborTileY ) ) {
-								continue;
-							}
-							auto neighborIndex = grid.index( neighborTileX, neighborTileY );
-							auto neighbor      = grid[neighborIndex];
-							// check whether neighbor is solid
-							if( neighbor ) {
-								// gap exists and is valid candidate for squeezing in
-								gapExists = true;
-								break;
-							}
-						}
-					}
-				}
-
-				if( gapExists ) {
-					rectf gapBounds = RectWH( gapTileX * TileWidth, gapTileY * TileHeight,
-					                          TileWidth, TileHeight );
-#if 0
-						auto nextPlayerAab =
-						    translate( entry.aab, entry.position + entry.velocity * vdt );
-						assert( abs( velocity.x ) <= TileWidth );
-
-						auto currentPlayerAab = translate( entry.aab, entry.position );
-						auto yDelta = gapBounds.top - currentPlayerAab.top;
-						entry.position.y += yDelta;
-						float xDelta;
-						if( velocity.x < 0 ) {
-							auto xBoundary = max( gapBounds.left, nextPlayerAab.left );
-							xDelta         = xBoundary - currentPlayerAab.left;
-						} else {
-							auto xBoundary = min( gapBounds.right, nextPlayerAab.right );
-							xDelta         = xBoundary - currentPlayerAab.right;
-						}
-						entry.position.x += xDelta;
-
-						auto deltaLength        = sqrt( xDelta * xDelta + yDelta * yDelta );
-						float velocityMagnitude = length( entry.velocity );
-						auto ratio              = deltaLength / velocityMagnitude;
-						vdt -= ratio;
-#else
-					// instead of calculating velocity deltas, calculate t value of how
-					// much to apply velocity to be inside gap
-					auto yDelta = gapBounds.top - ( entry.aab.top + entry.position.y );
-					auto t      = yDelta / oldVelocity.y;
-					entry.position += oldVelocity * t;
-					vdt -= t;
-#endif
-				}
-			}
-		}
-#endif
-
 		// collision detection begins here
-		auto velocity = entry.velocity * vdt;
+		auto velocity = entry.velocity * dt;
 
 		// broadphase
 		// get the region of tiles that we actually touch when moving along velocity
@@ -477,8 +372,8 @@ void processCollidables( Array< Entity > entries, TileGrid grid,
 		// worth of movement. If entry is not alive for the whole frame, we want to move for the
 		// amount it will be alive for
 		float remaining = 1;
-		if( wasAlive ) {
-			remaining = min( 1.0f, entry.aliveCountdown.value );
+		if( alive ) {
+			remaining = min( 1.0f, alive.value );
 		}
 
 		entry.lastCollision.clear();
@@ -636,16 +531,14 @@ void processCollidables( Array< Entity > entries, TileGrid grid,
 
 }
 
-static void doCollisionDetection( Room* room, EntitySystem* system, float dt,
-                                  bool frameBoundary )
+static void doCollisionDetection( Room* room, EntitySystem* system, float dt )
 {
 	using namespace GameConstants;
 	assert( room );
 
 	auto grid = room->layers[RL_Main].grid;
 
-	processCollidables( system->dynamicEntries(), grid, room->tileSet->infos, {}, true, dt,
-	                    frameBoundary );
+	processCollidables( system->dynamicEntries(), grid, room->tileSet->infos, {}, true, dt );
 	processCollidables( system->staticEntries(), grid, room->tileSet->infos,
-	                    system->dynamicEntries(), false, dt, frameBoundary );
+	                    system->dynamicEntries(), false, dt );
 }

@@ -213,14 +213,8 @@ CountdownTimer processTimer( CountdownTimer timer, float dt )
 	return result;
 }
 
-enum class ProjectileType {
-	Hero,
-	Wheels,
-
-	Count
-};
-
 #include "Entity.cpp"
+#include "Collision.cpp"
 
 struct ControlComponent {
 	EntityHandle entity;
@@ -357,138 +351,47 @@ struct HitboxSystem {
 	}
 };
 
-struct ProjectileTraits {
-	float speed;
-	float maxSpeed;
-	float acceleration;
-	float alive;
-	int8 durability;
-	struct {
-		uint8 hasHurtbox : 1;
-		uint8 bounce : 1;
-	} flags;
-};
-
-const ProjectileTraits* getProjectileTraits( ProjectileType type )
+template < class GenericSystem >
+void removeEntities( GenericSystem* system, Array< EntityHandle > handles )
 {
-	static const ProjectileTraits ProjectileTraitsEntries[] = {
-	    // Hero
-	    {
-	        3,   // speed
-	        0,   // maxSpeed
-	        0,   // acceleration
-	        60,  // alive
-	        1,   // durability
-	        {
-	            false,  // hasHurtbox
-	            false,  // bounce
-	        },
-	    },
-
-	    // Wheels
-	    {
-	        1,   // speed
-	        0,   // maxSpeed
-	        0,   // acceleration
-	        0,  // alive
-	        1,   // durability
-	        {
-	            false,  // hasHurtbox
-	            true,   // bounce
-	        },
-	    },
-	};
-
-	assert( valueof( type ) >= 0 && valueof( type ) < valueof( ProjectileType::Count ) );
-	return &ProjectileTraitsEntries[valueof( type )];
+	unordered_remove_if( system->entries, [handles]( const auto& component ) {
+		return exists( handles, component.entity );
+	} );
 }
-
-struct ProjectileData {
-	rectf collision;
-	rectf hitbox;
-	rectf hurtbox;
-
-	TextureId texture;
-	VoxelCollection::Frame frame;
-	float z;
-};
-struct ProjectileSystem {
-	ProjectileData init[valueof( ProjectileType::Count )];
-};
-
-const ProjectileData* getProjectileData( ProjectileSystem* system, ProjectileType type )
+void removeEntities( EntitySystem* system, Array< EntityHandle > handles )
 {
-	assert( valueof( type ) >= 0 && valueof( type ) < valueof( ProjectileType::Count ) );
-	return &system->init[valueof( type )];
+	erase_if( system->entries, [system, handles]( const Entity& component ) {
+		if( exists( handles, component.handle ) ) {
+			if( !component.dynamic() ) {
+				--system->entriesCount;
+			}
+			return true;
+		}
+		return false;
+	} );
 }
-
-ProjectileSystem makeProjectileSystem()
+void removeEntities( HitboxSystem* system, Array< EntityHandle > handles )
 {
-	ProjectileSystem result = {};
-	static const StringView Files[] = {
-	    "Data/voxels/projectile_anim.json",   // Hero
-	    "Data/voxels/green_projectile.json",  // Wheels
-	};
-
-	for( auto i = 0, count = valueof( ProjectileType::Count ); i < count; ++i ) {
-		TEMPORARY_MEMORY_BLOCK( GlobalScrap ) {
-			auto allocator = makeStackAllocator( GlobalScrap, kilobytes( 10 ) );
-			auto filename  = Files[i];
-			auto dest      = &result.init[i];
-
-			auto definition = loadSkeletonDefinition( &allocator, filename, 0 );
-			if( !definition ) {
-				LOG( ERROR, "{}: Failed to load projectile skeleton definition", filename );
-				// TODO: display error message and kill program
-				break;
-			}
-
-			auto hitboxes = definition.baseHitboxes;
-			auto collision =
-			    getHitboxIndex( &definition, "collision", SkeletonHitboxState::Collision );
-			auto hitbox  = getHitboxIndex( &definition, "hitbox", SkeletonHitboxState::Hitbox );
-			auto hurtbox = getHitboxIndex( &definition, "hurtbox", SkeletonHitboxState::Hurtbox );
-
-			if( !collision || !hitbox || !definition.baseVisuals.size()
-			    || !definition.baseNodes.size()
-			    || ( getProjectileTraits( (ProjectileType)i )->flags.hasHurtbox && !hurtbox ) ) {
-
-				LOG( ERROR, "{}: Invalid projectile skeleton", filename );
-				// TODO: display error message and kill program
-				break;
-			}
-
-			dest->collision        = hitboxes[collision.get()].relative;
-			dest->collision.top    = -dest->collision.top;
-			dest->collision.bottom = -dest->collision.bottom;
-			dest->hitbox           = hitboxes[hitbox.get()].relative;
-			dest->hitbox.top       = -dest->hitbox.top;
-			dest->hitbox.bottom    = -dest->hitbox.bottom;
-			if( hurtbox ) {
-				dest->hurtbox        = hitboxes[hurtbox.get()].relative;
-				dest->hurtbox.top    = -dest->hurtbox.top;
-				dest->hurtbox.bottom = -dest->hurtbox.bottom;
-			}
-			auto visual     = definition.baseVisuals[0];
-			auto collection = &definition.voxels[visual.assetIndex];
-			auto range      = collection->animations[visual.animation].range;
-			if( !range || !collection->texture ) {
-				LOG( ERROR, "{}: Invalid projectile skeleton", filename );
-				// TODO: display error message and kill program
-				break;
-			}
-			dest->texture = collection->texture;
-			dest->frame   = collection->frames[range.min];
-			if( !dest->frame.mesh ) {
-				LOG( ERROR, "{}: Invalid projectile skeleton", filename );
-				// TODO: display error message and kill program
-				break;
-			}
-			dest->z = definition.baseNodes[0].translation.z;
+	auto pairs = system->hitboxPairs();
+	erase_if( pairs, [handles]( const auto& pair ) {
+		return exists_if( handles, [pair]( const auto& handle ) {
+			return handle == pair.attacker || handle == pair.defender;
+		} );
+	} );
+	system->setPairsCount( pairs.size() );
+}
+void removeEntities( EntitySystem* entitySystem, SkeletonSystem* system,
+                     Array< EntityHandle > handles )
+{
+	FOR( entity : entitySystem->entries ) {
+		if( entity.skeleton && exists( handles, entity.handle ) ) {
+			deleteSkeleton( system, entity.skeleton );
+			entity.skeleton = nullptr;
 		}
 	}
-	return result;
-};
+}
+
+#include "Projectile.h"
 
 struct GameState {
 	TileSet tileSet;
@@ -506,6 +409,7 @@ struct GameState {
 	bool initialized;
 
 	GameCamera camera;
+	GameCamera prevCamera;
 	rectf cameraFollowRegion;
 	bool useGameCamera;
 	bool lighting;
@@ -523,38 +427,27 @@ struct GameState {
 	ShaderId outlineShader;
 };
 
-bool emitProjectile( GameState* game, vec2arg origin, vec2arg direction, ProjectileType type,
-                     EntityTeam team )
+void processEntityRemovalQueue( GameState* game )
 {
-	assert( floatEq( length( direction ), 1 ) );
-	// TODO: emit different types of projectiles based on upgrades
-	// TODO: put this code also into addEntity
-	auto skeletonSystem = &game->skeletonSystem;
-	auto projectileId   = addEntityHandle( &game->entityHandles );
-	auto entity =
-	    addEntity( &game->entitySystem, skeletonSystem, projectileId, Entity::type_projectile );
-	if( entity ) {
-		auto traits            = getProjectileTraits( type );
-		entity->position       = origin;
-		entity->velocity       = direction * traits->speed;
-		entity->aliveCountdown = {traits->alive};
-		entity->team           = team;
-		if( !floatEqZero( traits->maxSpeed ) ) {
-			entity->maxSpeed = direction * traits->maxSpeed;
-		}
-
-		auto data                     = getProjectileData( &game->projectileSystem, type );
-		entity->projectile.type       = type;
-		entity->projectile.durability = traits->durability;
-		entity->aab                   = data->collision;
-		return true;
+	assert( game );
+	if( game->entityRemovalQueue.size() ) {
+		auto handles = makeArrayView( game->entityRemovalQueue );
+		removeEntities( &game->entitySystem, &game->skeletonSystem, handles );
+		removeEntities( &game->controlSystem, handles );
+		removeEntities( &game->entitySystem, handles );
+		removeEntities( &game->hitboxSystem, handles );
+		game->entityRemovalQueue.clear();
 	}
-	return false;
+}
+void removeEntity( GameState* game, EntityHandle handle )
+{
+	append_unique( game->entityRemovalQueue, handle );
 }
 
+#include "Projectile.cpp"
+
 void processControlSystem( GameState* game, ControlSystem* controlSystem,
-                           EntitySystem* entitySystem, GameInputs* inputs, float dt,
-                           bool frameBoundary )
+                           EntitySystem* entitySystem, GameInputs* inputs, float dt )
 {
 	assert( controlSystem );
 	assert( entitySystem );
@@ -587,20 +480,18 @@ void processControlSystem( GameState* game, ControlSystem* controlSystem,
 			}
 
 			entityControl->action = EntityActionState::None;
-			if( frameBoundary ) {
-				if( control.jumpInputBuffer ) {
-					entityControl->verticalAction = EntityVerticalAction::Jump;
-				}
-				if( !jumpDown ) {
-					entityControl->vertical       = EntityVerticalMovement::None;
-					entityControl->verticalAction = EntityVerticalAction::None;
-				} else {
-					entityControl->vertical = EntityVerticalMovement::Jump;
-				}
+			if( control.jumpInputBuffer ) {
+				entityControl->verticalAction = EntityVerticalAction::Jump;
+			}
+			if( !jumpDown ) {
+				entityControl->vertical       = EntityVerticalMovement::None;
+				entityControl->verticalAction = EntityVerticalAction::None;
+			} else {
+				entityControl->vertical = EntityVerticalMovement::Jump;
+			}
 
-				if( control.attackInputBuffer ) {
-					entityControl->action = EntityActionState::Attack;
-				}
+			if( control.attackInputBuffer ) {
+				entityControl->action = EntityActionState::Attack;
 			}
 		}
 		control.jumpInputBuffer   = processTimer( control.jumpInputBuffer, dt );
@@ -637,8 +528,6 @@ struct AppData {
 	string_logger debugLogger;
 	ProfilingTable profilingTable;
 	DebugValues debugValues;
-
-	float frameTimeAcc;
 
 	mat4 perspective;
 	mat4 orthogonal;
@@ -847,7 +736,6 @@ static void processCamera( GameInputs* inputs, GameSettings* settings, Camera* c
 #include "Editor/TexturePack/TexturePack.cpp"
 #include "Editor/Animator/Animator.cpp"
 #include "VoxelEditor.cpp"
-#include "Collision.cpp"
 
 static StringView detailedDebugOutput( AppData* app, char* buffer, int32 size )
 {
@@ -887,8 +775,10 @@ static StringView detailedDebugOutput( AppData* app, char* buffer, int32 size )
 	        << "\nmaxJumpHeight: " << debug_Values->maxJumpHeight
 	        << "\nJumpHeightError: " << debug_Values->jumpHeightError;
 
-	builder << "\nWallJumpTimer: " << app->gameState.player->walljumpWindow.value
-	        << "\nWallJumpDuration: " << app->gameState.player->walljumpDuration.value;
+	if( app->gameState.player ) {
+		builder << "\nWallJumpTimer: " << app->gameState.player->walljumpWindow.value
+		        << "\nWallJumpDuration: " << app->gameState.player->walljumpDuration.value;
+	}
 
 	builder << '\n' << '\n';
 
@@ -899,11 +789,13 @@ static StringView detailedDebugOutput( AppData* app, char* buffer, int32 size )
 	builder.println( "Up: {}", camera->up );
 
 	// output debug player state
-	auto player = app->gameState.player;
-	builder.println( "Entity: {}\nCollidableComponent Time: {}",
-	                 getSpatialStateString( player->spatialState ), player->spatialStateTimer );
-	builder.println( "Player pos: {}\nPlayer velocity: {}", player->position, player->velocity );
-	builder.println( "Camera follow: {:.2}", app->gameState.cameraFollowRegion );
+	if( auto player = app->gameState.player ) {
+		builder.println( "Entity: {}\nCollidableComponent Time: {}",
+		                 getSpatialStateString( player->spatialState ), player->spatialStateTimer );
+		builder.println( "Player pos: {}\nPlayer velocity: {}", player->position,
+		                 player->velocity );
+		builder.println( "Camera follow: {:.2}", app->gameState.cameraFollowRegion );
+	}
 
 	builder << '\n' << '\n';
 	builder.println( "Malloc Allocated: {}\nMalloc Free: {}\nMalloc Footprint: {}",
@@ -1021,7 +913,7 @@ static void showGameDebugGui( AppData* app, GameInputs* inputs, bool focus, floa
 	imguiUpdate( dt );
 	imguiFinalize();
 }
-static void processGameCamera( AppData* app, float dt, bool frameBoundary )
+static void processGameCamera( AppData* app, float dt )
 {
 	auto game              = &app->gameState;
 	auto settings          = &app->settings;
@@ -1069,12 +961,10 @@ static void processGameCamera( AppData* app, float dt, bool frameBoundary )
 			auto dir          = normalize( lerp( t, camera->nextLook, camera->prevLook ) );
 			*camera           = cameraLookDirection( *camera, dir );
 			camera->turnTimer = processTimer( camera->turnTimer, dt * 0.05f );
-			if( !frameBoundary ) {
-				debugPrintln( "camera prev look: {}", camera->prevLook );
-				debugPrintln( "camera next look: {}", camera->nextLook );
-				debugPrintln( "camera dir: {}", dir );
-				debugPrintln( "camera turn timer: {}", camera->turnTimer.value );
-			}
+			debugPrintln( "camera prev look: {}", camera->prevLook );
+			debugPrintln( "camera next look: {}", camera->nextLook );
+			debugPrintln( "camera dir: {}", dir );
+			debugPrintln( "camera turn timer: {}", camera->turnTimer.value );
 		}
 	} else {
 		*camera = cameraLookDirection( *camera, {0, 0, 1} );
@@ -1132,62 +1022,6 @@ void setHeroActionAnimation( SkeletonSystem* system, Entity* entity, float dt )
 	}
 }
 
-template < class GenericSystem >
-void removeEntities( GenericSystem* system, Array< EntityHandle > handles )
-{
-	unordered_remove_if( system->entries, [handles]( const auto& component ) {
-		return exists( handles, component.entity );
-	} );
-}
-void removeEntities( EntitySystem* system, Array< EntityHandle > handles )
-{
-	erase_if( system->entries, [system, handles]( const Entity& component ) {
-		if( exists( handles, component.handle ) ) {
-			if( !component.dynamic() ) {
-				--system->entriesCount;
-			}
-			return true;
-		}
-		return false;
-	} );
-}
-void removeEntities( HitboxSystem* system, Array< EntityHandle > handles )
-{
-	auto pairs = system->hitboxPairs();
-	erase_if( pairs, [handles]( const auto& pair ) {
-		return exists_if( handles, [pair]( const auto& handle ) {
-			return handle == pair.attacker || handle == pair.defender;
-		} );
-	} );
-	system->setPairsCount( pairs.size() );
-}
-void removeEntities( EntitySystem* entitySystem, SkeletonSystem* system,
-                     Array< EntityHandle > handles )
-{
-	FOR( entity : entitySystem->entries ) {
-		if( entity.skeleton && exists( handles, entity.handle ) ) {
-			deleteSkeleton( system, entity.skeleton );
-			entity.skeleton = nullptr;
-		}
-	}
-}
-void processEntityRemovalQueue( GameState* game )
-{
-	assert( game );
-	if( game->entityRemovalQueue.size() ) {
-		auto handles = makeArrayView( game->entityRemovalQueue );
-		removeEntities( &game->entitySystem, &game->skeletonSystem, handles );
-		removeEntities( &game->controlSystem, handles );
-		removeEntities( &game->entitySystem, handles );
-		removeEntities( &game->hitboxSystem, handles );
-		game->entityRemovalQueue.clear();
-	}
-}
-void removeEntity( GameState* game, EntityHandle handle )
-{
-	append_unique( game->entityRemovalQueue, handle );
-}
-
 void emitEntityParticles( GameState* game, float dt )
 {
 	FOR( entry : game->entitySystem.entries ) {
@@ -1233,8 +1067,8 @@ void emitEntityParticles( GameState* game, float dt )
 	}
 }
 
-typedef void BehaviorFunctionType( GameState*, Entity*, float, bool );
-void processHeroEntity( GameState* game, Entity* entity, float dt, bool frameBoundary )
+typedef void BehaviorFunctionType( GameState*, Entity*, float );
+void processHeroEntity( GameState* game, Entity* entity, float dt )
 {
 	using namespace GameConstants;
 
@@ -1285,7 +1119,7 @@ void processHeroEntity( GameState* game, Entity* entity, float dt, bool frameBou
 		}
 
 		// jump
-		if( frameBoundary && control.vertical == EntityVerticalMovement::Jump
+		if( control.vertical == EntityVerticalMovement::Jump
 		    && isSpatialStateJumpable( entity ) ) {
 			entity->velocity.y = JumpingSpeed;
 			setSpatialState( entity, SpatialState::Airborne );
@@ -1303,7 +1137,7 @@ void processHeroEntity( GameState* game, Entity* entity, float dt, bool frameBou
 		}
 
 		// walljump
-		if( frameBoundary && control.verticalAction == EntityVerticalAction::Jump
+		if( control.verticalAction == EntityVerticalAction::Jump
 		    && isSpatialStateWalljumpable( entity ) && entity->walljumpWindow ) {
 
 			entity->wallslideCollidable.clear();
@@ -1315,8 +1149,6 @@ void processHeroEntity( GameState* game, Entity* entity, float dt, bool frameBou
 
 		// shooting
 		if( control.action == EntityActionState::Attack ) {
-			assert( frameBoundary );
-
 			hero->shootingAnimationTimer = {20};
 		}
 
@@ -1325,8 +1157,6 @@ void processHeroEntity( GameState* game, Entity* entity, float dt, bool frameBou
 
 		// emit projectile after skeleton update, since we need correct node positions
 		if( control.action == EntityActionState::Attack ) {
-			assert( frameBoundary );
-
 			if( entity->skeleton->dirty ) {
 				update( entity->skeleton, nullptr, 0 );
 			}
@@ -1348,7 +1178,7 @@ void processHeroEntity( GameState* game, Entity* entity, float dt, bool frameBou
 		}
 	}
 }
-void processWheelsEntity( GameState* game, Entity* entity, float dt, bool frameBoundary )
+void processWheelsEntity( GameState* game, Entity* entity, float dt )
 {
 	auto wheels      = &entity->wheels;
 	bool stateChange = false;
@@ -1506,99 +1336,40 @@ void processWheelsEntity( GameState* game, Entity* entity, float dt, bool frameB
 		}
 	} while( stateChange );
 }
-void processProjectileEntity( GameState* game, Entity* entity, float dt, bool frameBoundary )
-{
-	if( entity->lastCollision || entity->dead() ) {
-		emitParticles( &game->particleSystem, entity->position, ParticleEmitterId::SmallDissipate );
-		removeEntity( game, entity->handle );
-	}
-}
 
-void processEntityBehaviors( GameState* game, float dt, bool frameBoundary )
+void processEntityBehaviors( GameState* game, float dt )
 {
 	assert( game );
 
 	emitEntityParticles( game, dt );
 
 	static BehaviorFunctionType* const EntityBehaviors[] = {
-	    processProjectileEntity, processHeroEntity, processWheelsEntity,
+	    processHeroEntity, processWheelsEntity,
 	};
-	static_assert( Entity::type_projectile == 1, "Wrong entity type order" );
-	static_assert( Entity::type_hero == 2, "Wrong entity type order" );
-	static_assert( Entity::type_wheels == 3, "Wrong entity type order" );
+	static_assert( Entity::type_hero == 1, "Wrong entity type order" );
+	static_assert( Entity::type_wheels == 2, "Wrong entity type order" );
+	static_assert( countof( EntityBehaviors ) == Entity::type_count - 1,
+	               "Not all behaviors defined" );
 
 	FOR( entry : game->entitySystem.staticEntries() ) {
 		assert( entry.type != Entity::type_none );
-		EntityBehaviors[entry.type - 1]( game, &entry, dt, frameBoundary );
+		EntityBehaviors[entry.type - 1]( game, &entry, dt );
 	}
 }
 
-static void doGame( AppData* app, GameInputs* inputs, bool focus, float dt, bool frameBoundary,
-                    bool enableRender = true )
+static void updateGame( AppData* app, GameInputs* inputs, bool focus )
 {
 	PROFILE_FUNCTION();
 
-	auto renderer = &app->renderer;
 	// auto font      = &app->font;
 	auto game     = &app->gameState;
 	auto settings = &app->settings;
 
-	if( !game->initialized ) {
-		auto allocator               = &app->stackAllocator;
-		game->particleSystem         = makeParticleSystem( allocator, 200 );
-		game->particleSystem.texture = app->platform.loadTexture( "Data/Images/particles.png" );
-
-		game->projectileSystem = makeProjectileSystem();
-
-		game->outlineShader =
-		    app->platform.loadShader( "Shaders/scale_by_normal.vsh", "Shaders/single_color.fsh" );
-
-		loadTileSet( allocator, "Data/voxels/default_tileset.json", &app->gameState.tileSet );
-		game->skeletonSystem = makeSkeletonSystem();
-
-		auto maxEntities         = 10;
-		game->entityHandles      = makeHandleManager();
-		game->entitySystem       = makeEntitySystem( allocator, maxEntities );
-		game->controlSystem      = makeControlSystem( allocator, maxEntities );
-		game->entityRemovalQueue = makeUArray( allocator, EntityHandle, maxEntities );
-
-		auto addHeroEntity = [&]( vec2arg pos ) {
-			auto handle = addEntityHandle( &game->entityHandles );
-			auto entity = addEntity( &game->entitySystem, &game->skeletonSystem, handle,
-			                         Entity::type_hero, pos );
-			return entity;
-		};
-		game->player = addHeroEntity( {16 * 2, 0} );
-		addControlComponent( &game->controlSystem, game->player->handle );
-
-		/*auto addMovingPlatform = [&]( vec2arg pos ) {
-			auto platform            = addHeroEntity( pos, true );
-			platform->movement       = EntityMovement::Straight;
-			platform->response       = CollisionResponse::Bounce;
-			platform->bounceModifier = 2;
-			platform->setForcedNormal( {1, 0} );
-			platform->velocity                = {1.0f, 0};
-			platform->gravityModifier         = 0;
-			platform->airFrictionCoeffictient = 0;
-		};
-		addMovingPlatform( {16 * 3} );
-		addMovingPlatform( {16 * 8} );*/
-
-		game->camera             = makeGameCamera( {0, -50, -200}, {0, 0, 1}, {0, 1, 0} );
-		game->cameraFollowRegion = {-25, -50, 25, 50};
-		game->useGameCamera      = true;
-		game->lighting           = false;
-
-		game->room = debugGetRoom( allocator, &game->tileSet );
-
-		game->initialized = true;
-	}
+	float dt = 1.0f;
 
 	if( !focus ) {
 		return;
 	}
-	auto matrixStack = renderer->matrixStack;
-
 	if( !game->useGameCamera ) {
 		float speed = dt * 0.25f;
 		if( isKeyDown( inputs, KC_Shift ) ) {
@@ -1610,22 +1381,16 @@ static void doGame( AppData* app, GameInputs* inputs, bool focus, float dt, bool
 		processCamera( inputs, settings, &app->voxelState.camera, speed );
 	}
 
-	if( !frameBoundary ) {
-		debugPrintln( "Active entities: {}", game->entitySystem.entries.size() );
+	if( isKeyPressed( inputs, KC_H ) ) {
+		game->paused = !game->paused;
 	}
-
-	if( !frameBoundary ) {
-		if( isKeyPressed( inputs, KC_H ) ) {
-			game->paused = !game->paused;
-		}
-		if( isKeyPressed( inputs, KC_0 ) ) {
-			game->useGameCamera = !game->useGameCamera;
-		}
-		if( isKeyPressed( inputs, KC_1 ) ) {
-			auto handle = addEntityHandle( &game->entityHandles );
-			addEntity( &game->entitySystem, &game->skeletonSystem, handle, Entity::type_wheels,
-			           {16 * 6, 16 * 8} );
-		}
+	if( isKeyPressed( inputs, KC_0 ) ) {
+		game->useGameCamera = !game->useGameCamera;
+	}
+	if( isKeyPressed( inputs, KC_1 ) ) {
+		auto handle = addEntityHandle( &game->entityHandles );
+		addEntity( &game->entitySystem, &game->skeletonSystem, handle, Entity::type_wheels,
+		           {16 * 6, 16 * 8} );
 	}
 
 	// mouse lock
@@ -1636,9 +1401,9 @@ static void doGame( AppData* app, GameInputs* inputs, bool focus, float dt, bool
 		inputs->mouse.locked = app->mouseLocked;
 	}
 
-	processGameCamera( app, dt, frameBoundary );
-	processControlSystem( game, &game->controlSystem, &game->entitySystem, inputs, dt,
-	                      frameBoundary );
+	game->prevCamera = game->camera;
+	processGameCamera( app, dt );
+	processControlSystem( game, &game->controlSystem, &game->entitySystem, inputs, dt );
 	// update aab's
 	FOR( entity : game->entitySystem.entries ) {
 		if( entity.skeleton ) {
@@ -1655,7 +1420,9 @@ static void doGame( AppData* app, GameInputs* inputs, bool focus, float dt, bool
 			}
 		}
 	}
-	doCollisionDetection( &game->room, &game->entitySystem, dt, frameBoundary );
+	doCollisionDetection( &game->room, &game->entitySystem, dt );
+	processProjectiles( game, game->room.layers[RL_Main].grid, game->entitySystem.dynamicEntries(),
+	                    dt );
 
 	// hit detection
 	{
@@ -1720,32 +1487,38 @@ static void doGame( AppData* app, GameInputs* inputs, bool focus, float dt, bool
 						testHit( &other, entity->handle, hitbox.first, prevPosition, delta );
 					}
 				}
-			} else if( entity->type == Entity::type_projectile ) {
-				auto data = getProjectileData( &game->projectileSystem, entity->projectile.type );
-				const auto& hitbox = data->hitbox;
-				auto delta         = entity->positionDelta;
-				auto prevPosition  = entity->position - entity->positionDelta;
-				FOR( other : staticEntries ) {
-					if( &other == entity || other.team == entity->team || other.flags.deathFlag ) {
-						continue;
-					}
-					if( other.flags.hurt ) {
-						// FIXME: find a better solution for not hurting hurt entities multiple
-						// times. If an entity turns invincible after a hit, removing the continue
-						// means they might still get hit multiple times, if the hits all happen on
-						// the exact same frame because invincibility only starts after hit
-						// detection
-						continue;
-					}
-					if( testHit( &other, entity->handle, hitbox, prevPosition, delta ) ) {
-						entity->flags.deathFlag = true;
-						break;
-					};
+			}
+		}
+
+		FOR( entry : game->projectileSystem.entries ) {
+			auto data = getProjectileData( &game->projectileSystem, entry.type );
+			const auto& hitbox = data->hitbox;
+			auto delta         = entry.positionDelta;
+			auto prevPosition  = entry.position - entry.positionDelta;
+			FOR( other : staticEntries ) {
+				if( other.team == entry.team || other.flags.deathFlag ) {
+					continue;
 				}
+				if( other.flags.hurt ) {
+					// FIXME: find a better solution for not hurting hurt entities multiple
+					// times. If an entity turns invincible after a hit, removing the continue
+					// means they might still get hit multiple times, if the hits all happen on
+					// the exact same frame because invincibility only starts after hit
+					// detection
+					continue;
+				}
+				if( testHit( &other, entry.handle, hitbox, prevPosition, delta ) ) {
+					--entry.durability;
+					if( entry.durability <= 0 ) {
+						entry.aliveCountdown = {};
+					}
+					break;
+				};
 			}
 		}
 		hitboxSystem->setPairsCount( pairs.size() );
 	}
+
 	// hurt flashing
 	FOR( entry : game->entitySystem.staticEntries() ) {
 		entry.hurtFlashCountdown = processTimer( entry.hurtFlashCountdown, dt );
@@ -1768,7 +1541,7 @@ static void doGame( AppData* app, GameInputs* inputs, bool focus, float dt, bool
 			setTransform( entity.skeleton, matrixTranslation( origin ) );
 		}
 	}
-	processEntityBehaviors( game, dt, frameBoundary );
+	processEntityBehaviors( game, dt );
 	processEntityRemovalQueue( game );
 
 	// entity behaviors might have changed face direction
@@ -1782,120 +1555,179 @@ static void doGame( AppData* app, GameInputs* inputs, bool focus, float dt, bool
 	}
 	processSkeletonSystem( &game->skeletonSystem, &game->particleSystem, dt );
 	processParticles( &game->particleSystem, dt );
+}
 
-	if( enableRender ) {
-		// TODO: refactor
-		setRenderState( renderer, RenderStateType::Lighting, game->lighting );
-		setProjection( renderer, ProjectionType::Perspective );
-		auto cameraTranslation = matrixTranslation( 0, -50, 0 );
-		Camera* camera         = &app->voxelState.camera;
-		if( game->useGameCamera ) {
-			camera = &game->camera;
-		}
-		renderer->view = cameraTranslation * getViewMatrix( camera );
+static void initializeGame( AppData* app, GameInputs* inputs )
+{
+	auto game = &app->gameState;
+	if( game->initialized ) {
+		return;
+	}
+	auto allocator               = &app->stackAllocator;
+	game->particleSystem         = makeParticleSystem( allocator, 200 );
+	game->particleSystem.texture = app->platform.loadTexture( "Data/Images/particles.png" );
 
-		const mat4 rotations[] = {
-		    matrixIdentity(),
-		    matrixRotationZOrigin( HalfPi32, 8, 8 ),
-		    matrixRotationZOrigin( Pi32, 8, 8 ),
-		    matrixRotationZOrigin( Pi32 + HalfPi32, 8, 8 ),
-		};
+	game->projectileSystem = makeProjectileSystem( allocator, 200 );
 
-		{
-			// render tiles
-			auto tileWidth  = GameConstants::TileWidth;
-			auto tileHeight = GameConstants::TileHeight;
-			const float zTranslation[] = {0, TILE_DEPTH, -TILE_DEPTH};
-			static_assert( countof( zTranslation ) == RL_Count, "" );
-			for( auto i = 0; i < RL_Count; ++i ) {
-				auto layer = &app->gameState.room.layers[i];
-				auto grid = layer->grid;
-				auto tileSet = &app->gameState.tileSet;
-				setTexture( renderer, 0, tileSet->voxels.texture );
-				for( auto y = 0; y < grid.height; ++y ) {
-					for( auto x = 0; x < grid.width; ++x ) {
-						auto tile = grid.at( x, y );
-						if( tile ) {
-							pushMatrix( matrixStack );
-							translate( matrixStack, x * tileWidth, -y * tileHeight - tileHeight,
-							           zTranslation[i] );
-							assert( tile.rotation < countof( rotations ) );
-							multMatrix( matrixStack, rotations[tile.rotation] );
-							auto entry = &tileSet->voxels.frames[tile.frames.min];
-							addRenderCommandMesh( renderer, entry->mesh );
-							popMatrix( matrixStack );
-						}
+	game->outlineShader =
+	    app->platform.loadShader( "Shaders/scale_by_normal.vsh", "Shaders/single_color.fsh" );
+
+	loadTileSet( allocator, "Data/voxels/default_tileset.json", &app->gameState.tileSet );
+	game->skeletonSystem = makeSkeletonSystem();
+
+	auto maxEntities         = 10;
+	game->entityHandles      = makeHandleManager();
+	game->entitySystem       = makeEntitySystem( allocator, maxEntities );
+	game->controlSystem      = makeControlSystem( allocator, maxEntities );
+	game->entityRemovalQueue = makeUArray( allocator, EntityHandle, maxEntities );
+
+	auto addHeroEntity = [&]( vec2arg pos ) {
+		auto handle = addEntityHandle( &game->entityHandles );
+		auto entity =
+		    addEntity( &game->entitySystem, &game->skeletonSystem, handle, Entity::type_hero, pos );
+		return entity;
+	};
+	game->player = addHeroEntity( {16 * 2, 0} );
+	addControlComponent( &game->controlSystem, game->player->handle );
+
+	/*auto addMovingPlatform = [&]( vec2arg pos ) {
+	    auto platform            = addHeroEntity( pos, true );
+	    platform->movement       = EntityMovement::Straight;
+	    platform->response       = CollisionResponse::Bounce;
+	    platform->bounceModifier = 2;
+	    platform->setForcedNormal( {1, 0} );
+	    platform->velocity                = {1.0f, 0};
+	    platform->gravityModifier         = 0;
+	    platform->airFrictionCoeffictient = 0;
+	};
+	addMovingPlatform( {16 * 3} );
+	addMovingPlatform( {16 * 8} );*/
+
+	game->camera             = makeGameCamera( {0, -50, -200}, {0, 0, 1}, {0, 1, 0} );
+	game->cameraFollowRegion = {-25, -50, 25, 50};
+	game->useGameCamera      = true;
+	game->lighting           = false;
+
+	game->room        = debugGetRoom( allocator, &game->tileSet );
+	game->initialized = true;
+
+	updateGame( app, inputs, true );
+}
+
+void renderGame( AppData* app, GameInputs* inputs, float blendFactor, bool focus )
+{
+	if( !focus ) {
+		return;
+	}
+
+	// TODO: do proper interpolation of prev to next frame
+
+	auto renderer = &app->renderer;
+	auto game     = &app->gameState;
+
+	setRenderState( renderer, RenderStateType::Lighting, game->lighting );
+	setProjection( renderer, ProjectionType::Perspective );
+	auto cameraTranslation = matrixTranslation( 0, -50, 0 );
+	Camera camera          = app->voxelState.camera;
+	if( game->useGameCamera ) {
+		auto& prev      = game->prevCamera;
+		auto& next      = game->camera;
+		camera.position = lerp( blendFactor, prev.position, next.position );
+		camera.look     = lerp( blendFactor, prev.look, next.look );
+		camera.right    = lerp( blendFactor, prev.right, next.right );
+		camera.up       = lerp( blendFactor, prev.up, next.up );
+	}
+	renderer->view = cameraTranslation * getViewMatrix( &camera );
+
+	const mat4 rotations[] = {
+	    matrixIdentity(), matrixRotationZOrigin( HalfPi32, 8, 8 ),
+	    matrixRotationZOrigin( Pi32, 8, 8 ), matrixRotationZOrigin( Pi32 + HalfPi32, 8, 8 ),
+	};
+
+	auto matrixStack = renderer->matrixStack;
+	{
+		// render tiles
+		auto tileWidth             = GameConstants::TileWidth;
+		auto tileHeight            = GameConstants::TileHeight;
+		const float zTranslation[] = {0, TILE_DEPTH, -TILE_DEPTH};
+		static_assert( countof( zTranslation ) == RL_Count, "" );
+		for( auto i = 0; i < RL_Count; ++i ) {
+			auto layer   = &app->gameState.room.layers[i];
+			auto grid    = layer->grid;
+			auto tileSet = &app->gameState.tileSet;
+			setTexture( renderer, 0, tileSet->voxels.texture );
+			for( auto y = 0; y < grid.height; ++y ) {
+				for( auto x = 0; x < grid.width; ++x ) {
+					auto tile = grid.at( x, y );
+					if( tile ) {
+						pushMatrix( matrixStack );
+						translate( matrixStack, x * tileWidth, -y * tileHeight - tileHeight,
+						           zTranslation[i] );
+						assert( tile.rotation < countof( rotations ) );
+						multMatrix( matrixStack, rotations[tile.rotation] );
+						auto entry = &tileSet->voxels.frames[tile.frames.min];
+						addRenderCommandMesh( renderer, entry->mesh );
+						popMatrix( matrixStack );
 					}
 				}
 			}
-
-			// render background
-			setTexture( renderer, 0, null );
-			MESH_STREAM_BLOCK( stream, renderer ) {
-				stream->color = 0xFF46AEEB;
-				pushQuad( stream, rectf{-500, 500, 500, -500} * TILE_WIDTH, 32 * CELL_DEPTH );
-			}
 		}
 
-		// render entities
-		for( auto& entry : game->entitySystem.entries ) {
-			if( entry.skeleton ) {
-				render( renderer, entry.skeleton );
-			} else {
-				const VoxelCollection::Frame* currentFrame = nullptr;
-				float z                                    = 0;
-				switch( entry.type ) {
-					case Entity::type_projectile: {
-						auto data =
-						    getProjectileData( &game->projectileSystem, entry.projectile.type );
-						currentFrame = &data->frame;
-						setTexture( renderer, 0, data->texture );
-						z = data->z;
-						break;
-					}
-					default: {
-						break;
-					}
-				}
-				if( currentFrame ) {
-					// 2d game world coordinates to 3d space coordinates
-					auto offset   = currentFrame->offset;
-					auto position = gameToScreen( entry.position - offset );
-					pushMatrix( matrixStack );
-					translate( matrixStack, position, z );
-					auto mesh               = addRenderCommandMesh( renderer, currentFrame->mesh );
-					mesh->screenDepthOffset = -0.01f;
-					popMatrix( matrixStack );
-				}
-			}
+		// render background
+		setTexture( renderer, 0, null );
+		MESH_STREAM_BLOCK( stream, renderer ) {
+			stream->color = 0xFF46AEEB;
+			pushQuad( stream, rectf{-500, 500, 500, -500} * TILE_WIDTH, 32 * CELL_DEPTH );
 		}
+	}
 
-		// render particles
-		renderParticles( renderer, &game->particleSystem );
+	// render entities
+	for( auto& entry : game->entitySystem.entries ) {
+		auto position = entry.position - entry.positionDelta * ( 1 - blendFactor );
+		// auto position = lerp( blendFactor, entry.position - entry.positionDelta, entry.position );
+		setTransform( entry.skeleton, matrixTranslation( position.x, -position.y, 0 ) );
+		update( entry.skeleton, nullptr, 0 );
+		render( renderer, entry.skeleton );
+	}
+
+	// render projectiles
+	FOR( entry : game->projectileSystem.entries ) {
+		auto data = getProjectileData( &game->projectileSystem, entry.type );
+		setTexture( renderer, 0, data->texture );
+		auto offset   = data->frame.offset;
+		auto position = gameToScreen( entry.position - offset );
+		pushMatrix( matrixStack );
+		translate( matrixStack, position, data->z );
+		auto mesh               = addRenderCommandMesh( renderer, data->frame.mesh );
+		mesh->screenDepthOffset = -0.02f;
+		popMatrix( matrixStack );
+	}
+
+	// render particles
+	renderParticles( renderer, &game->particleSystem );
 #if 1
-		if( game->debugCamera ) {
-			// render camera follow region
-			setTexture( renderer, 0, null );
-			MESH_STREAM_BLOCK( stream, renderer ) {
-				stream->color     = Color::Blue;
-				stream->lineWidth = 2;
-				pushQuadOutline( stream, gameToScreen( app->gameState.cameraFollowRegion ) );
-			}
+	if( game->debugCamera ) {
+		// render camera follow region
+		setTexture( renderer, 0, null );
+		MESH_STREAM_BLOCK( stream, renderer ) {
+			stream->color     = Color::Blue;
+			stream->lineWidth = 2;
+			pushQuadOutline( stream, gameToScreen( app->gameState.cameraFollowRegion ) );
 		}
+	}
 #endif
-		if( game->debugCollisionBoxes ) {
-			// setRenderState( renderer, RenderStateType::DepthTest, false );
-			setTexture( renderer, 0, null );
-			MESH_STREAM_BLOCK( stream, renderer ) {
-				stream->color   = setAlpha( Color::Blue, 0.5f );
-				FOR( entry : game->entitySystem.entries ) {
-					auto screenRect = gameToScreen( translate( entry.aab, entry.position ) );
-					pushAabb( stream, screenRect.left, screenRect.bottom, -16, screenRect.right,
-					          screenRect.top, 16 );
-				}
+	if( game->debugCollisionBoxes ) {
+		// setRenderState( renderer, RenderStateType::DepthTest, false );
+		setTexture( renderer, 0, null );
+		MESH_STREAM_BLOCK( stream, renderer ) {
+			stream->color = setAlpha( Color::Blue, 0.5f );
+			FOR( entry : game->entitySystem.entries ) {
+				auto screenRect = gameToScreen( translate( entry.aab, entry.position ) );
+				pushAabb( stream, screenRect.left, screenRect.bottom, -16, screenRect.right,
+				          screenRect.top, 16 );
 			}
-			// setRenderState( renderer, RenderStateType::DepthTest, true );
 		}
+		// setRenderState( renderer, RenderStateType::DepthTest, true );
 	}
 }
 
@@ -2115,7 +1947,8 @@ void doEasing( AppData* app, GameInputs* inputs, bool focus, float dt )
 }
 
 GAME_STORAGE struct RenderCommands* updateAndRender( void* memory, struct GameInputs* inputs,
-                                                     float dt );
+                                                     struct GameInputs* fixedInputs, float dt,
+                                                     int32 stepCount, float blendFactor );
 UPDATE_AND_RENDER( updateAndRender )
 {
 	GlobalProfilingTable->eventsCount = 0;
@@ -2127,9 +1960,6 @@ UPDATE_AND_RENDER( updateAndRender )
 	auto allocator = &app->stackAllocator;
 
 	inputs->disableEscapeForQuickExit = false;
-
-	auto lastFrameTimeAcc = app->frameTimeAcc;
-	app->frameTimeAcc += dt;
 
 	if( !app->resourcesLoaded ) {
 		app->font = app->platform.loadFont( allocator, "Arial", 11, 400, false,
@@ -2183,33 +2013,15 @@ UPDATE_AND_RENDER( updateAndRender )
 	// unlocked automatically
 	inputs->mouse.locked = false;
 
-	// NOTE: assumption here is that we only cross a frame boundary once per gameloop, but in
-	// reality we might move across multiple frame boundaries at once if the game is lagging for
-	// whatever reason
-	// TODO: think about whether we want frameskips or let the game lag behind if we cross multiple
-	// frame boundaries
-	constexpr const float FrameTimeTarget = 1000.0f / 60.0f;
-	doVoxel( app, inputs, app->focus == AppFocus::Voxel, dt / FrameTimeTarget );
-	if( app->frameTimeAcc < FrameTimeTarget ) {
-		auto frameRatio = dt / FrameTimeTarget;
-		// move entities along without altering their paths
-		doGame( app, inputs, app->focus == AppFocus::Game, frameRatio, false );
-	} else {
-		// assert( lastFrameTimeAcc <= FrameTimeTarget );
-		if( lastFrameTimeAcc > FrameTimeTarget ) {
-			LOG( WARNING, "FrameSkipped" );
-		}
-		auto timeToFrameBoundary = FrameTimeTarget - lastFrameTimeAcc;
-		if( timeToFrameBoundary != 0 ) {
-			auto frameRatio = timeToFrameBoundary / FrameTimeTarget;
-			// move entities along without altering their paths
-			doGame( app, inputs, app->focus == AppFocus::Game, frameRatio, false, false );
-		}
-		app->frameTimeAcc -= FrameTimeTarget;
-		auto frameRatio = app->frameTimeAcc / FrameTimeTarget;
-		// recalculate entity velocities and update entity positions
-		doGame( app, inputs, app->focus == AppFocus::Game, frameRatio, true );
+	debugLogln( "{}", stepCount );
+	initializeGame( app, fixedInputs );
+	for( ; stepCount > 0; --stepCount ) {
+		updateGame( app, fixedInputs, app->focus == AppFocus::Game );
+		resetInputs( fixedInputs );
 	}
+	renderGame( app, inputs, blendFactor, app->focus == AppFocus::Game );
+
+	doVoxel( app, inputs, app->focus == AppFocus::Voxel, dt );
 	doTexturePack( app, inputs, app->focus == AppFocus::TexturePack, dt );
 	doAnimator( app, inputs, app->focus == AppFocus::Animator, dt );
 	doEasing( app, inputs, app->focus == AppFocus::Easing, dt );

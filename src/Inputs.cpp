@@ -116,3 +116,18 @@ bool isHotkeyPressed( GameInputs* inputs, int32 key, int32 modifier1, int32 modi
 	return isKeyPressed( inputs, key ) && isKeyDown( inputs, modifier1 )
 	       && isKeyDown( inputs, modifier2 );
 }
+
+void resetInputs( GameInputs* inputs )
+{
+	for( auto& entry : inputs->keys ) {
+		auto wasDown = isKeyDown( entry );
+		if( wasDown ) {
+			entry.composite = GameInputKeyFlags::WasDown;
+		} else {
+			entry.composite = 0;
+		}
+	}
+	inputs->mouse.prev  = inputs->mouse.position;
+	inputs->mouse.wheel = 0;
+	inputs->count       = 0;
+}

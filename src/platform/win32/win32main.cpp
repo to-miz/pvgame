@@ -160,20 +160,6 @@ __declspec( dllexport ) DWORD NvOptimusEnablement                  = 0x00000001;
 
 static LRESULT CALLBACK windowProc( HWND hwnd, UINT uMsg, WPARAM wParam, LPARAM lParam );
 
-static void win32ResetInputs( GameInputs* inputs )
-{
-	for( auto& entry : inputs->keys ) {
-		auto wasDown = isKeyDown( entry );
-		if( wasDown ) {
-			entry.composite = GameInputKeyFlags::WasDown;
-		} else {
-			entry.composite = 0;
-		}
-	}
-	inputs->mouse.prev  = inputs->mouse.position;
-	inputs->mouse.wheel = 0;
-	inputs->count       = 0;
-}
 static GameInputKey win32SetKeyStatus( GameInputKey key, bool down )
 {
 	GameInputKey result;
@@ -449,7 +435,9 @@ bool win32LoadGameDll( Win32GameDll* dll )
 const int32 Win32MaxRecording = 20000;
 struct Win32RecordingFrame {
 	GameInputs inputs;
+	GameInputs fixedInputs;
 	float elapsedTime;
+	int32 stepCount;
 };
 struct Win32InputRecording {
 	Win32RecordingFrame entries[Win32MaxRecording];
@@ -591,32 +579,38 @@ int CALLBACK WinMain( HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdL
 
 	MSG msg;
 	auto running = true;
-	GameInputs inputs = {};
+	GameInputs inputs         = {};
+	GameInputs fixedInputs    = {};
 	GameInputs platformInputs = {};
 
-	// setting maxElapsedTime to a bigger value messes up stepping
-	float maxElapsedTime = ( 1000.0f / 60.0f ) /** 1.5f*/;
-	double frameTimeAcc = 0;
-	double gameTimeAcc = 0;
+	double frameTimeAcc  = 0;
+	double gameTimeAcc   = 0;
 	double renderTimeAcc = 0;
-	intmax loopCounter = 0;
-	float minFrameTime = 0;
-	float maxFps = 0;
-	float maxFrameTime = 0;
-	float minFps = 0;
-	double elapsedTime = 0;
+	intmax loopCounter   = 0;
+	float minFrameTime   = 0;
+	float maxFps         = 0;
+	float maxFrameTime   = 0;
+	float minFps         = 0;
+	double elapsedTime   = 0;
 
-	bool recordingInputs = false;
-	bool replayingInputs = false;
-	bool replayStepped = false;
-	bool replayStep = false;
+	// structure for fixed time steps
+	struct {
+		double accumulator;
+	} timing                     = {};
+	const double FixedTargetTime = 1000.0f / 60.0f;
+
+	bool recordingInputs           = false;
+	bool replayingInputs           = false;
+	bool replayStepped             = false;
+	bool replayStep                = false;
 	Win32InputRecording* recording = new Win32InputRecording;
-	recording->count = 0;
+	recording->count               = 0;
 	recording->memory =
 	    VirtualAlloc( nullptr, memorySize, MEM_COMMIT | MEM_RESERVE, PAGE_READWRITE );
 
 	RenderCommands* renderCommands = nullptr;
 
+	resetInputs( &inputs );
 	while( running ) {
 		if( win32LoadGameDll( &dll ) ) {
 			auto remapInfo = reloadApp( gameMemory, gameMemorySize );
@@ -627,10 +621,7 @@ int CALLBACK WinMain( HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdL
 
 		openGlContext.width  = (float)Win32AppContext.window.width;
 		openGlContext.height = (float)Win32AppContext.window.height;
-		if( !replayStepped || replayStep ) {
-			win32ResetInputs( &inputs );
-		}
-		win32ResetInputs( &platformInputs );
+		resetInputs( &platformInputs );
 		while( PeekMessageW( &msg, nullptr, 0, 0, PM_REMOVE ) ) {
 			if( msg.message == WM_QUIT ) {
 				running = false;
@@ -640,9 +631,11 @@ int CALLBACK WinMain( HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdL
 			DispatchMessageW( &msg );
 
 			win32HandleInputs( msg.hwnd, msg.message, msg.wParam, msg.lParam, &inputs );
+			win32HandleInputs( msg.hwnd, msg.message, msg.wParam, msg.lParam, &fixedInputs );
 			win32HandleInputs( msg.hwnd, msg.message, msg.wParam, msg.lParam, &platformInputs );
 		}
 		win32FillMouseData( &inputs.mouse, openGlContext.width, openGlContext.height );
+		win32FillMouseData( &fixedInputs.mouse, openGlContext.width, openGlContext.height );
 		win32FillMouseData( &platformInputs.mouse, openGlContext.width, openGlContext.height );
 		if( inputs.mouse.locked && Win32AppContext.window.active && !replayingInputs ) {
 			RECT rect;
@@ -680,6 +673,7 @@ int CALLBACK WinMain( HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdL
 		// do stuff
 		// TODO: is this fine for production?
 		float clampedElapsedTime = (float)elapsedTime;
+		const float maxElapsedTime = (float)( FixedTargetTime * 1.5 );
 		if( clampedElapsedTime > maxElapsedTime ) {
 			clampedElapsedTime = maxElapsedTime;
 		}
@@ -693,13 +687,6 @@ int CALLBACK WinMain( HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdL
 				recording->memorySize = memorySize;
 			}
 		}
-		if( recordingInputs ) {
-			auto currentFrame = &recording->entries[recording->count];
-			currentFrame->inputs = inputs;
-			currentFrame->elapsedTime = clampedElapsedTime;
-			++recording->count;
-			info.recordingFrame = recording->count;
-		}
 
 		if( isHotkeyPressed( &platformInputs, KC_O, KC_Control ) && recording->count ) {
 			replayingInputs = !replayingInputs;
@@ -708,25 +695,43 @@ int CALLBACK WinMain( HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdL
 				recording->currentInput = 0;
 			}
 		}
-		if( replayingInputs ) {
-			if( recording->currentInput >= recording->count ) {
-				// restart
-				memcpy( memory, recording->memory, memorySize );
-				recording->currentInput = 0;
+
+		bool doNextStep = !replayStepped || replayStep;
+		if( doNextStep ) {
+			timing.accumulator += clampedElapsedTime;
+			auto stepCount = ( int32 )( timing.accumulator / FixedTargetTime );
+			timing.accumulator -= stepCount * FixedTargetTime;
+
+			float blendFactor = (float)( timing.accumulator / FixedTargetTime );
+
+			if( recordingInputs ) {
+				auto currentFrame         = &recording->entries[recording->count];
+				currentFrame->inputs      = inputs;
+				currentFrame->fixedInputs = fixedInputs;
+				currentFrame->elapsedTime = clampedElapsedTime;
+				currentFrame->stepCount   = stepCount;
+				++recording->count;
+				info.recordingFrame = recording->count;
 			}
-			auto currentFrame = &recording->entries[recording->currentInput];
-			inputs = currentFrame->inputs;
-			clampedElapsedTime = currentFrame->elapsedTime;
-			if( !replayStepped || replayStep ) {
+
+			if( replayingInputs ) {
+				if( recording->currentInput >= recording->count ) {
+					// restart
+					memcpy( memory, recording->memory, memorySize );
+					recording->currentInput = 0;
+				}
+				auto currentFrame  = &recording->entries[recording->currentInput];
+				inputs             = currentFrame->inputs;
+				fixedInputs        = currentFrame->fixedInputs;
+				clampedElapsedTime = currentFrame->elapsedTime;
+				stepCount          = currentFrame->stepCount;
 				++recording->currentInput;
 				info.recordingFrame = recording->currentInput;
 			}
-		}
 
-		info.recordingInputs = recordingInputs;
-		info.replayingInputs = replayingInputs;
+			info.recordingInputs = recordingInputs;
+			info.replayingInputs = replayingInputs;
 
-		if( !replayStepped || replayStep ) {
 			{
 				auto mallinfo        = mspace_mallinfo( Win32AppContext.dlmallocator );
 				info.mallocAllocated = mallinfo.uordblks;
@@ -735,7 +740,12 @@ int CALLBACK WinMain( HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdL
 			}
 
 			auto startTime = win32PerformanceCounter();
-			renderCommands = updateAndRender( gameMemory, &inputs, clampedElapsedTime );
+			renderCommands = updateAndRender( gameMemory, &inputs, &fixedInputs, clampedElapsedTime,
+			                                  stepCount, blendFactor );
+			if( stepCount ) {
+				resetInputs( &fixedInputs );
+			}
+			resetInputs( &inputs );
 			auto gameTime = win32PerformanceCounter() - startTime;
 			info.gameTime = (float)gameTime;
 			gameTimeAcc += gameTime;

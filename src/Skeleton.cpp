@@ -920,7 +920,7 @@ void update( Skeleton* skeleton, ParticleSystem* particleSystem, float dt )
 
 	auto animationStates = skeleton->animations;
 	auto definition      = skeleton->definition;
-	if( animationStates.size() ) {
+	if( animationStates.size() && dt > 0 ) {
 		// apply animations base values (only toplevel animation)
 		auto animations     = definition->animations;
 		auto transforms     = skeleton->transforms;
@@ -1530,13 +1530,11 @@ Entity* addEntity( EntitySystem* entitySystem, SkeletonSystem* skeletonSystem, E
 		result->airFrictionCoeffictient = traits->init.airFrictionCoeffictient;
 		result->team                    = traits->team;
 
-		if( type != Entity::type_projectile ) {
-			auto skeletonTraits = getSkeletonTraits( skeletonSystem, type );
-			if( skeletonTraits && skeletonTraits->definition && *skeletonTraits->definition ) {
-				result->skeleton = addSkeleton( skeletonSystem, *skeletonTraits->definition );
-				assert( result->skeleton );
-				update( result->skeleton, nullptr, 0 );
-			}
+		auto skeletonTraits = getSkeletonTraits( skeletonSystem, type );
+		if( skeletonTraits && skeletonTraits->definition && *skeletonTraits->definition ) {
+			result->skeleton = addSkeleton( skeletonSystem, *skeletonTraits->definition );
+			assert( result->skeleton );
+			update( result->skeleton, nullptr, 0 );
 		}
 
 		switch( type ) {

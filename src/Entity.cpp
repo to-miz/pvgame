@@ -134,7 +134,6 @@ struct Entity {
 	enum Type {
 		type_none,
 
-		type_projectile,
 		type_hero,
 		type_wheels,
 
@@ -155,13 +154,8 @@ struct Entity {
 		enum : int8 { Idle, Moving, Turning, Stopping, Attacking, Hurt } state;
 		bool8 shouldTurn;
 	};
-	struct Projectile {
-		ProjectileType type;
-		int8 durability;
-	};
 	union {
 		Hero hero;
-		Projectile projectile;
 		Wheels wheels;
 	};
 
@@ -325,21 +319,6 @@ const EntityTraitsData* const getEntityTraits( Entity::Type type )
 	static const EntityTraitsData EntityTraits[] = {
 	    // none
 	    {},
-
-	    // projectile
-	    {
-	        makeEntityTraitsFlags( EntityTraitsFlags::NoFaceDirection ),
-	        EntityMovement::Straight,
-	        CollisionResponse::Bounce,
-	        EntityTeam::None,
-	        {},
-	        {
-	            0,  // gravityModifier
-	            2,  // bounceModifier
-	            0,  // airFrictionCoeffictient
-	            0   // wallslideFrictionCoefficient
-	        },
-	    },
 
 	    // hero
 	    {

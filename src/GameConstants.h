@@ -17,4 +17,6 @@ constexpr const float TileHeight = 16.0f;
 constexpr const float DeltaToFrameTime = 60.0f / 1000.0f;  // constant to convert elapsed
                                                            // miliseconds to number between 0 and 1,
                                                            // where 1 = 1/60 of a second
+
+const rectf PlayableArea = {-1000, -1000, 1000, 1000};
 }

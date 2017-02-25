@@ -70,6 +70,8 @@ struct Skeleton {
 	Array< SkeletonHitboxState > hitboxes;
 	UArray< SkeletonAnimationState > animations;
 	Array< Array< SkeletonKeyframesState > > keyframeStatesPool;
+	UArray< SkeletonAnimationState > prevAnimations;
+	Array< Array< SkeletonKeyframesState > > prevKeyframeStatesPool;
 	int16 definitionId;
 	bool8 dirty;
 	bool8 mirrored;
@@ -317,6 +319,5 @@ struct SkeletonSystem {
 const EntitySkeletonTraits* const getSkeletonTraits( SkeletonSystem* system, Entity::Type type )
 {
 	assert( type >= 0 && type < Entity::type_count );
-	assert( type != Entity::type_projectile );
 	return &system->skeletonTraits[type];
 }

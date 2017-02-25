@@ -130,8 +130,10 @@ struct PlatformInfo {
 #define INITIALIZE_APP( name )           \
 	GAME_STORAGE PlatformRemapInfo name( \
 	    void* memory, size_t size, PlatformServices platformServices, PlatformInfo* platformInfo )
-#define UPDATE_AND_RENDER( name ) \
-	GAME_STORAGE struct RenderCommands* name( void* memory, struct GameInputs* inputs, float dt )
+#define UPDATE_AND_RENDER( name )                                                       \
+	GAME_STORAGE struct RenderCommands* name( void* memory, struct GameInputs* inputs,  \
+	                                          struct GameInputs* fixedInputs, float dt, \
+	                                          int32 stepCount, float blendFactor )
 #define RELOAD_APP( name ) GAME_STORAGE PlatformRemapInfo name( void* memory, size_t size )
 
 #ifdef GAME_DLL
