@@ -455,9 +455,16 @@ MeshId win32UploadMeshToGpu( Mesh mesh )
 	MeshId result = {};
 	auto context  = Win32AppContext.openGlContext;
 	assert( context->meshes.remaining() );
+
+	OpenGlMesh* dest = nullptr;
 	if( context->meshes.remaining() ) {
-		auto dest = context->meshes.emplace_back();
-		result.id = context->meshes.size();
+		dest = context->meshes.emplace_back();
+	} else {
+		dest = find_first_where( context->meshes, entry.verticesCount < 0 );
+	}
+	if( dest ) {
+		++Win32AppContext.info->uploadedMeshes;
+		result.id = indexof( context->meshes, *dest ) + 1;
 		glGenVertexArrays( 1, &dest->vertexArrayObjectId );
 		glBindVertexArray( dest->vertexArrayObjectId );
 		glGenBuffers( 1, &dest->vertexBufferId );
@@ -486,6 +493,20 @@ MeshId win32UploadMeshToGpu( Mesh mesh )
 		dest->indicesCount  = mesh.indicesCount;
 	}
 	return result;
+}
+void win32DeleteMesh( MeshId id )
+{
+	if( id ) {
+		auto context = Win32AppContext.openGlContext;
+		auto mesh    = &context->meshes[id.id - 1];
+
+		glDeleteBuffers( 1, &mesh->vertexBufferId );
+		glDeleteBuffers( 1, &mesh->indexBufferId );
+		glDeleteVertexArrays( 1, &mesh->vertexArrayObjectId );
+		mesh->verticesCount = -1;
+		mesh->indicesCount  = -1;
+		--Win32AppContext.info->uploadedMeshes;
+	}
 }
 
 static OpenGlVertexBuffer win32InitOpenGlVertexBuffer( GLsizei verticesCapacity,
@@ -689,8 +710,7 @@ static OpenGlContext win32CreateOpenGlContext( StackAllocator* allocator, HDC hd
 	assert( wglChoosePixelFormatARB );
 	OpenGlContext result = {};
 
-	const int32 MaxOpenGlMeshCount = 100;
-	result.meshes                  = makeUArray( allocator, OpenGlMesh, MaxOpenGlMeshCount );
+	result.meshes = makeUArray( allocator, OpenGlMesh, MaxMeshCount );
 
 	const int pfAttribList[] = {
 		WGL_DRAW_TO_WINDOW_ARB, GL_TRUE,
@@ -1246,6 +1266,8 @@ static void win32ProcessRenderCommands( OpenGlContext* context, RenderCommands* 
 				auto body = getRenderCommandBody( &stream, header, RenderCommandStaticMesh );
 				if( body->meshId ) {
 					auto mesh = &context->meshes[body->meshId.id - 1];
+					assert( mesh->verticesCount > 0 );
+					assert( mesh->vertexArrayObjectId );
 					glBindVertexArray( mesh->vertexArrayObjectId );
 					auto& current = projections[valueof( context->currentProjectionType )];
 					auto matrix   = body->matrix * current;
@@ -1383,7 +1405,7 @@ static bool win32InitOpenGL( OpenGlContext* context, float width, float height )
 
 	// TODO: read up on vsync and targeting 60 fps
 	// TODO: do we need glFinish?
-	wglSwapIntervalEXT( 1 );
+	wglSwapIntervalEXT( 0 );
 
 	context->renderStates[valueof( RenderStateType::DepthTest )] = true;
 	context->renderStates[valueof( RenderStateType::DepthWrite )] = true;

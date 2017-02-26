@@ -13,6 +13,7 @@ typedef Font LoadFontType( StackAllocator* allocator, StringView utf8Name, int32
 typedef void WriteBufferToFileType( StringView filename, void* buffer, size_t bufferSize );
 typedef size_t ReadFileToBufferType( StringView filename, void* buffer, size_t bufferSize );
 typedef MeshId UploadMeshType( Mesh mesh );
+typedef void DeleteMeshType( MeshId mesh );
 
 typedef ShaderId LoadShaderType( StringView vertexShader, StringView fragmentShader );
 typedef void DeleteShaderType( ShaderId shader );
@@ -43,6 +44,8 @@ typedef void FreeType( void* ptr, size_t size, uint32 alignment );
 
 typedef void OutputDebugStringType( const char* str );
 
+const int32 MaxMeshCount = 100;
+
 struct PlatformServices {
 	LoadTextureType* loadTexture;
 	LoadTextureFromMemoryType* loadTextureFromMemory;
@@ -55,6 +58,7 @@ struct PlatformServices {
 	ReadFileToBufferType* readFileToBuffer;
 
 	UploadMeshType* uploadMesh;
+	DeleteMeshType* deleteMesh;
 
 	GetOpenFilenameType* getOpenFilename;
 	GetSaveFilenameType* getSaveFilename;
@@ -112,6 +116,7 @@ struct PlatformInfo {
 	bool replayingInputs;
 	int32 recordingFrame;
 
+	int32 uploadedMeshes;
 	int32 vertices;
 	int32 indices;
 	int32 drawCalls;

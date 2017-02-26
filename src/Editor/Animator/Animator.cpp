@@ -4091,12 +4091,13 @@ void doAnimator( AppData* app, GameInputs* inputs, bool focus, float dt )
 
 		animator->controlIcons = app->platform.loadTexture( "Data/Images/animator_controls.png" );
 
-		animator->editor.contextMenu   = imguiGenerateContainer( gui, {}, true );
-		animator->fileMenu             = imguiGenerateContainer( gui, {}, true );
-		animator->viewMenu             = imguiGenerateContainer( gui, {}, true );
-		animator->editMenu             = imguiGenerateContainer( gui, {}, true );
-		animator->assetContextMenu     = imguiGenerateContainer( gui, {}, true );
-		animator->messageBox.container = imguiGenerateContainer( gui, {0, 0, 300, 10}, true );
+		animator->editor.contextMenu = imguiGenerateContainer( gui, {}, ImGuiVisibility::Hidden );
+		animator->fileMenu           = imguiGenerateContainer( gui, {}, ImGuiVisibility::Hidden );
+		animator->viewMenu           = imguiGenerateContainer( gui, {}, ImGuiVisibility::Hidden );
+		animator->editMenu           = imguiGenerateContainer( gui, {}, ImGuiVisibility::Hidden );
+		animator->assetContextMenu   = imguiGenerateContainer( gui, {}, ImGuiVisibility::Hidden );
+		animator->messageBox.container =
+		    imguiGenerateContainer( gui, {0, 0, 300, 10}, ImGuiVisibility::Hidden );
 
 		auto allocator                   = &app->stackAllocator;
 		const auto MaxNodes              = 10;
@@ -4143,7 +4144,7 @@ void doAnimator( AppData* app, GameInputs* inputs, bool focus, float dt )
 	setProjection( renderer, ProjectionType::Orthogonal );
 	setRenderState( renderer, RenderStateType::DepthTest, false );
 
-	auto t = dt * ( 60.0f / 1000.0f );
+	auto t = dt * GameConstants::DeltaToFrameTime;
 	processParticles( &animator->particleSystem, t );
 
 	if( animator->currentAnimation && animator->flags.playing ) {

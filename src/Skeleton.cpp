@@ -801,16 +801,20 @@ Skeleton* makeSkeleton( const SkeletonDefinition& definition )
 	}
 
 	if( definition.animations.size() ) {
-		const int32 MaxAnimationStates = 4;
-		result->animations = makeUArray( &allocator, SkeletonAnimationState, MaxAnimationStates );
-		result->keyframeStatesPool =
-		    makeArray( &allocator, Array< SkeletonKeyframesState >, MaxAnimationStates );
-		FOR( states : result->keyframeStatesPool ) {
-			states = makeArray( &allocator, SkeletonKeyframesState, nodesCount );
-		}
-	} else {
-		result->animations         = {};
-		result->keyframeStatesPool = {};
+		auto makeAnimations = [](
+		    StackAllocator* allocator, UArray< SkeletonAnimationState >& animations,
+		    Array< Array< SkeletonKeyframesState > >& statesPool, int32 nodesCount ) {
+			const int32 MaxAnimationStates = 4;
+			animations = makeUArray( allocator, SkeletonAnimationState, MaxAnimationStates );
+			statesPool =
+			    makeArray( allocator, Array< SkeletonKeyframesState >, MaxAnimationStates );
+			FOR( states : statesPool ) {
+				states = makeArray( allocator, SkeletonKeyframesState, nodesCount );
+			}
+		};
+		makeAnimations( &allocator, result->animations, result->keyframeStatesPool, nodesCount );
+		makeAnimations( &allocator, result->prevAnimations, result->prevKeyframeStatesPool,
+		                nodesCount );
 	}
 	result->definition   = &definition;
 	result->definitionId = definition.id;
@@ -918,9 +922,16 @@ void update( Skeleton* skeleton, ParticleSystem* particleSystem, float dt )
 	assert( skeleton->transforms.size() == skeleton->worldTransforms.size() );
 	assert( skeleton->definition );
 
-	auto animationStates = skeleton->animations;
+	// dt >= 0 means we are calculating a future bone position
+	// dt < 0 means we are interpolating between previous bone position and current (used when
+	// rendering, rendering is behind and catches up). Negative, because dt is relative to current
+	// frame time
+	auto animationStates = ( dt >= 0 ) ? ( skeleton->animations ) : ( skeleton->prevAnimations );
 	auto definition      = skeleton->definition;
-	if( animationStates.size() && dt > 0 ) {
+	if( dt < 0 ) {
+		dt = 1 + dt;
+	}
+	if( animationStates.size() ) {
 		// apply animations base values (only toplevel animation)
 		auto animations     = definition->animations;
 		auto transforms     = skeleton->transforms;
@@ -1260,6 +1271,19 @@ void render( RenderCommands* renderer, const Skeleton* skeleton )
 	setRenderState( renderer, RenderStateType::BackFaceCulling, true );
 }
 
+void advanceSkeletons( SkeletonSystem* system, float dt )
+{
+	FOR( skeleton : system->skeletons ) {
+		skeleton->prevAnimations.assign( skeleton->animations );
+		for( auto i = 0, count = skeleton->animations.size(); i < count; ++i ) {
+			auto prev            = &skeleton->prevAnimations[i];
+			auto cur             = &skeleton->animations[i];
+			prev->keyframeStates = skeleton->prevKeyframeStatesPool[i];
+			prev->keyframeStates.assign( cur->keyframeStates );
+		}
+		update( skeleton, nullptr, dt );
+	}
+}
 void processSkeletonSystem( SkeletonSystem* system, ParticleSystem* particleSystem, float dt )
 {
 	assert( system );

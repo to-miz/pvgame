@@ -116,6 +116,10 @@ ProjectileSystem makeProjectileSystem( StackAllocator* allocator, int32 maxProje
 				break;
 			}
 			dest->z = definition.baseNodes[0].translation.z;
+
+			FOR( collection : definition.voxels ) {
+				destroyVoxelCollection( &collection );
+			}
 		}
 	}
 	return result;
@@ -140,6 +144,7 @@ bool emitProjectile( GameState* game, vec2arg origin, vec2arg direction, Project
 		    type,                                     // type
 		    traits->durability,                       // durability
 		    team,                                     // team
+		    {false},                                  // deflected
 		    traits->alive,                            // aliveCountdown
 		};
 		return true;

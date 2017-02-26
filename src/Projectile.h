@@ -48,6 +48,7 @@ struct Projectile {
 	ProjectileType type;
 	int8 durability;
 	EntityTeam team;
+	bool8 deflected;
 	CountdownTimer aliveCountdown;
 };
 

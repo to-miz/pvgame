@@ -482,8 +482,14 @@ int CALLBACK WinMain( HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdL
 
 	PlatformServices platformServices = {
 	    &win32LoadTexture, &win32LoadTextureFromMemory, &win32DeleteTexture, &loadImageToMemory,
-	    &freeImageData, &win32LoadFont, &win32WriteBufferToFile, &win32ReadFileToBuffer,
-	    &win32UploadMeshToGpu, &win32GetOpenFilename, &win32GetSaveFilename,
+	    &freeImageData,
+
+	    &win32LoadFont, &win32WriteBufferToFile, &win32ReadFileToBuffer,
+
+	    &win32UploadMeshToGpu, &win32DeleteMesh,
+
+	    &win32GetOpenFilename, &win32GetSaveFilename,
+
 	    &win32GetKeyboardKeyName, &win32GetTimeStampString,
 
 	    // malloc

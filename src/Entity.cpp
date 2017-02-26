@@ -31,7 +31,7 @@ enum class SpatialState {
 const char* getSpatialStateString( SpatialState state )
 {
 	static const char* const SpatialStateStrings[] = {
-	    "Grounded", "FallingOff", "Airborne",
+	    "Airborne", "Grounded", "FallingOff",
 	};
 	assert( valueof( state ) < countof( SpatialStateStrings ) );
 	return SpatialStateStrings[valueof( state )];
@@ -122,6 +122,8 @@ struct Entity {
 		uint8 dynamic : 1;       // whether collidable is a dynamic collider
 		uint8 deathFlag : 1;     // whether entity is dead
 		uint8 hurt : 1;          // whether entity was hurt this frame
+		uint8 invincible : 1;    // whether entity is invincible
+		uint8 deflects : 1;      // whether entity deflects projectiles
 	} flags;
 	EntityFaceDirection prevFaceDirection;
 	EntityFaceDirection faceDirection;

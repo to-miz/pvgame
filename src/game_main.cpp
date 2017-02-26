@@ -121,13 +121,15 @@ global_var string_logger* GlobalDebugLogger   = nullptr;
 #include "GameConstants.h"
 
 struct DebugValues;
+struct VoxelCollectionMeshCache;
 
 // globals
-global_var PlatformServices* GlobalPlatformServices = nullptr;
-global_var TextureMap* GlobalTextureMap             = nullptr;
-global_var IngameLog* GlobalIngameLog               = nullptr;
-global_var ImmediateModeGui* ImGui                  = nullptr;
-global_var ProfilingTable* GlobalProfilingTable     = nullptr;
+global_var PlatformServices* GlobalPlatformServices                 = nullptr;
+global_var TextureMap* GlobalTextureMap                             = nullptr;
+global_var VoxelCollectionMeshCache* GlobalVoxelCollectionMeshCache = nullptr;
+global_var IngameLog* GlobalIngameLog                               = nullptr;
+global_var ImmediateModeGui* ImGui                                  = nullptr;
+global_var ProfilingTable* GlobalProfilingTable                     = nullptr;
 
 #include "PlatformServicesHelpers.cpp"
 
@@ -272,6 +274,7 @@ struct GameDebugGuiState {
 	bool show;
 	bool windowsExpanded;
 	float fadeProgress;
+	bool showFrameStepCounts;
 	bool initialized;
 };
 
@@ -288,7 +291,7 @@ rectf gameToScreen( rectfarg rect )
 
 #include "ParticleSystem.cpp"
 
-enum class AppFocus { Game, Voxel, TexturePack, Animator, Easing };
+enum class AppFocus { Game, Voxel, TexturePack, Animator, Easing, RoomEditor };
 
 #include "PhysicsHitTest.cpp"
 
@@ -327,6 +330,7 @@ SkeletonEventType convert_to< SkeletonEventType >( StringView str, SkeletonEvent
 
 #include "Editor/TexturePack/TexturePack.h"
 #include "Editor/Animator/Animator.h"
+#include "Editor/Room/RoomEditor.h"
 
 #include "Skeleton.h"
 #include "Skeleton.cpp"
@@ -415,6 +419,8 @@ struct GameState {
 	bool lighting;
 
 	Room room;
+
+	float prevBlendFactor;
 
 	// debug fields
 	GameDebugGuiState debugGui;
@@ -523,6 +529,7 @@ struct AppData {
 	// globals get assigned pointers to these, so that dll hotloading doesn't break
 	IngameLog log;
 	TextureMap textureMap;
+	VoxelCollectionMeshCache voxelCollectionMeshCache;
 	ImmediateModeGui guiState;
 	string_builder debugPrinter;
 	string_logger debugLogger;
@@ -552,6 +559,7 @@ struct AppData {
 	TexturePackState texturePackState;
 	AnimatorState animatorState;
 	EasingState easingState;
+	RoomEditorState roomEditorState;
 
 	bool mouseLocked;
 	bool displayDebug;
@@ -684,6 +692,7 @@ RELOAD_APP( reloadApp )
 	GlobalPlatformServices         = &app->platform;
 	GlobalIngameLog                = &app->log;
 	GlobalTextureMap               = &app->textureMap;
+	GlobalVoxelCollectionMeshCache = &app->voxelCollectionMeshCache;
 	GlobalScrap                    = &app->scrapAllocator;
 	GlobalDebugPrinter             = &app->debugPrinter;
 	GlobalDebugLogger              = &app->debugLogger;
@@ -735,6 +744,7 @@ static void processCamera( GameInputs* inputs, GameSettings* settings, Camera* c
 #include "Editor/Common/DynamicVoxelCollection.cpp"
 #include "Editor/TexturePack/TexturePack.cpp"
 #include "Editor/Animator/Animator.cpp"
+#include "Editor/Room/RoomEditor.cpp"
 #include "VoxelEditor.cpp"
 
 static StringView detailedDebugOutput( AppData* app, char* buffer, int32 size )
@@ -754,8 +764,8 @@ static StringView detailedDebugOutput( AppData* app, char* buffer, int32 size )
 	        << "\nMax FrameTime: " << info->maxFrameTime;
 
 	builder << "\n\n";
-	builder.println( "Draw Calls: {}\nVertices: {}\nIndices: {}", info->drawCalls, info->vertices,
-	                 info->indices );
+	builder.println( "Uploaded Meshes: {}\nDraw Calls: {}\nVertices: {}\nIndices: {}",
+	                 info->uploadedMeshes, info->drawCalls, info->vertices, info->indices );
 
 	builder << '\n'
 	        << "\nFPS: " << info->fps << "\nAverage Fps:" << info->averageFps
@@ -790,11 +800,15 @@ static StringView detailedDebugOutput( AppData* app, char* buffer, int32 size )
 
 	// output debug player state
 	if( auto player = app->gameState.player ) {
-		builder.println( "Entity: {}\nCollidableComponent Time: {}",
+		builder.println( "SpatialState: {}\nSpatialStateTimer: {}",
 		                 getSpatialStateString( player->spatialState ), player->spatialStateTimer );
 		builder.println( "Player pos: {}\nPlayer velocity: {}", player->position,
 		                 player->velocity );
 		builder.println( "Camera follow: {:.2}", app->gameState.cameraFollowRegion );
+		if( player->skeleton->prevAnimations.size() ) {
+			builder.println( "Current Animation Frame: {}",
+			                 player->skeleton->prevAnimations[0].currentFrame );
+		}
 	}
 
 	builder << '\n' << '\n';
@@ -858,7 +872,8 @@ static void showGameDebugGui( AppData* app, GameInputs* inputs, bool focus, floa
 	imguiBind( imgui, renderer, font, inputs, app->stackAllocator.ptr, guiBounds );
 	if( imguiDialog( "Debug Window", gui->mainDialog ) ) {
 		if( imguiButton( "Reset Player Position" ) ) {
-			game->player->position = {};
+			game->player->position      = {};
+			game->player->positionDelta = {};
 		}
 		if( imguiBeginDropGroup( "Debug Windows", &gui->windowsExpanded ) ) {
 			auto debugOutputDialog = imguiGetContainer( gui->debugOutputDialog );
@@ -873,6 +888,7 @@ static void showGameDebugGui( AppData* app, GameInputs* inputs, bool focus, floa
 		imguiCheckbox( "Lighting", &game->lighting );
 		imguiCheckbox( "Camera turning", &app->settings.cameraTurning );
 		imguiCheckbox( "View collision boxes", &app->gameState.debugCollisionBoxes );
+		imguiCheckbox( "Frame Step Counts", &gui->showFrameStepCounts );
 	}
 
 	if( imguiDialog( "Debug Log", gui->debugLogDialog ) ) {
@@ -979,6 +995,7 @@ void setHeroActionAnimation( SkeletonSystem* system, Entity* entity, float dt )
 	auto skeleton  = entity->skeleton;
 	auto animation = hero->currentAnimationIndex;
 	bool shooting  = (bool)hero->shootingAnimationTimer;
+	bool repeating = true;
 
 	if( !entity->grounded ) {
 		hero->animationLockTimer = {};
@@ -989,8 +1006,9 @@ void setHeroActionAnimation( SkeletonSystem* system, Entity* entity, float dt )
 	if( isCountdownTimerExpired( hero->animationLockTimer ) ) {
 		animation = ( shooting ) ? ids.idleShoot : ids.idle;
 		if( entity->grounded ) {
-			if( !shooting && entity->spatialStateTimer <= 10.0f ) {
+			if( !shooting && entity->spatialStateTimer < 10.0f ) {
 				animation = ids.landing;
+				repeating = false;
 			} else {
 				if( !shooting && entity->faceDirection != entity->prevFaceDirection ) {
 					auto lock = skeleton->definition->animations[ids.turn].duration;
@@ -1015,7 +1033,7 @@ void setHeroActionAnimation( SkeletonSystem* system, Entity* entity, float dt )
 		}
 		if( hero->currentAnimationIndex != animation ) {
 			stopAnimations( skeleton );
-			hero->currentAnimation = playAnimation( skeleton, animation, true );
+			hero->currentAnimation = playAnimation( skeleton, animation, repeating );
 		}
 		hero->currentAnimationIndex = animation;
 		entity->prevFaceDirection   = entity->faceDirection;
@@ -1032,13 +1050,13 @@ void emitEntityParticles( GameState* game, float dt )
 				auto feetPosIndex = game->skeletonSystem.hero.nodeIds.feetPos;
 				auto feetPosition = getNode( entry.skeleton, feetPosIndex ).xy;
 				feetPosition.y    = -feetPosition.y;
-				vec2 searchDir = {1, 0};
+				vec2 searchDir    = {1, 0};
 				if( !entry.walljumpLeft() ) {
 					searchDir = {-1, 0};
 				}
 				auto region = getSweptTileGridRegion( entry.aab, entry.position, searchDir );
 				auto collisionAtFeet = findCollision(
-				    {-1, -1, 1, 1}, feetPosition, searchDir, game->room.layers[RL_Main].grid,
+				    {-1, -1, 1, 1}, feetPosition, searchDir, getCollisionLayer( &game->room ),
 				    region, game->entitySystem.dynamicEntries(), 1, false );
 				if( collisionAtFeet ) {
 					auto hero               = &entry.hero;
@@ -1158,6 +1176,7 @@ void processHeroEntity( GameState* game, Entity* entity, float dt )
 		// emit projectile after skeleton update, since we need correct node positions
 		if( control.action == EntityActionState::Attack ) {
 			if( entity->skeleton->dirty ) {
+				setMirrored( entity->skeleton, entity->faceDirection == EntityFaceDirection::Left );
 				update( entity->skeleton, nullptr, 0 );
 			}
 			auto shootPosIndex = game->skeletonSystem.hero.nodeIds.shootPos;
@@ -1357,15 +1376,13 @@ void processEntityBehaviors( GameState* game, float dt )
 	}
 }
 
-static void updateGame( AppData* app, GameInputs* inputs, bool focus )
+static void updateGame( AppData* app, GameInputs* inputs, bool focus, float dt )
 {
 	PROFILE_FUNCTION();
 
 	// auto font      = &app->font;
 	auto game     = &app->gameState;
 	auto settings = &app->settings;
-
-	float dt = 1.0f;
 
 	if( !focus ) {
 		return;
@@ -1421,7 +1438,7 @@ static void updateGame( AppData* app, GameInputs* inputs, bool focus )
 		}
 	}
 	doCollisionDetection( &game->room, &game->entitySystem, dt );
-	processProjectiles( game, game->room.layers[RL_Main].grid, game->entitySystem.dynamicEntries(),
+	processProjectiles( game, getCollisionLayer( &game->room ), game->entitySystem.dynamicEntries(),
 	                    dt );
 
 	// hit detection
@@ -1429,7 +1446,7 @@ static void updateGame( AppData* app, GameInputs* inputs, bool focus )
 		auto hitboxSystem = &game->hitboxSystem;
 		auto pairs        = hitboxSystem->hitboxPairs();
 		auto testHit      = [&]( Entity* entity, EntityHandle attacker, rectfarg hitbox,
-		                    vec2arg position, vec2arg delta ) {
+		                    vec2arg position, vec2arg delta, rectf* hitBounds ) {
 			if( entity->skeleton ) {
 				auto defender     = entity->handle;
 				auto existingPair = find_index_if( pairs, [=]( const auto& entry ) {
@@ -1444,18 +1461,19 @@ static void updateGame( AppData* app, GameInputs* inputs, bool focus )
 						if( !otherHurtbox.second ) {
 							continue;
 						}
-						auto otherBounds  = translate( otherHurtbox.first, -entity->positionDelta );
+						auto otherBounds = translate( otherHurtbox.first, -entity->positionDelta );
 						CollisionInfo info;
 						if( testAabVsAab( hitbox, position, combinedDelta, otherBounds, 1,
 						                  &info ) ) {
-							entity->flags.hurt = true;
-							entity->hurtNormal = info.normal;
-							auto offset        = multiplyComponents( info.normal,
-							                                  {width( hitbox ), height( hitbox )} );
-							auto hitPos = position + combinedDelta * info.t - offset;
-							/*emitParticles( &game->particleSystem, hitPos,
-							               ParticleEmitterId::SmallExplosion );*/
-							pairs.push_back( {attacker, defender} );
+							if( !entity->flags.deflects && !entity->flags.invincible ) {
+								entity->flags.hurt = true;
+								entity->hurtNormal = info.normal;
+								pairs.push_back( {attacker, defender} );
+							}
+
+							if( hitBounds ) {
+								*hitBounds = otherBounds;
+							}
 							return true;
 						}
 					}
@@ -1484,19 +1502,23 @@ static void updateGame( AppData* app, GameInputs* inputs, bool focus )
 						    || other.flags.deathFlag ) {
 							continue;
 						}
-						testHit( &other, entity->handle, hitbox.first, prevPosition, delta );
+						testHit( &other, entity->handle, hitbox.first, prevPosition, delta,
+						         nullptr );
 					}
 				}
 			}
 		}
 
 		FOR( entry : game->projectileSystem.entries ) {
+			if( entry.durability <= 0 ) {
+				continue;
+			}
 			auto data = getProjectileData( &game->projectileSystem, entry.type );
 			const auto& hitbox = data->hitbox;
 			auto delta         = entry.positionDelta;
 			auto prevPosition  = entry.position - entry.positionDelta;
 			FOR( other : staticEntries ) {
-				if( other.team == entry.team || other.flags.deathFlag ) {
+				if( other.team == entry.team || other.flags.deathFlag || other.flags.invincible ) {
 					continue;
 				}
 				if( other.flags.hurt ) {
@@ -1507,10 +1529,17 @@ static void updateGame( AppData* app, GameInputs* inputs, bool focus )
 					// detection
 					continue;
 				}
-				if( testHit( &other, entry.handle, hitbox, prevPosition, delta ) ) {
-					--entry.durability;
-					if( entry.durability <= 0 ) {
-						entry.aliveCountdown = {};
+				rectf hitBounds = {};
+				if( testHit( &other, entry.handle, hitbox, prevPosition, delta, &hitBounds ) ) {
+					if( other.flags.deflects ) {
+						entry.deflected = true;
+						entry.velocity  = safeNormalize( prevPosition - center( hitBounds ) )
+						                 * length( entry.velocity );
+					} else {
+						--entry.durability;
+						if( entry.durability <= 0 ) {
+							entry.aliveCountdown = {};
+						}
 					}
 					break;
 				};
@@ -1553,8 +1582,7 @@ static void updateGame( AppData* app, GameInputs* inputs, bool focus )
 			}
 		}
 	}
-	processSkeletonSystem( &game->skeletonSystem, &game->particleSystem, dt );
-	processParticles( &game->particleSystem, dt );
+	advanceSkeletons( &game->skeletonSystem, dt );
 }
 
 static void initializeGame( AppData* app, GameInputs* inputs )
@@ -1611,16 +1639,14 @@ static void initializeGame( AppData* app, GameInputs* inputs )
 	game->room        = debugGetRoom( allocator, &game->tileSet );
 	game->initialized = true;
 
-	updateGame( app, inputs, true );
+	updateGame( app, inputs, true, 1 );
 }
 
-void renderGame( AppData* app, GameInputs* inputs, float blendFactor, bool focus )
+void renderGame( AppData* app, GameInputs* inputs, float blendFactor, bool focus, int32 stepCount )
 {
 	if( !focus ) {
 		return;
 	}
-
-	// TODO: do proper interpolation of prev to next frame
 
 	auto renderer = &app->renderer;
 	auto game     = &app->gameState;
@@ -1684,18 +1710,21 @@ void renderGame( AppData* app, GameInputs* inputs, float blendFactor, bool focus
 	// render entities
 	for( auto& entry : game->entitySystem.entries ) {
 		auto position = entry.position - entry.positionDelta * ( 1 - blendFactor );
-		// auto position = lerp( blendFactor, entry.position - entry.positionDelta, entry.position );
 		setTransform( entry.skeleton, matrixTranslation( position.x, -position.y, 0 ) );
-		update( entry.skeleton, nullptr, 0 );
+		update( entry.skeleton, &game->particleSystem, blendFactor - 1 );
 		render( renderer, entry.skeleton );
 	}
+	processParticles( &game->particleSystem,
+	                  (float)stepCount + blendFactor - game->prevBlendFactor );
+	game->prevBlendFactor = blendFactor;
 
 	// render projectiles
 	FOR( entry : game->projectileSystem.entries ) {
+		auto position = entry.position - entry.positionDelta * ( 1 - blendFactor );
 		auto data = getProjectileData( &game->projectileSystem, entry.type );
 		setTexture( renderer, 0, data->texture );
 		auto offset   = data->frame.offset;
-		auto position = gameToScreen( entry.position - offset );
+		position = gameToScreen( position - offset );
 		pushMatrix( matrixStack );
 		translate( matrixStack, position, data->z );
 		auto mesh               = addRenderCommandMesh( renderer, data->frame.mesh );
@@ -2002,6 +2031,9 @@ UPDATE_AND_RENDER( updateAndRender )
 	if( isKeyPressed( inputs, KC_F4 ) ) {
 		app->focus = AppFocus::Animator;
 	}
+	if( isKeyPressed( inputs, KC_F5 ) ) {
+		app->focus = AppFocus::RoomEditor;
+	}
 	if( isKeyPressed( inputs, KC_F8 ) ) {
 		app->focus = AppFocus::Easing;
 	}
@@ -2013,18 +2045,21 @@ UPDATE_AND_RENDER( updateAndRender )
 	// unlocked automatically
 	inputs->mouse.locked = false;
 
-	debugLogln( "{}", stepCount );
+	if( app->gameState.debugGui.showFrameStepCounts ) {
+		debugLogln( "{}", stepCount );
+	}
 	initializeGame( app, fixedInputs );
-	for( ; stepCount > 0; --stepCount ) {
-		updateGame( app, fixedInputs, app->focus == AppFocus::Game );
+	for( auto i = 0; i < stepCount; ++i ) {
+		updateGame( app, fixedInputs, app->focus == AppFocus::Game, 1.0f );
 		resetInputs( fixedInputs );
 	}
-	renderGame( app, inputs, blendFactor, app->focus == AppFocus::Game );
+	renderGame( app, inputs, blendFactor, app->focus == AppFocus::Game, stepCount );
 
 	doVoxel( app, inputs, app->focus == AppFocus::Voxel, dt );
 	doTexturePack( app, inputs, app->focus == AppFocus::TexturePack, dt );
 	doAnimator( app, inputs, app->focus == AppFocus::Animator, dt );
 	doEasing( app, inputs, app->focus == AppFocus::Easing, dt );
+	RoomEditor::doRoomEditor( app, inputs, app->focus == AppFocus::RoomEditor, dt );
 
 	addRenderCommandMesh( renderer, toMesh( debug_MeshStream ) );
 

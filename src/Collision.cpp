@@ -536,7 +536,7 @@ static void doCollisionDetection( Room* room, EntitySystem* system, float dt )
 	using namespace GameConstants;
 	assert( room );
 
-	auto grid = room->layers[RL_Main].grid;
+	auto grid = getCollisionLayer( room );
 
 	processCollidables( system->dynamicEntries(), grid, room->tileSet->infos, {}, true, dt );
 	processCollidables( system->staticEntries(), grid, room->tileSet->infos,

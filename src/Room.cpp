@@ -29,6 +29,8 @@ struct Room {
 	TileSet* tileSet;
 };
 
+TileGrid getCollisionLayer( Room* room ) { return room->layers[RL_Main].grid; }
+
 bool loadTileSet( StackAllocator* allocator, StringView filename, TileSet* out ) {
 	if( !loadVoxelCollection( allocator, filename, &out->voxels ) ) {
 		return false;

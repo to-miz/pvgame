@@ -356,8 +356,10 @@ ImGuiContainerState defaultImGuiContainerSate( rectfarg rect )
 	return {RectWH( rect.left, rect.top, ImGui->style.containerWidth, 0.0f )};
 }
 typedef int32 ImGuiContainerId;
+
+enum class ImGuiVisibility { Visible, Hidden };
 ImGuiContainerId imguiGenerateContainer( ImmediateModeGui* gui, rectfarg rect = {},
-                                         bool hidden = false )
+                                         ImGuiVisibility hidden = ImGuiVisibility::Visible )
 {
 	assert( gui->containersCount < ImGuiMaxContainers );
 	auto result     = gui->containersCount;
@@ -366,7 +368,7 @@ ImGuiContainerId imguiGenerateContainer( ImmediateModeGui* gui, rectfarg rect = 
 	container->rect = rect;
 	container->z    = safe_truncate< int8 >( gui->containersCount );
 	++gui->containersCount;
-	container->setHidden( hidden );
+	container->setHidden( hidden == ImGuiVisibility::Hidden );
 	return result;
 }
 ImGuiContainerState* imguiGetContainer( ImmediateModeGui* gui, int32 index )
@@ -874,7 +876,21 @@ rectf imguiAddItemSameLine( float width, float height )
 	auto container         = imguiCurrentContainer();
 	container->addPosition.x = container->lastRect.right;
 	container->addPosition.y = container->lastRect.top;
-	auto result = imguiAddItem( width, height );
+	auto result              = imguiAddItem( width, height );
+	return result;
+}
+
+// returns an item rect with the given dimensions without advancing addPosition of container
+rectf imguiPeekItem( float width, float height = 0 )
+{
+	auto container = imguiCurrentContainer();
+
+	if( height == 0 ) {
+		height = container->rect.bottom - container->addPosition.y;
+	}
+
+	auto result = RectWH( container->addPosition.x + ImGui->style.innerPadding,
+	                      container->addPosition.y, width, height );
 	return result;
 }
 

@@ -84,24 +84,13 @@ void DynamicVoxelCollection::assign( const DynamicVoxelCollection& other )
 		memory                                = GlobalPlatformServices->allocate( memorySize, 1 );
 		auto allocator                        = makeStackAllocator( memory, memorySize );
 
-		voxels.texture = other.voxels.texture;
-		voxels.frames = makeArray( &allocator, VoxelCollection::Frame, other.voxels.frames.size() );
-		voxels.frameInfos =
-		    makeArray( &allocator, VoxelCollection::FrameInfo, other.voxels.frameInfos.size() );
-		voxels.animations =
-		    makeArray( &allocator, VoxelCollection::Animation, other.voxels.animations.size() );
-		voxels.voxelsFilename = makeString( &allocator, other.voxels.voxelsFilename );
-		names                 = makeArray( &allocator, StringView, other.names.size() );
-		grids                 = makeArray( &allocator, VoxelGrid, other.grids.size() );
-		gridsLoaded           = other.gridsLoaded;
-
-		voxels.frames.assign( other.voxels.frames );
-		voxels.frameInfos.assign( other.voxels.frameInfos );
-		voxels.animations.assign( other.voxels.animations );
+		copyVoxelCollection( &allocator, other.voxels, &voxels );
+		names               = makeArray( &allocator, StringView, other.names.size() );
+		grids               = makeArray( &allocator, VoxelGrid, other.grids.size() );
+		gridsLoaded         = other.gridsLoaded;
 		grids.assign( other.grids );
 		auto index = 0;
 		FOR( animation : voxels.animations ) {
-			animation.name = makeString( &allocator, animation.name );
 			names[index++] = animation.name;
 		}
 
@@ -127,9 +116,10 @@ void DynamicVoxelCollection::destroy()
 {
 	assert( !memory || memorySize );
 	if( memory && memorySize ) {
+		destroyVoxelCollection( &voxels );
 		GlobalPlatformServices->deallocate( memory, memorySize, 1 );
 
-		memory = nullptr;
+		memory     = nullptr;
 		memorySize = 0;
 	}
 }
