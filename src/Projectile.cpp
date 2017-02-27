@@ -160,11 +160,12 @@ void processProjectiles( GameState* game, TileGrid grid, Array< Entity > dynamic
 	static float yStart  = 0;
 	static float yMax    = 0;
 
-	auto system = &game->projectileSystem;
+	const recti MapBounds = {0, 0, grid.width, grid.height};
+	auto system           = &game->projectileSystem;
 	FOR( entry : system->entries ) {
-		auto traits        = getProjectileTraits( entry.type );
-		auto data          = getProjectileData( system, entry.type );
-		auto oldPosition   = entry.position;
+		auto traits      = getProjectileTraits( entry.type );
+		auto data        = getProjectileData( system, entry.type );
+		auto oldPosition = entry.position;
 
 		auto alive           = entry.aliveCountdown;
 		entry.aliveCountdown = processTimer( entry.aliveCountdown, dt );
@@ -187,7 +188,8 @@ void processProjectiles( GameState* game, TileGrid grid, Array< Entity > dynamic
 		float remaining = min( 1.0f, alive.value );
 		auto velocity   = entry.velocity * dt;
 
-		auto tileGridRegion = getSweptTileGridRegion( data->collision, entry.position, velocity );
+		auto tileGridRegion =
+		    getSweptTileGridRegion( data->collision, entry.position, velocity, MapBounds );
 		constexpr const auto maxIterations = 4;
 		for( auto iterations = 0; iterations < maxIterations && remaining > 0.0f; ++iterations ) {
 			const auto collision = findCollision( data->collision, entry.position, velocity, grid,

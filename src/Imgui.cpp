@@ -234,16 +234,33 @@ struct ImGuiSize {
 	float height;
 };
 ImGuiContainerState* imguiCurrentContainer();
-ImGuiSize imguiRelative( float x, float y )
+ImGuiSize imguiRatio( float x, float y )
 {
 	auto container = imguiCurrentContainer();
 	return {width( container->rect ) * x, height( container->rect ) * y};
 }
-ImGuiSize imguiRelative()
+ImGuiSize imguiRatio()
 {
 	auto container = imguiCurrentContainer();
 	return {width( container->rect ) * safeDivide( 1.0f, (float)container->maxHorizontalCount ), 0};
 }
+
+namespace imgui {
+struct Ratio { float value; };
+struct Absolute { float value; };
+}
+ImGuiSize imguiSize( imgui::Ratio w, imgui::Ratio h ) { return imguiRatio( w.value, h.value ); }
+ImGuiSize imguiSize( imgui::Absolute w, imgui::Ratio h )
+{
+	auto container = imguiCurrentContainer();
+	return {w.value, height( container->rect ) * h.value};
+}
+ImGuiSize imguiSize( imgui::Ratio w, imgui::Absolute h )
+{
+	auto container = imguiCurrentContainer();
+	return {width( container->rect ) * w.value, h.value};
+}
+
 ImGuiSize imguiMakeSize( ImGuiSize size, float w, float h )
 {
 	if( size.width == 0 ) {
@@ -275,6 +292,7 @@ struct ImmediateModeGui {
 	GameInputs* inputs;
 	Font* font;
 	void* base;
+	void* functor;
 	// gui bounds
 	rectf bounds;
 	ImGuiStyle style;
@@ -599,6 +617,10 @@ bool imguiHasMyChildFocus( ImGuiHandle handle )
 	return focus == handle;
 }
 bool imguiHasCapture( ImGuiHandle handle ) { return ImGui->capture == handle; }
+bool imguiHasCapture( ImGuiHandle handle, uint8 captureKey )
+{
+	return ImGui->capture == handle && ImGui->captureKey == captureKey;
+}
 bool imguiIsHover( int32 container )
 {
 	return ( ImGui->processInputs )
@@ -827,9 +849,14 @@ ImGuiContainerState* imguiCurrentContainer()
 	assert( ImGui->container >= 0 && ImGui->container < ImGui->containersCount );
 	return &ImGui->containers[ImGui->container];
 }
-rectf imguiAddItem( float width, float height )
+rectf imguiAddItem( float width, float height = 0 )
 {
 	auto container         = imguiCurrentContainer();
+
+	if( height == 0 ) {
+		height = container->rect.bottom - container->addPosition.y;
+	}
+
 	auto canGrowHorizontal = ( container->flags & ImGuiContainerStateFlags::CanGrowHorizontal );
 	if( !canGrowHorizontal ) {
 		width = MIN( width, ::width( container->rect ) );
@@ -1034,6 +1061,12 @@ bool imguiPushButton( ImGuiHandle handle, StringView name, bool pushed, ImGuiSiz
 {
 	size = imguiMakeSize( size, ImGui->style.buttonWidth, ImGui->style.buttonHeight );
 	return imguiPushButton( handle, name, &pushed, size.width, size.height );
+}
+bool imguiPushButton( StringView name, bool pushed, ImGuiSize size = {} )
+{
+	auto handle = imguiMakeStringHandle( name );
+	size = imguiMakeSize( size, ImGui->style.buttonWidth, ImGui->style.buttonHeight );
+	return imguiPushButton( handle.handle, handle.string, &pushed, size.width, size.height );
 }
 bool imguiPushButton( StringView name, bool* pushed )
 {
@@ -2098,14 +2131,31 @@ bool imguiListboxSingleSelect( ImGuiHandle handle, float* scrollPos, const void*
 
 	return changed;
 }
+template < class T >
+using ImGuiTextGetter = StringView ( * )( const T& );
+template < class T >
+bool imguiListboxSingleSelect( ImGuiHandle handle, float* scrollPos, Array< T > items,
+                               int32* selectedIndex, rectfarg bounds, ImGuiTextGetter< T > getText,
+                               bool hasNoneEntry )
+{
+	ImGui->functor = getText;
+	return ::imguiListboxSingleSelect(
+	    handle, scrollPos, items.data(), sizeof( T ), items.size(), selectedIndex, bounds,
+	    []( const void* ptr ) -> StringView {
+		    assert_alignment( ptr, alignof( T ) );
+		    return ( (ImGuiTextGetter< T >)ImGui->functor )( *(const T*)ptr );
+		},
+	    hasNoneEntry );
+}
+
 bool imguiCombo( ImGuiHandle handle, const void* items, int32 entrySize, int32 itemsCount,
                  int32* selectedIndex, rectfarg rect, ImGuiGetTextFunctionType* getText,
                  bool hasNoneEntry )
 {
 	assert( selectedIndex );
 	using namespace ImGuiTexCoords;
-	auto renderer = ImGui->renderer;
-	auto font     = ImGui->font;
+	auto renderer  = ImGui->renderer;
+	auto font      = ImGui->font;
 	auto style     = &ImGui->style;
 	auto inputs    = ImGui->inputs;
 	auto container = imguiCurrentContainer();
@@ -2667,11 +2717,25 @@ int32 imguiListboxIntrusive( float* scrollPos, const ImGuiListboxItemView& items
 	auto handle = imguiMakeHandle( scrollPos, ImGuiControlType::Listbox );
 	return imguiListboxIntrusive( handle, scrollPos, items, width, height, multiselect );
 }
+int32 imguiListboxIntrusive( float* scrollPos, const ImGuiListboxItemView& items, ImGuiSize size,
+                             bool multiselect = true )
+{
+	size        = imguiMakeSize( size, 100, 100 );
+	auto handle = imguiMakeHandle( scrollPos, ImGuiControlType::Listbox );
+	return imguiListboxIntrusive( handle, scrollPos, items, size.width, size.height, multiselect );
+}
 int32 imguiListbox( float* scrollPos, Array< ImGuiListboxItem > items, float width, float height,
                     bool multiselect = true )
 {
 	auto handle = imguiMakeHandle( scrollPos, ImGuiControlType::Listbox );
 	return imguiListboxIntrusive( handle, scrollPos, items, width, height, multiselect );
+}
+int32 imguiListbox( float* scrollPos, Array< ImGuiListboxItem > items, ImGuiSize size,
+                    bool multiselect = true )
+{
+	auto container = imguiCurrentContainer();
+	auto sz = imguiMakeSize( size, width( container->rect ), height( container->rect ) );
+	return imguiListbox( scrollPos, items, sz.width, sz.height, multiselect );
 }
 
 rectf imguiScrollable( vec2* scrollPos, rectfarg scrollDomain, float width, float height,

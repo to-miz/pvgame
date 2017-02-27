@@ -257,6 +257,20 @@ mat4 matrixPerspectiveFovProjection( float fovY, float aspect, float nearPlane, 
 	result.m[3 * 4 + 3] = 0.0f;*/
 	return result;
 }
+
+// setup a projection centered inside rect
+mat4 matrixPerspectiveFovProjection( rectf rect, float viewportWidth, float viewportHeight,
+                                     float fovY, float nearPlane, float farPlane )
+{
+	auto aspect = viewportWidth / viewportHeight;
+	// we need to translate in homogeneous coordinates to offset the origin of the projection
+	// matrix to the center of the editor frame, hence the division by viewportWidth
+	auto offset      = matrixTranslation( rect.left / viewportWidth, rect.top / viewportHeight, 0 );
+	auto perspective = matrixPerspectiveFovProjection( fovY, aspect, nearPlane, farPlane );
+	// translate origin first, then apply perspective matrix
+	return perspective * offset;
+}
+
 mat4 matrixLookAt( vec3arg position, vec3arg lookAt, vec3 up /* = {0, 1, 0}*/ )
 {
 	/*
@@ -372,6 +386,15 @@ vec3 toWorldSpace( mat4arg invertedWorldViewProj, vec3arg v, float width, float 
 	p = transformVector4( invertedWorldViewProj, p );
 	p.xyz *= 1.0f / p.w;
 	return p.xyz;
+}
+Ray3 pointToWorldSpaceRay( mat4arg invViewProj, vec2arg pos, float viewportWidth,
+                           float viewportHeight )
+{
+	Ray3 result;
+	result.start = toWorldSpace( invViewProj, Vec3( pos, 0 ), viewportWidth, viewportHeight );
+	auto end     = toWorldSpace( invViewProj, Vec3( pos, 1 ), viewportWidth, viewportHeight );
+	result.dir   = end - result.start;
+	return result;
 }
 
 struct MatrixInverseResult {

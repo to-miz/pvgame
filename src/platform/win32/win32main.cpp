@@ -481,24 +481,24 @@ int CALLBACK WinMain( HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdL
 	win32PopulateKeyboardKeyNames();
 
 	PlatformServices platformServices = {
+	    // graphics
 	    &win32LoadTexture, &win32LoadTextureFromMemory, &win32DeleteTexture, &loadImageToMemory,
-	    &freeImageData,
+	    &freeImageData, &win32LoadFont, &win32UploadMeshToGpu, &win32DeleteMesh,
 
-	    &win32LoadFont, &win32WriteBufferToFile, &win32ReadFileToBuffer,
+	    // shader
+	    &openGlLoadShaderProgram, &openGlDeleteShaderProgram,
 
-	    &win32UploadMeshToGpu, &win32DeleteMesh,
+	    // filesystem
+	    &win32WriteBufferToFile, &win32ReadFileToBuffer, &win32GetOpenFilename,
+	    &win32GetSaveFilename,
 
-	    &win32GetOpenFilename, &win32GetSaveFilename,
-
+	    // utility
 	    &win32GetKeyboardKeyName, &win32GetTimeStampString,
 
 	    // malloc
 	    &win32DlmallocMalloc, &win32DlmallocRealloc, &win32DlmallocReallocInPlace,
 	    &win32DlmallocMfree, &win32DlmallocAllocate, &win32DlmallocReallocate,
 	    &win32DlmallocReallocateInPlace, &win32DlmallocFree,
-
-	    // shader
-	    &openGlLoadShaderProgram, &openGlDeleteShaderProgram,
 
 	    // debug
 	    &win32OutputDebugString,

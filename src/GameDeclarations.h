@@ -47,22 +47,27 @@ typedef void OutputDebugStringType( const char* str );
 const int32 MaxMeshCount = 100;
 
 struct PlatformServices {
+	// graphics
 	LoadTextureType* loadTexture;
 	LoadTextureFromMemoryType* loadTextureFromMemory;
 	DeleteTextureType* deleteTexture;
 	LoadImageToMemoryType* loadImageToMemory;
 	FreeImageDataType* freeImageData;
-
 	LoadFontType* loadFont;
-	WriteBufferToFileType* writeBufferToFile;
-	ReadFileToBufferType* readFileToBuffer;
-
 	UploadMeshType* uploadMesh;
 	DeleteMeshType* deleteMesh;
 
+	// shader
+	LoadShaderType* loadShader;
+	DeleteShaderType* deleteShader;
+
+	// filesystem
+	WriteBufferToFileType* writeBufferToFile;
+	ReadFileToBufferType* readFileToBuffer;
 	GetOpenFilenameType* getOpenFilename;
 	GetSaveFilenameType* getSaveFilename;
 
+	// utility
 	GetKeyboardKeyNameType* getKeyboardKeyName;
 	GetTimeStampStringType* getTimeStampString;
 
@@ -76,10 +81,6 @@ struct PlatformServices {
 	ReallocateType* reallocate;
 	ReallocateType* reallocateInPlace;
 	FreeType* deallocate;
-
-	// shader
-	LoadShaderType* loadShader;
-	DeleteShaderType* deleteShader;
 
 	// debug
 	OutputDebugStringType* outputDebugString;

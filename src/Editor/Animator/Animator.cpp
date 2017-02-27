@@ -2680,27 +2680,27 @@ void doAnimatorMenu( AppData* app, GameInputs* inputs, rectfarg rect )
 		if( imguiBeginDropGroup( "Add/Remove", &editor->expandedFlags,
 		                         AnimatorEditor::AssetsAdd ) ) {
 			imguiSameLine( 1 );
-			if( imguiButton( "Add Voxel Collection", imguiRelative() ) ) {
+			if( imguiButton( "Add Voxel Collection", imguiRatio() ) ) {
 				auto filename = getOpenFilename( JsonFilter, nullptr, false );
 				if( filename.size() ) {
 					addNewAsset( animator, AnimatorAsset::type_collection, filename );
 				}
 			}
-			if( imguiButton( "Add Texture Map", imguiRelative() ) ) {
+			if( imguiButton( "Add Texture Map", imguiRatio() ) ) {
 			}
-			if( imguiButton( "Add Collision Bounds", imguiRelative() ) ) {
+			if( imguiButton( "Add Collision Bounds", imguiRatio() ) ) {
 				addNewAsset( animator, AnimatorAsset::type_collision );
 			}
-			if( imguiButton( "Add Hitbox", imguiRelative() ) ) {
+			if( imguiButton( "Add Hitbox", imguiRatio() ) ) {
 				addNewAsset( animator, AnimatorAsset::type_hitbox );
 			}
-			if( imguiButton( "Add Hurtbox", imguiRelative() ) ) {
+			if( imguiButton( "Add Hurtbox", imguiRatio() ) ) {
 				addNewAsset( animator, AnimatorAsset::type_hurtbox );
 			}
-			if( imguiButton( "Add Particle Emitter", imguiRelative() ) ) {
+			if( imguiButton( "Add Particle Emitter", imguiRatio() ) ) {
 				addNewAsset( animator, AnimatorAsset::type_emitter );
 			}
-			if( imguiButton( "Remove Selected", imguiRelative() ) ) {
+			if( imguiButton( "Remove Selected", imguiRatio() ) ) {
 				if( first ) {
 					animatorMessageBox(
 					    animator, "Selected assets will be deleted.", "Delete Assets",
@@ -3023,7 +3023,7 @@ void doAnimatorMenu( AppData* app, GameInputs* inputs, rectfarg rect )
 		auto pushButton = []( ImGuiHandle handle, uint8 index, StringView name,
 		                      AnimatorMouseMode mode, AnimatorEditor* editor ) {
 			handle.shortIndex = index;
-			if( imguiPushButton( handle, name, editor->mouseMode == mode, imguiRelative() ) ) {
+			if( imguiPushButton( handle, name, editor->mouseMode == mode, imguiRatio() ) ) {
 				editor->mouseMode = mode;
 			}
 		};
@@ -3038,7 +3038,7 @@ void doAnimatorMenu( AppData* app, GameInputs* inputs, rectfarg rect )
 		auto pushButton = []( ImGuiHandle handle, uint8 index, StringView name,
 		                      AnimatorMousePlane mode, AnimatorEditor* editor ) {
 			handle.shortIndex = index;
-			if( imguiPushButton( handle, name, editor->mousePlane == mode, imguiRelative() ) ) {
+			if( imguiPushButton( handle, name, editor->mousePlane == mode, imguiRatio() ) ) {
 				editor->mousePlane = mode;
 			}
 		};
@@ -3239,30 +3239,6 @@ void doAnimatorMenu( AppData* app, GameInputs* inputs, rectfarg rect )
 	}
 }
 
-Ray3 pointToWorldSpaceRay( mat4arg invViewProj, vec2arg pos, float width, float height )
-{
-	Ray3 result;
-	result.start = toWorldSpace( invViewProj, Vec3( pos, 0 ), width, height );
-	auto end     = toWorldSpace( invViewProj, Vec3( pos, 1 ), width, height );
-	result.dir   = end - result.start;
-	return result;
-}
-vec3 rayIntersectionWithPlane( const Ray3& ray, vec3arg base, vec3arg planeNormal )
-{
-	vec3 result = {};
-	if( auto hit = testRayVsPlane( ray.start, ray.dir, base, planeNormal ) ) {
-		result = ray.start + ray.dir * hit.t;
-		// calculating result like this sometimes loses some accuracy
-		// we basically do result.z = base.z in case its the xy plane etc
-
-		// project result onto plane
-		result -= dot( result, planeNormal ) * planeNormal;
-		// add plane normal component of base to result
-		result += dot( base, planeNormal ) * planeNormal;
-	}
-	return result;
-}
-
 void deleteDeep( AnimatorState* animator, AnimatorNodes::iterator node );
 void deleteChildren( AnimatorState* animator, AnimatorNode* parent )
 {
@@ -3385,7 +3361,7 @@ vec3 getDestinationVectorFromScreenPos( AnimatorState* animator, AnimatorNode* n
 		case AnimatorMouseMode::Translate: {
 			switch( editor->translateOptions ) {
 				case AnimatorTranslateOptions::World: {
-					destination = rayIntersectionWithPlane( ray, plane.origin, plane.normal );
+					destination = intersectionRayVsPlane( ray, plane.origin, plane.normal );
 					break;
 				}
 				case AnimatorTranslateOptions::LocalAlong: {
@@ -3427,7 +3403,7 @@ vec3 getDestinationVectorFromScreenPos( AnimatorState* animator, AnimatorNode* n
 			break;
 		}
 		case AnimatorMouseMode::Rotate: {
-			destination = rayIntersectionWithPlane( ray, plane.origin, plane.normal );
+			destination = intersectionRayVsPlane( ray, plane.origin, plane.normal );
 			break;
 		}
 	}
@@ -3447,14 +3423,8 @@ AnimatorProjection animatorSetProjection( AppData* app, GameInputs* inputs, rect
 	auto renderer = &app->renderer;
 	auto handle   = imguiMakeHandle( editor, ImGuiControlType::None );
 	if( editor->viewType == AnimatorEditorViewType::Perspective ) {
-		// auto aspect = width( rect ) / height( rect );
-		auto aspect = app->width / app->height;
-		// we need to translate in homogeneous coordinates to offset the origin of the projection
-		// matrix to the center of the editor frame, hence the division by app->width
-		auto offset      = matrixTranslation( rect.left / app->width, 0, 0 );
-		auto perspective = matrixPerspectiveFovProjection( degreesToRadians( 65 ), aspect, -1, 1 );
-		// translate origin first, then apply perspective matrix
-		auto projection = perspective * offset;
+		auto projection = matrixPerspectiveFovProjection( rect, app->width, app->height,
+		                                                  degreesToRadians( 65 ), -1, 1 );
 		setProjectionMatrix( renderer, ProjectionType::Perspective, projection );
 		setProjection( renderer, ProjectionType::Perspective );
 
@@ -3839,7 +3809,7 @@ void doNodeEditor( AppData* app, GameInputs* inputs, rectfarg rect )
 			node.voxel.animation = -1;
 			/*auto ray = pointToWorldSpaceRay( invViewProj.matrix, inputs->mouse.position,
 			                                 app->width, app->height );
-			auto position = rayIntersectionWithPlane( ray, {}, {0, 0, 1} );*/
+			auto position = intersectionRayVsPlane( ray, {}, {0, 0, 1} );*/
 			addNewNode( animator, node );
 		}
 		imguiEndContainer();
@@ -3959,7 +3929,7 @@ void doHitboxEditor( AppData* app, GameInputs* inputs, rectfarg rect )
 				auto mouse = inputs->mouse.position;
 				auto ray =
 				    pointToWorldSpaceRay( invViewProj.matrix, mouse, app->width, app->height );
-				auto intersection = rayIntersectionWithPlane( ray, head, {0, 0, 1} ) - head;
+				auto intersection = intersectionRayVsPlane( ray, head, {0, 0, 1} ) - head;
 				if( isPointInside( correct( hitbox ), intersection.xy ) ) {
 					view->selectedFeature = AnimatorEditorHitboxFeature::None;
 					editor->clickedNode   = node;
@@ -3988,7 +3958,7 @@ void doHitboxEditor( AppData* app, GameInputs* inputs, rectfarg rect )
 		auto head  = transformVector3( node->world, {} );
 		auto mouse = inputs->mouse.position - editor->mouseOffset;
 		auto ray   = pointToWorldSpaceRay( invViewProj.matrix, mouse, app->width, app->height );
-		auto destination = rayIntersectionWithPlane( ray, head, {0, 0, 1} ) - head;
+		auto destination = intersectionRayVsPlane( ray, head, {0, 0, 1} ) - head;
 
 		if( view->selectedFeature != AnimatorEditorHitboxFeature::None ) {
 			switch( editor->mouseMode ) {

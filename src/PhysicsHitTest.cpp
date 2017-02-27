@@ -1,12 +1,3 @@
-struct Line3 {
-	vec3 start;
-	vec3 dir;
-};
-struct Ray3 {
-	vec3 start;
-	vec3 dir;
-};
-
 struct ShortestLineBetweenLinesResult {
 	float tA, tB;
 };
@@ -46,6 +37,22 @@ testRayVsPlaneResult testRayVsPlane( vec3arg rayOrigin, vec3arg rayDir, vec3arg 
 	}
 	return result;
 }
+vec3 intersectionRayVsPlane( const Ray3& ray, vec3arg base, vec3arg planeNormal )
+{
+	vec3 result = {};
+	if( auto hit = testRayVsPlane( ray.start, ray.dir, base, planeNormal ) ) {
+		result = ray.start + ray.dir * hit.t;
+		// calculating result like this sometimes loses some accuracy
+		// we basically do result.z = base.z in case its the xy plane etc
+
+		// project result onto plane
+		result -= dot( result, planeNormal ) * planeNormal;
+		// add plane normal component of base to result
+		result += dot( base, planeNormal ) * planeNormal;
+	}
+	return result;
+}
+
 bool testRayVsAabb( vec3arg rayOrigin, vec3arg rayDir, aabbarg box, float* t = nullptr )
 {
 	auto oneOverDirX = 1.0f / rayDir.x;

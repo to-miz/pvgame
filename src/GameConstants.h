@@ -13,6 +13,7 @@ constexpr const float DefaultAirFrictionCoefficient = 0.025f;
 
 constexpr const float TileWidth  = 16.0f;
 constexpr const float TileHeight = 16.0f;
+constexpr const float TileDepth = 16.0f;
 
 constexpr const float DeltaToFrameTime = 60.0f / 1000.0f;  // constant to convert elapsed
                                                            // miliseconds to number between 0 and 1,

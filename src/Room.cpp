@@ -1,3 +1,10 @@
+#define TILE_CELLS_X 16
+#define TILE_CELLS_Y 16
+#define TILE_CELLS_Z 16
+#define TILE_WIDTH ( CELL_WIDTH * TILE_CELLS_X )
+#define TILE_HEIGHT ( CELL_HEIGHT * TILE_CELLS_Y )
+#define TILE_DEPTH ( CELL_DEPTH * TILE_CELLS_Z )
+
 struct TileInfo {
 	float frictionCoefficient;
 };
@@ -7,11 +14,13 @@ struct TileSet {
 };
 
 struct GameTile {
-	uint8 collection;
+	uint8 tileSet;
 	uint8 rotation;
 	trange< uint8 > frames;
 	inline explicit operator bool() const { return length( frames ) != 0; }
 };
+
+const GameTile InvalidGameTile = {255, 255, 0, 255};
 
 enum RoomLayerValues {
 	RL_Main,
@@ -21,13 +30,42 @@ enum RoomLayerValues {
 	RL_Count
 };
 typedef Grid< GameTile > TileGrid;
+
+enum class RoomBackgroundType {
+	BlueSky,
+};
+static const StringView RoomBackgroundTypeNames[] = {"BlueSky"};
+StringView to_string( RoomBackgroundType type )
+{
+	assert( valueof( type ) >= 0 && valueof( type ) < countof( RoomBackgroundTypeNames ) );
+	return RoomBackgroundTypeNames[valueof( type )];
+}
+
 struct Room {
 	struct Layer {
 		TileGrid grid;
 	};
 	Layer layers[RL_Count];
 	TileSet* tileSet;
+	RoomBackgroundType background;
 };
+
+void renderBackground( RenderCommands* renderer, RoomBackgroundType background )
+{
+	using namespace GameConstants;
+
+	assert( renderer );
+	switch( background ) {
+		case RoomBackgroundType::BlueSky: {
+			setTexture( renderer, 0, null );
+			auto prev = exchange( renderer->color, 0xFF46AEEB );
+			addRenderCommandSingleQuad( renderer, rectf{-500, 500, 500, -500} * TILE_WIDTH,
+			                            32 * CELL_DEPTH );
+			renderer->color = prev;
+			break;
+		}
+	}
+}
 
 TileGrid getCollisionLayer( Room* room ) { return room->layers[RL_Main].grid; }
 

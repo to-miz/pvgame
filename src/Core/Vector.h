@@ -230,6 +230,17 @@ tvec4< T > multiplyComponents( tvec4arg< T > a, tvec4arg< T > b )
 	return {a.x * b.x, a.y * b.y, a.z * b.z, a.w * b.w};
 }
 
+// other
+
+struct Line3 {
+	vec3 start;
+	vec3 dir;
+};
+struct Ray3 {
+	vec3 start;
+	vec3 dir;
+};
+
 // template implementations
 
 template < class A, class B, class C, class D = typename std::common_type< A, B, C >::type >

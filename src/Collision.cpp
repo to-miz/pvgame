@@ -151,7 +151,8 @@ static CollisionResult detectCollisionVsDynamics( rectfarg aab, vec2arg position
 	return result;
 }
 
-static recti getSweptTileGridRegion( rectfarg aab, vec2arg position, vec2arg velocity )
+static recti getSweptTileGridRegion( rectfarg aab, vec2arg position, vec2arg velocity,
+                                     rectiarg mapBounds )
 {
 	using namespace GameConstants;
 	auto currentPlayerAab = translate( aab, position );
@@ -160,7 +161,7 @@ static recti getSweptTileGridRegion( rectfarg aab, vec2arg position, vec2arg vel
 	// turn the swept bounding box to tile grid region that we need to check for collisions
 	// tiles outside this region can't possibly collide with the collidable
 	auto tileGridRegion = RectTiledIndex( entrySweptAab, TileWidth, TileHeight );
-	tileGridRegion      = RectMin( tileGridRegion, recti{0, 0, GAME_MAP_WIDTH, GAME_MAP_HEIGHT} );
+	tileGridRegion      = RectMin( tileGridRegion, mapBounds );
 	return tileGridRegion;
 }
 
@@ -168,6 +169,7 @@ CollisionResult findCollision( rectfarg aab, vec2arg position, vec2arg velocity,
                                recti tileGridRegion, Array< Entity > dynamics, float maxT,
                                bool dynamic )
 {
+	const recti mapBounds = {0, 0, grid.width, grid.height};
 	auto collision =
 	    detectCollisionVsTileGrid( aab, position, velocity, grid, tileGridRegion, maxT );
 	if( !dynamic && ( !collision || collision.info.t > 0 ) ) {
@@ -179,9 +181,9 @@ CollisionResult findCollision( rectfarg aab, vec2arg position, vec2arg velocity,
 				// tile grid collision detection
 				auto safety      = dynamicCollision.info.normal * SafetyDistance;
 				auto adjustedVel = dynamicCollision.info.push + safety;
-				auto sweptRegion = getSweptTileGridRegion( aab, position, adjustedVel );
-				auto maxMovementCollision = detectCollisionVsTileGrid(
-				    aab, position, adjustedVel, grid, sweptRegion, 1 );
+				auto sweptRegion = getSweptTileGridRegion( aab, position, adjustedVel, mapBounds );
+				auto maxMovementCollision =
+				    detectCollisionVsTileGrid( aab, position, adjustedVel, grid, sweptRegion, 1 );
 				if( maxMovementCollision ) {
 					if( maxMovementCollision.info.t > 0 ) {
 						// TODO: we are being squished between dynamic and tile, handle?
@@ -214,7 +216,7 @@ void processCollidables( Array< Entity > entries, TileGrid grid,
 	using namespace GameConstants;
 	constexpr const float eps = 0.00001f;
 
-	const recti mapBounds = {0, 0, GAME_MAP_WIDTH, GAME_MAP_HEIGHT};
+	const recti MapBounds = {0, 0, grid.width, grid.height};
 	// TODO: air movement should be accelerated instead of instant
 	FOR( entry : entries ) {
 		auto traits      = getEntityTraits( entry.type );
@@ -272,7 +274,8 @@ void processCollidables( Array< Entity > entries, TileGrid grid,
 
 		// broadphase
 		// get the region of tiles that we actually touch when moving along velocity
-		auto tileGridRegion = getSweptTileGridRegion( entry.aab, entry.position, velocity );
+		auto tileGridRegion =
+		    getSweptTileGridRegion( entry.aab, entry.position, velocity, MapBounds );
 
 		// check grounded state of entry
 		if( entry.grounded ) {
@@ -308,7 +311,7 @@ void processCollidables( Array< Entity > entries, TileGrid grid,
 			if( !entry.grounded ) {
 				// try and find a static entry as new ground
 				auto findNewStaticGround = [&]() {
-					auto bottom = MIN( tileGridRegion.bottom + 1, mapBounds.bottom );
+					auto bottom = MIN( tileGridRegion.bottom + 1, MapBounds.bottom );
 					for( int32 y = tileGridRegion.top; y < bottom; ++y ) {
 						for( int32 x = tileGridRegion.left; x < tileGridRegion.right; ++x ) {
 							auto index = grid.index( x, y );
@@ -366,7 +369,7 @@ void processCollidables( Array< Entity > entries, TileGrid grid,
 			}
 		}
 		// recalculate tileGridRegion with new velocity
-		tileGridRegion = getSweptTileGridRegion( entry.aab, entry.position, velocity );
+		tileGridRegion = getSweptTileGridRegion( entry.aab, entry.position, velocity, MapBounds );
 
 		// remaining is the amount of "frame time" we want to move this frame, 1 == full one frame
 		// worth of movement. If entry is not alive for the whole frame, we want to move for the
@@ -493,7 +496,8 @@ void processCollidables( Array< Entity > entries, TileGrid grid,
 						searchDir = {-1, 0};
 					}
 				}
-				auto region    = getSweptTileGridRegion( entry.aab, entry.position, searchDir );
+				auto region =
+				    getSweptTileGridRegion( entry.aab, entry.position, searchDir, MapBounds );
 				auto collision = findCollision( entry.aab, entry.position, searchDir, grid, region,
 				                                dynamics, 1, dynamic );
 				if( !collision || collision.info.normal.y != 0 ) {

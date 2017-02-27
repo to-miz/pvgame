@@ -1396,7 +1396,7 @@ static bool win32InitOpenGL( OpenGlContext* context, float width, float height )
 	glFrontFace( GL_CW );
 	// glDepth
 	glEnable( GL_DEPTH_TEST );
-	glDepthFunc( GL_GREATER );
+	glDepthFunc( GL_GEQUAL );
 	glAlphaFunc( GL_GREATER, 0 );
 	glEnable( GL_ALPHA_TEST );
 

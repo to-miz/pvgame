@@ -2,7 +2,8 @@ mat4 getEditorViewTransform( EditorView* editor )
 {
 	return matrixRotationY( editor->rotation.x ) * matrixRotationX( editor->rotation.y )
 	       * matrixTranslation( editor->translation )
-	       * matrixScale( editor->scale, editor->scale, 1 ) * matrixTranslation( 0, 0, editor->z );
+	       * matrixScale( editor->scale, editor->scale, editor->scale )
+	       * matrixTranslation( 0, 0, editor->z );
 }
 void processEditorViewRotation( EditorView* editor, GameInputs* inputs )
 {

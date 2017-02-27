@@ -817,7 +817,7 @@ static void doVoxelGui( AppData* app, GameInputs* inputs, bool focus, float dt )
 						}
 						auto handle =
 						    imguiMakeHandle( entry->name.data(), ImGuiControlType::Button, frame );
-						if( imguiButton( handle, str, imguiRelative() ) ) {
+						if( imguiButton( handle, str, imguiRatio() ) ) {
 							voxel->textureMap   = collection->frameInfos[frameIndex].textureMap;
 							if( !isKeyDown( inputs, KC_Alt ) ) {
 								voxel->voxels       = voxel->collection.grids[frameIndex];

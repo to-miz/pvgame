@@ -17,6 +17,7 @@ using std::make_pair;
 using std::sort;
 using std::exchange;
 using std::count;
+using std::count_if;
 using std::max_element;
 using std::min_element;
 using std::remove;

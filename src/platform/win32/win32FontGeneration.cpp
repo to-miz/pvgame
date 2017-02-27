@@ -40,7 +40,7 @@ static void win32DestroyFontDc( win32FontDc dc )
 }
 
 bool win32GenerateFont( StackAllocator* allocator, StackAllocator* scrap, win32FontDc fontDc,
-                        Array< FontUnicodeRequestRange > ranges, FontInfo* out )
+                        FontUnicodeRequestRanges ranges, FontInfo* out )
 {
 	assert( isValid( allocator ) );
 	assert( out );
@@ -390,7 +390,7 @@ static FontUnicodeRequestRanges win32RequestFontUnicodeRanges( StackAllocator* s
 }
 
 Font win32LoadFont( StackAllocator* allocator, StringView utf8Name, int32 size, int32 weight,
-                        bool italic, FontUnicodeRequestRanges ranges )
+                    bool italic, FontUnicodeRequestRanges ranges )
 {
 	Font result = {};
 	result.renderOptions = defaultFontRenderOptions();

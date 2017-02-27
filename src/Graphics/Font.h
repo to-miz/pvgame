@@ -98,9 +98,9 @@ struct FontUnicodeRequestRange {
 	uint32 max;
 	bool visible;
 };
-typedef Array< FontUnicodeRequestRange > FontUnicodeRequestRanges;
+typedef Array< const FontUnicodeRequestRange > FontUnicodeRequestRanges;
 
-static FontUnicodeRequestRange DefaultFontUnicodeRanges[] = {
+static const FontUnicodeRequestRange DefaultFontUnicodeRanges[] = {
     {0x0000, 0x0020, false},  // control
     {0x0020, 0x0180, true},   // basic latin + latin-1 supplement + latin extended-a
     {0x2600, 0x2700, true},   // misc symbols

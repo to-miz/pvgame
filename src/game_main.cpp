@@ -559,7 +559,7 @@ struct AppData {
 	TexturePackState texturePackState;
 	AnimatorState animatorState;
 	EasingState easingState;
-	RoomEditorState roomEditorState;
+	RoomEditor::State roomEditorState;
 
 	bool mouseLocked;
 	bool displayDebug;
@@ -818,13 +818,6 @@ static StringView detailedDebugOutput( AppData* app, char* buffer, int32 size )
 	return asStringView( builder );
 }
 
-#define TILE_CELLS_X 16
-#define TILE_CELLS_Y 16
-#define TILE_CELLS_Z 16
-#define TILE_WIDTH ( CELL_WIDTH * TILE_CELLS_X )
-#define TILE_HEIGHT ( CELL_HEIGHT * TILE_CELLS_Y )
-#define TILE_DEPTH ( CELL_DEPTH * TILE_CELLS_Z )
-
 static void showGameDebugGui( AppData* app, GameInputs* inputs, bool focus, float dt )
 {
 	auto renderer  = &app->renderer;
@@ -1054,10 +1047,13 @@ void emitEntityParticles( GameState* game, float dt )
 				if( !entry.walljumpLeft() ) {
 					searchDir = {-1, 0};
 				}
-				auto region = getSweptTileGridRegion( entry.aab, entry.position, searchDir );
-				auto collisionAtFeet = findCollision(
-				    {-1, -1, 1, 1}, feetPosition, searchDir, getCollisionLayer( &game->room ),
-				    region, game->entitySystem.dynamicEntries(), 1, false );
+				auto grid             = getCollisionLayer( &game->room );
+				const recti MapBounds = {0, 0, grid.width, grid.height};
+				auto region =
+				    getSweptTileGridRegion( entry.aab, entry.position, searchDir, MapBounds );
+				auto collisionAtFeet =
+				    findCollision( {-1, -1, 1, 1}, feetPosition, searchDir, grid, region,
+				                   game->entitySystem.dynamicEntries(), 1, false );
 				if( collisionAtFeet ) {
 					auto hero               = &entry.hero;
 					hero->particleEmitTimer = processTimer( hero->particleEmitTimer, dt );
@@ -1699,12 +1695,7 @@ void renderGame( AppData* app, GameInputs* inputs, float blendFactor, bool focus
 			}
 		}
 
-		// render background
-		setTexture( renderer, 0, null );
-		MESH_STREAM_BLOCK( stream, renderer ) {
-			stream->color = 0xFF46AEEB;
-			pushQuad( stream, rectf{-500, 500, 500, -500} * TILE_WIDTH, 32 * CELL_DEPTH );
-		}
+		renderBackground( renderer, app->gameState.room.background );
 	}
 
 	// render entities
