@@ -3,7 +3,9 @@
 #ifndef _CORETYPES_H_INCLUDED_
 #define _CORETYPES_H_INCLUDED_
 
-struct null_t {};
+struct null_t {
+	operator nullptr_t() const { return nullptr; }
+};
 const null_t null;
 
 struct bool8 {

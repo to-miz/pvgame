@@ -1,5 +1,5 @@
 /*
-tm_utility v1.1.2a - public domain
+tm_utility v1.1.3 - public domain
 written by Tolga Mizrak 2016
 
 USAGE
@@ -14,6 +14,7 @@ NOTES
 	See comments at declarations for more info.
 
 HISTORY
+	v1.1.3  28.02.17 changed definition of countof macro
 	v1.1.2a 24.01.17 setFlagCond is wrapped in do {} while( false ) now
 	v1.1.2  24.01.17 changed clamp to take two different types as min and max
 	v1.1.1a 02.10.16 fixed a minor warning of unused variable when asserts are not used
@@ -321,29 +322,11 @@ TMUT_CONSTEXPR inline typename std::underlying_type< EnumType >::type valueof( E
 
 // countof returns the element count of static arrays
 // enable typechecked version of countof on debug builds or if TMUT_SAFE_COUNTOF is defined
-#if ( defined( TMUT_SAFE_COUNTOF ) || defined( _DEBUG ) ) && !defined( TMUT_SAFE_COUNTOF_ALT )
-	// implementation of countof that uses the comma operator to validate
-	// has the benefit that the return type is a const literal and thus will not generate truncation
-	// warnings when assigned to smaller integers, if the size fits without truncation
-	template < class T >
-	TMUT_CONSTEXPR inline void internal_is_array( const T& v )
-	{
-		static_assert( std::is_array< T >::value, "not static array" );
-	}
-	#define countof( x ) ( internal_is_array( ( x ) ), sizeof( ( x ) ) / sizeof( *( x ) ) )
-#elif defined( TMUT_SAFE_COUNTOF_ALT ) || defined( _DEBUG )
-	// alternate implementation of countof that always returns the size in tmut_size_t
-	template< class T, tmut_size_t N >
-	TMUT_CONSTEXPR tmut_size_t countof( T (&array)[N] )
-	{
-		return N;
-	}
-	template < class T >
-	tmut_size_t countof( T )
-	{
-		static_assert( false, "countof can only be applied on static arrays" );
-		return 0;
-	}
+#if ( defined( TMUT_SAFE_COUNTOF ) || defined( _DEBUG ) )
+	template <typename T, unsigned N>
+	char (&InternalComputeArraySize(T (&)[N]))[N];
+
+	#define countof(array) ( (tmut_size_t)sizeof(InternalComputeArraySize(array)) )
 #else
 	#define countof( x ) ( sizeof( x ) / sizeof( x[0] ) )
 #endif

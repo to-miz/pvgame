@@ -57,8 +57,10 @@ void readNodes( StackAllocator* allocator, const JsonObject& attr,
 	auto collisionsArray = attr["collision_bounds"].getObjectArray();
 	auto hitboxesArray   = attr["hitboxes"].getObjectArray();
 	auto hurtboxesArray  = attr["hurtboxes"].getObjectArray();
+	auto deflectsArray   = attr["deflect_bounds"].getObjectArray();
 	*hitboxes            = makeArray( allocator, SkeletonHitboxState,
-	                       collisionsArray.size() + hitboxesArray.size() + hurtboxesArray.size() );
+	                       collisionsArray.size() + hitboxesArray.size() + hurtboxesArray.size()
+	                           + deflectsArray.size() );
 
 	auto readHitbox = [base]( const JsonObject& attr, SkeletonHitboxState* dest ) {
 		*dest = {};
@@ -84,6 +86,11 @@ void readNodes( StackAllocator* allocator, const JsonObject& attr,
 		auto dest = &hitboxes->at( currentHitbox++ );
 		readHitbox( entry, dest );
 		dest->type = SkeletonHitboxState::Hurtbox;
+	}
+	FOR( entry : deflectsArray ) {
+		auto dest = &hitboxes->at( currentHitbox++ );
+		readHitbox( entry, dest );
+		dest->type = SkeletonHitboxState::Deflect;
 	}
 }
 
@@ -298,8 +305,9 @@ bool loadSkeletonDefinitionImpl( StackAllocator* allocator, StringView filename,
 			auto collision_bounds  = assets["collision_bounds"].getObjectArray();
 			auto hitboxes          = assets["hitboxes"].getObjectArray();
 			auto hurtboxes         = assets["hurtboxes"].getObjectArray();
+			auto deflects          = assets["deflect_bounds"].getObjectArray();
 			const auto assetsCount = voxels.size() + emitters.size() + collision_bounds.size()
-			                         + hitboxes.size() + hurtboxes.size();
+			                         + hitboxes.size() + hurtboxes.size() + deflects.size();
 
 			auto assetIds = makeUArray( allocator, SkeletonAssetId, assetsCount );
 
@@ -338,45 +346,38 @@ bool loadSkeletonDefinitionImpl( StackAllocator* allocator, StringView filename,
 			// collision_bounds
 			// hitboxes
 			// hurtboxes
-			const auto hitboxesCount = collision_bounds.size() + hitboxes.size() + hurtboxes.size();
-			out->hitboxes = makeArray( allocator, rectf, hitboxesCount );
-			auto currentHitbox = 0;
-			for( auto i = 0, count = collision_bounds.size(); i < count; ++i ) {
-				auto attr  = collision_bounds[i];
-				auto dest  = &out->hitboxes[currentHitbox];
-				auto ident = assetIds.emplace_back();
-				deserialize( attr["id"], ident->id, -1 );
-				ident->nameLength = (int16)copyToString( attr["name"].getString(), ident->name );
-				ident->assetIndex = auto_truncate( currentHitbox );
-				ident->type       = AnimatorAsset::type_collision;
+			// deflect_bounds
 
-				deserialize( attr["bounds"], *dest );
-				++currentHitbox;
-			}
-			for( auto i = 0, count = hitboxes.size(); i < count; ++i ) {
-				auto attr  = hitboxes[i];
-				auto dest  = &out->hitboxes[currentHitbox];
-				auto ident = assetIds.emplace_back();
-				deserialize( attr["id"], ident->id, -1 );
-				ident->nameLength = (int16)copyToString( attr["name"].getString(), ident->name );
-				ident->assetIndex = auto_truncate( currentHitbox );
-				ident->type       = AnimatorAsset::type_hitbox;
+			auto deserializeHitboxes = []( const JsonObjectArray& array, Array< rectf > hitboxes,
+			                               int32 currentHitbox, UArray< SkeletonAssetId >* idents,
+			                               AnimatorAsset::Type type ) {
+				for( auto i = 0, count = array.size(); i < count; ++i ) {
+					auto attr  = array[i];
+					auto dest  = &hitboxes[currentHitbox];
+					auto ident = idents->emplace_back();
+					deserialize( attr["id"], ident->id, -1 );
+					ident->nameLength =
+					    (int16)copyToString( attr["name"].getString(), ident->name );
+					ident->assetIndex = auto_truncate( currentHitbox );
+					ident->type       = type;
 
-				deserialize( attr["bounds"], *dest );
-				++currentHitbox;
-			}
-			for( auto i = 0, count = hurtboxes.size(); i < count; ++i ) {
-				auto attr  = hurtboxes[i];
-				auto dest  = &out->hitboxes[currentHitbox];
-				auto ident = assetIds.emplace_back();
-				deserialize( attr["id"], ident->id, -1 );
-				ident->nameLength = (int16)copyToString( attr["name"].getString(), ident->name );
-				ident->assetIndex = auto_truncate( currentHitbox );
-				ident->type       = AnimatorAsset::type_hurtbox;
-
-				deserialize( attr["bounds"], *dest );
-				++currentHitbox;
-			}
+					deserialize( attr["bounds"], *dest );
+					++currentHitbox;
+				}
+				return currentHitbox;
+			};
+			const auto hitboxesCount =
+			    collision_bounds.size() + hitboxes.size() + hurtboxes.size() + deflects.size();
+			out->hitboxes            = makeArray( allocator, rectf, hitboxesCount );
+			auto currentHitbox       = 0;
+			currentHitbox = deserializeHitboxes( collision_bounds, out->hitboxes, currentHitbox,
+			                                     &assetIds, AnimatorAsset::type_collision );
+			currentHitbox = deserializeHitboxes( hitboxes, out->hitboxes, currentHitbox, &assetIds,
+			                                     AnimatorAsset::type_hitbox );
+			currentHitbox = deserializeHitboxes( hurtboxes, out->hitboxes, currentHitbox, &assetIds,
+			                                     AnimatorAsset::type_hurtbox );
+			currentHitbox = deserializeHitboxes( deflects, out->hitboxes, currentHitbox, &assetIds,
+			                                     AnimatorAsset::type_deflect );
 
 			assert( assetIds.size() == assetsCount );
 			out->assetIds = makeArrayView( assetIds );
@@ -437,7 +438,8 @@ bool loadSkeletonDefinitionImpl( StackAllocator* allocator, StringView filename,
 				// hitboxes
 				bindIds = bindIdsToIndices( out->baseHitboxes, nodeIds, out->assetIds );
 				if( !bindIds.second ) {
-					ABORT_ERROR( "Invalid collision_bound/hitbox/hurtbox entry {}", bindIds.first );
+					ABORT_ERROR( "Invalid collision_bound/hitbox/hurtbox/deflect_bounds entry {}",
+					             bindIds.first );
 				}
 				FOR( entry : out->baseHitboxes ) {
 					entry.relative = out->hitboxes[entry.assetIndex];
@@ -1321,6 +1323,7 @@ struct LoadSkeletonDefinitionIndicesOutput {
 	LoadSkeletonDefinitionNamesOutputPair collisions;
 	LoadSkeletonDefinitionNamesOutputPair hitboxes;
 	LoadSkeletonDefinitionNamesOutputPair hurtboxes;
+	LoadSkeletonDefinitionNamesOutputPair deflects;
 
 	EntitySkeletonTraits traits;
 };
@@ -1333,6 +1336,7 @@ SkeletonDefinition loadSkeletonDefinitionAndIndices( StackAllocator* allocator, 
 	assert( out.collisions.names.size() == out.collisions.indices.size() );
 	assert( out.hitboxes.names.size() == out.hitboxes.indices.size() );
 	assert( out.hurtboxes.names.size() == out.hurtboxes.indices.size() );
+	assert( out.deflects.names.size() == out.deflects.indices.size() );
 
 	SkeletonDefinition result = loadSkeletonDefinition( allocator, filename, 0 );
 	if( result ) {
@@ -1368,6 +1372,11 @@ SkeletonDefinition loadSkeletonDefinitionAndIndices( StackAllocator* allocator, 
 			auto index = getHitboxIndex( &result, name, SkeletonHitboxState::Hurtbox );
 			out.hurtboxes.indices[i] = auto_truncate( index.value );
 		}
+		for( auto i = 0, count = out.deflects.indices.size(); i < count; ++i ) {
+			auto name               = out.deflects.names[i];
+			auto index              = getHitboxIndex( &result, name, SkeletonHitboxState::Deflect );
+			out.deflects.indices[i] = auto_truncate( index.value );
+		}
 
 		auto traits      = &out.traits;
 		auto copyIndices = [filename]( Array< const int8 > ids, Array< int8 > dest ) {
@@ -1382,12 +1391,17 @@ SkeletonDefinition loadSkeletonDefinitionAndIndices( StackAllocator* allocator, 
 			}
 			return safe_truncate< int8 >( count );
 		};
-		traits->hitboxesCounts[0] =
+		static_assert(
+		    countof( EntitySkeletonTraits::hitboxesCounts ) == SkeletonHitboxState::Count,
+		    "hitboxesCount has wrong size" );
+		traits->hitboxesCounts[SkeletonHitboxState::Collision] =
 		    copyIndices( out.collisions.indices, makeArrayView( traits->collisionIdsData ) );
-		traits->hitboxesCounts[1] =
+		traits->hitboxesCounts[SkeletonHitboxState::Hitbox] =
 		    copyIndices( out.hitboxes.indices, makeArrayView( traits->hitboxIdsData ) );
-		traits->hitboxesCounts[2] =
+		traits->hitboxesCounts[SkeletonHitboxState::Hurtbox] =
 		    copyIndices( out.hurtboxes.indices, makeArrayView( traits->hurtboxIdsData ) );
+		traits->hitboxesCounts[SkeletonHitboxState::Deflect] =
+		    copyIndices( out.deflects.indices, makeArrayView( traits->deflectIdsData ) );
 	}
 
 	return result;
@@ -1407,6 +1421,7 @@ bool loadTypedSkeletonDefinitionAndTraits( SkeletonSystem* system, StringView fi
 		    {T::CollisionNames, typedDefinition->getCollisionIds()},
 		    {T::HitboxNames, typedDefinition->getHitboxIds()},
 		    {T::HurtboxNames, typedDefinition->getHurtboxIds()},
+		    {T::DeflectNames, typedDefinition->getDeflectIds()},
 		};
 		auto allocator = DynamicStackAllocator{megabytes( 1 )};
 		*definition    = loadSkeletonDefinitionAndIndices( &allocator, filename, inout );
@@ -1433,11 +1448,13 @@ SkeletonSystem makeSkeletonSystem()
 	result.definitions = makeUninitializedArrayView(
 	    allocate< SkeletonDefinition >( DefinitionCount ), DefinitionCount );
 
-	loadTypedSkeletonDefinitionAndTraits( &result, "Data/voxels/hero_animations.json", &result.hero,
-	                                      &result.skeletonTraits[Entity::type_hero] );
-	loadTypedSkeletonDefinitionAndTraits( &result, "Data/voxels/wheels_enemy_animations.json",
-	                                      &result.wheels,
-	                                      &result.skeletonTraits[Entity::type_wheels] );
+	loadTypedSkeletonDefinitionAndTraits( &result,
+	                                      getEntitySkeletonDefinitionFilename( Entity::type_hero ),
+	                                      &result.hero, &result.skeletonTraits[Entity::type_hero] );
+	loadTypedSkeletonDefinitionAndTraits(
+	    &result, getEntitySkeletonDefinitionFilename( Entity::type_wheels ), &result.wheels,
+	    &result.skeletonTraits[Entity::type_wheels] );
+
 	return result;
 }
 

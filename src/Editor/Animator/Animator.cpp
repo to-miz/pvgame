@@ -15,7 +15,7 @@ static const StringView EaseTypeNames[] = {
     "Lerp", "Step", "Smoothstep", "EaseOutBounce", "EaseOutElastic", "Curve",
 };
 static const StringView AnimatorAssetTypeNames[] = {
-    "None", "VoxelCollection", "Collision", "Hitbox", "Hurtbox", "ParticleEmitter",
+    "None", "VoxelCollection", "Collision", "Hitbox", "Hurtbox", "Deflect", "ParticleEmitter",
 };
 StringView to_string( AnimatorKeyframeData::EaseType type )
 {
@@ -103,6 +103,11 @@ AnimatorAsset::Type convert_to< AnimatorAsset::Type >( StringView str,
 				}
 				break;
 			}
+			case 'd':
+			case 'D': {
+				result = AnimatorAsset::type_deflect;
+				break;
+			}
 			case 'p':
 			case 'P': {
 				result = AnimatorAsset::type_emitter;
@@ -139,7 +144,7 @@ void deserialize( const JsonValue& value, AnimatorParticleEmitter& out )
 // AnimatorAsset
 bool isHitboxType( AnimatorAsset::Type type )
 {
-	return type >= AnimatorAsset::type_collision && type <= AnimatorAsset::type_hurtbox;
+	return type >= AnimatorAsset::type_collision && type <= AnimatorAsset::type_deflect;
 }
 // all three union fields point to the same location, but because of strict aliasing we can't
 // read from a union field we didn't write to
@@ -158,6 +163,10 @@ rectf* getHitboxRect( AnimatorAsset* asset )
 		}
 		case AnimatorAsset::type_hurtbox: {
 			return &asset->hurtbox;
+			break;
+		}
+		case AnimatorAsset::type_deflect: {
+			return &asset->deflect;
 			break;
 		}
 	}
@@ -182,6 +191,11 @@ AnimatorAsset animatorHitboxAsset( AnimatorAsset::Type type, int16 id )
 		case AnimatorAsset::type_hurtbox: {
 			result.type    = AnimatorAsset::type_hurtbox;
 			result.hurtbox = {-5, -5, 5, 5};
+			break;
+		}
+		case AnimatorAsset::type_deflect: {
+			result.type    = AnimatorAsset::type_deflect;
+			result.deflect = {-5, -5, 5, 5};
 			break;
 		}
 		InvalidDefaultCase;
@@ -303,6 +317,7 @@ void addAnimatorGroups( AnimatorState* animator, StringView parentName, int16 ow
 			case AnimatorAsset::type_collision:
 			case AnimatorAsset::type_hitbox:
 			case AnimatorAsset::type_hurtbox:
+			case AnimatorAsset::type_deflect:
 			case AnimatorAsset::type_emitter: {
 				propertyType = AnimatorKeyframeData::type_active;
 				break;
@@ -538,6 +553,7 @@ AnimatorNode getCurrentFrameNode( AnimatorState* animator, AnimatorNode* node, f
 		case AnimatorAsset::type_collision:
 		case AnimatorAsset::type_hitbox:
 		case AnimatorAsset::type_hurtbox:
+		case AnimatorAsset::type_deflect:
 		case AnimatorAsset::type_emitter: {
 			auto activeKeyframe =
 			    getInterpolatedKeyframe( animator, animator->currentFrame, activeId );
@@ -735,7 +751,8 @@ AnimatorAsset* addNewAsset( AnimatorState* animator, AnimatorAsset::Type type,
 		}
 		case AnimatorAsset::type_collision:
 		case AnimatorAsset::type_hitbox:
-		case AnimatorAsset::type_hurtbox: {
+		case AnimatorAsset::type_hurtbox:
+		case AnimatorAsset::type_deflect: {
 			auto asset = std::make_unique< AnimatorAsset >(
 			    animatorHitboxAsset( type, animator->assetIds ) );
 			if( asset && *asset ) {
@@ -1047,15 +1064,10 @@ void closeAnimation( AnimatorState* animator, bool keep )
 }
 
 void animatorMessageBox( AnimatorState* animator, StringView text, StringView title,
-                         AnimatorMessageBoxAction* onYes, AnimatorMessageBoxAction* onNo = nullptr )
+                         EditorCommon::MessageBoxAction* onYes,
+                         EditorCommon::MessageBoxAction* onNo = nullptr )
 {
-	animator->messageBox.text         = text;
-	animator->messageBox.title        = title;
-	animator->messageBox.action.onYes = onYes;
-	animator->messageBox.action.onNo  = onNo;
-	animator->messageBox.type = ( onYes && onNo ) ? ( AnimatorState::MessageBox::YesNoCancel )
-	                                              : ( AnimatorState::MessageBox::OkCancel );
-	imguiShowModal( animator->messageBox.container );
+	EditorCommon::showMessageBox( &animator->messageBox, text, title, onYes, onNo );
 }
 
 void animatorClear( AnimatorState* animator )
@@ -1193,6 +1205,23 @@ void animatorSaveNodes( JsonWriter* writer, Array< T > nodes, bool baseNodes,
 		FOR( entry : nodes ) {
 			auto node = get( entry );
 			if( node->assetType == AnimatorAsset::type_hurtbox ) {
+				writeStartObject( writer );
+					writeProperty( writer, "id", node->id );
+					if( baseNodes ) {
+						writeProperty( writer, "assetId", node->assetId );
+					}
+					writeProperty( writer, "active", (bool)node->active );
+				writeEndObject( writer );
+			}
+		}
+	writeEndArray( writer );
+
+	// write deflect
+	writePropertyName( writer, "deflect_bounds" );
+	writeStartArray( writer );
+		FOR( entry : nodes ) {
+			auto node = get( entry );
+			if( node->assetType == AnimatorAsset::type_deflect ) {
 				writeStartObject( writer );
 					writeProperty( writer, "id", node->id );
 					if( baseNodes ) {
@@ -1354,6 +1383,21 @@ void animatorSave( StackAllocator* allocator, AnimatorState* animator, StringVie
 				}
 			}
 			writeEndArray( writer );
+
+			// write deflect assets
+			writePropertyName( writer, "deflect_bounds" );
+			writeStartArray( writer );
+			FOR( entry : animator->assets ) {
+				auto asset = entry.get();
+				if( asset->type == AnimatorAsset::type_deflect ) {
+					writeStartObject( writer );
+						writeProperty( writer, "id", asset->id );
+						writeProperty( writer, "name", asset->getName() );
+				        writeProperty( writer, "bounds", asset->deflect );
+			        writeEndObject( writer );
+				}
+			}
+			writeEndArray( writer );
 		writeEndObject( writer );
 
 		// write nodes
@@ -1433,6 +1477,7 @@ void animatorSave( StackAllocator* allocator, AnimatorState* animator, StringVie
 					        case AnimatorAsset::type_collision:
 					        case AnimatorAsset::type_hitbox:
 					        case AnimatorAsset::type_hurtbox:
+					        case AnimatorAsset::type_deflect:
 					        case AnimatorAsset::type_emitter: {
 						        writeKeyframes( writer, keyframes, curves, "active",
 						                        group + AnimatorKeyframeData::type_active );
@@ -1614,6 +1659,14 @@ void animatorDeserializeNodes( T forEach )
 		}
 		deserialize( attr["active"], node->active );
 	} );
+
+	// deflect_bounds
+	forEach( "deflect_bounds", []( JsonObject& attr, AnimatorNode* node, bool baseNode ) {
+		if( baseNode ) {
+			deserialize( attr["assetId"], node->assetId, -1 );
+		}
+		deserialize( attr["active"], node->active );
+	} );
 }
 
 bool animatorOpen( StackAllocator* allocator, AnimatorState* animator, StringView filename )
@@ -1673,6 +1726,13 @@ bool animatorOpen( StackAllocator* allocator, AnimatorState* animator, StringVie
 					deserialize( attr["id"], added->id, -1 );
 					added->setName( attr["name"].getString() );
 					deserialize( attr["bounds"], added->hurtbox );
+				}
+			}
+			FOR( attr : assets["deflect_bounds"].getObjectArray() ) {
+				if( auto added = addNewAsset( animator, AnimatorAsset::type_deflect ) ) {
+					deserialize( attr["id"], added->id, -1 );
+					added->setName( attr["name"].getString() );
+					deserialize( attr["bounds"], added->deflect );
 				}
 			}
 		}
@@ -1927,7 +1987,7 @@ bool animatorMenuSaveAs( AppData* app )
 	}
 	return filename.size() != 0;
 }
-void animatorMenuOpen( AppData* app )
+bool animatorMenuOpen( AppData* app )
 {
 	auto animator = &app->animatorState;
 
@@ -1939,7 +1999,9 @@ void animatorMenuOpen( AppData* app )
 	auto open = []( AppData* app ) {
 		auto animator = &app->animatorState;
 		animator->flags.unsavedChanges = false;
-		animatorMenuOpen( app );
+		if( !animatorMenuOpen( app ) ) {
+			animator->flags.unsavedChanges = true;
+		}
 	};
 
 	if( animator->flags.unsavedChanges ) {
@@ -1952,6 +2014,7 @@ void animatorMenuOpen( AppData* app )
 			}
 		}
 	}
+	return animator->filename.size() != 0;
 }
 
 void doKeyframesNames( AppData* app, GameInputs* inputs, float width, float height )
@@ -2679,25 +2742,31 @@ void doAnimatorMenu( AppData* app, GameInputs* inputs, rectfarg rect )
 		auto first   = ( firstIt ) ? ( firstIt->get() ) : ( nullptr );
 		if( imguiBeginDropGroup( "Add/Remove", &editor->expandedFlags,
 		                         AnimatorEditor::AssetsAdd ) ) {
-			imguiSameLine( 1 );
-			if( imguiButton( "Add Voxel Collection", imguiRatio() ) ) {
+			imguiSameLine( 2 );
+			if( imguiButton( "Voxel Collection", imguiRatio() ) ) {
 				auto filename = getOpenFilename( JsonFilter, nullptr, false );
 				if( filename.size() ) {
 					addNewAsset( animator, AnimatorAsset::type_collection, filename );
 				}
 			}
-			if( imguiButton( "Add Texture Map", imguiRatio() ) ) {
+			if( imguiButton( "Texture Map", imguiRatio() ) ) {
 			}
-			if( imguiButton( "Add Collision Bounds", imguiRatio() ) ) {
+			imguiSameLine( 2 );
+			if( imguiButton( "Collision Bounds", imguiRatio() ) ) {
 				addNewAsset( animator, AnimatorAsset::type_collision );
 			}
-			if( imguiButton( "Add Hitbox", imguiRatio() ) ) {
+			if( imguiButton( "Hitbox", imguiRatio() ) ) {
 				addNewAsset( animator, AnimatorAsset::type_hitbox );
 			}
-			if( imguiButton( "Add Hurtbox", imguiRatio() ) ) {
+			imguiSameLine( 2 );
+			if( imguiButton( "Hurtbox", imguiRatio() ) ) {
 				addNewAsset( animator, AnimatorAsset::type_hurtbox );
 			}
-			if( imguiButton( "Add Particle Emitter", imguiRatio() ) ) {
+			if( imguiButton( "Deflect Bounds", imguiRatio() ) ) {
+				addNewAsset( animator, AnimatorAsset::type_deflect );
+			}
+			imguiSameLine( 1 );
+			if( imguiButton( "Particle Emitter", imguiRatio() ) ) {
 				addNewAsset( animator, AnimatorAsset::type_emitter );
 			}
 			if( imguiButton( "Remove Selected", imguiRatio() ) ) {
@@ -3001,6 +3070,7 @@ void doAnimatorMenu( AppData* app, GameInputs* inputs, rectfarg rect )
 				case AnimatorAsset::type_collision:
 				case AnimatorAsset::type_hitbox:
 				case AnimatorAsset::type_hurtbox:
+				case AnimatorAsset::type_deflect:
 				case AnimatorAsset::type_emitter: {
 					node.active = imguiCheckbox( "Active", (bool)node.active );
 					break;
@@ -3103,11 +3173,11 @@ void doAnimatorMenu( AppData* app, GameInputs* inputs, rectfarg rect )
 				openAnimation( animator, &*selected );
 			}
 			if( deleted != end ) {
-				animator->messageBox.action.data.toDelete = deleted;
+				animator->toDeleteData.toDelete = deleted;
 				animatorMessageBox(
 				    animator, "Animation will be deleted", "Delete Animation", []( AppData* app ) {
-				    	auto animator = &app->animatorState;
-					    animator->animations.erase( animator->messageBox.action.data.toDelete );
+					    auto animator = &app->animatorState;
+					    animator->animations.erase( animator->toDeleteData.toDelete );
 					} );
 			}
 			imguiEndDropGroup();
@@ -3831,9 +3901,9 @@ void doHitboxEditor( AppData* app, GameInputs* inputs, rectfarg rect )
 	animatorUpdateAndRenderNodes( renderer, animator );
 
 	// render hitboxes
-	auto& viewProj    = projection.viewProj;
+	auto& viewProj = projection.viewProj;
 
-	const Color HitboxColors[3] = {0x800000FF, 0x80FF0000, 0x8000FF00};
+	const Color HitboxColors[4] = {0x800000FF, 0x80FF0000, 0x8000FF00, 0x80634040};
 	setRenderState( renderer, RenderStateType::BackFaceCulling, false );
 	setTexture( renderer, 0, null );
 	MESH_STREAM_BLOCK( stream, renderer ) {
@@ -4249,54 +4319,7 @@ void doAnimator( AppData* app, GameInputs* inputs, bool focus, float dt )
 		imguiEndContainer();
 	}
 
-	if( imguiDialog( animator->messageBox.title, animator->messageBox.container ) ) {
-		auto messageBox = &animator->messageBox;
-
-		if( isKeyPressed( inputs, KC_Return ) ) {
-			if( messageBox->action.onYes ) {
-				messageBox->action.onYes( app );
-			}
-			imguiClose( messageBox->container );
-		} else if( isKeyPressed( inputs, KC_Escape ) ) {
-			imguiClose( messageBox->container );
-		} else {
-			imguiText( messageBox->text );
-			switch( messageBox->type ) {
-				case AnimatorState::MessageBox::OkCancel: {
-					imguiSameLine( 2 );
-					if( imguiButton( "Ok" ) ) {
-						if( messageBox->action.onYes ) {
-							messageBox->action.onYes( app );
-						}
-						imguiClose( messageBox->container );
-					}
-					if( imguiButton( "Cancel" ) ) {
-						imguiClose( messageBox->container );
-					}
-					break;
-				}
-				case AnimatorState::MessageBox::YesNoCancel: {
-					imguiSameLine( 3 );
-					if( imguiButton( "Yes" ) ) {
-						if( messageBox->action.onYes ) {
-							messageBox->action.onYes( app );
-						}
-						imguiClose( messageBox->container );
-					}
-					if( imguiButton( "No" ) ) {
-						if( messageBox->action.onNo ) {
-							messageBox->action.onNo( app );
-						}
-						imguiClose( messageBox->container );
-					}
-					if( imguiButton( "Cancel" ) ) {
-						imguiClose( messageBox->container );
-					}
-					break;
-				}
-			}
-		}
-	}
+	handleMessageBox( app, inputs, animator->messageBox );
 
 	imguiUpdate( dt );
 	imguiFinalize();
@@ -4389,6 +4412,11 @@ void AnimatorAsset::assign( const AnimatorAsset& other )
 			hurtbox = other.hurtbox;
 			break;
 		}
+		case type_deflect: {
+			type    = type_deflect;
+			deflect = other.deflect;
+			break;
+		}
 		case type_emitter: {
 			type    = type_emitter;
 			emitter = other.emitter;
@@ -4426,6 +4454,11 @@ void AnimatorAsset::assign( AnimatorAsset&& other )
 			hurtbox = other.hurtbox;
 			break;
 		}
+		case type_deflect: {
+			type    = type_deflect;
+			deflect = other.deflect;
+			break;
+		}
 		case type_emitter: {
 			type    = type_emitter;
 			emitter = other.emitter;
@@ -4443,6 +4476,7 @@ void AnimatorAsset::destroy()
 		case type_collision:
 		case type_hitbox:
 		case type_hurtbox:
+		case type_deflect:
 		case type_emitter: {
 			break;
 		}

@@ -1,5 +1,6 @@
 namespace RoomEditor
 {
+using namespace EditorCommon;
 
 const int32 MaxWidth  = 64;
 const int32 MaxHeight = 64;
@@ -32,24 +33,34 @@ struct View {
 		RoomBackgroundType background;
 	} room;
 
-	vec2 translation;
+	struct Entity {
+		::Entity::Type type;
+		int32 x;
+		int32 y;
+		Skeleton* skeleton;
+	};
+	std::vector< Entity > entities;
+
+	vec2 translation = {};
 	float scale = 1;
 
 	enum FlagValues {
 		DrawGrid               = BITFIELD( 0 ),
 		DrawGridInFront        = BITFIELD( 1 ),
 		DrawSelectedLayersOnly = BITFIELD( 2 ),
+
+		UnsavedChanges = BITFIELD( 31 ),
 	};
 	uint32 flags = DrawGrid;
 
+	TileSet* tileSet = nullptr;
 	GameTile placingTile = {};
 
-	TileSet* tileSet = nullptr;
-
 	ImGuiListboxItem layers[RL_Count];
+	FilenameString filename;
 };
 
-enum class MouseMode { Select, Place, PlaceRectangular };
+enum class MouseMode { Select, Place, PlaceRectangular, Entity };
 
 struct State {
 	ImmediateModeGui gui;
@@ -62,12 +73,14 @@ struct State {
 	float tilesScrollPos;
 
 	View view;
-	TilesPool playTilePool;
+	TilesPool tilePool;
 
 	MouseMode mouseMode;
 	vec2i selectionStart;
 	vec2i selectionEnd;
 	View::Room intermediateRoom;
+
+	// SkeletonDefinition definitions[Entity::type_count];
 
 	enum FlagValues {
 		ToolsExpanded      = BITFIELD( 0 ),
@@ -75,6 +88,8 @@ struct State {
 		PropertiesExpanded = BITFIELD( 2 ),
 	};
 	uint32 flags = ToolsExpanded | TilesetExpanded;
+
+	EditorCommon::MessageBox messageBox;
 };
 
 } // namespace RoomEditor

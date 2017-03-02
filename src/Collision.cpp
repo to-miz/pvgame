@@ -18,37 +18,37 @@ struct CollisionInfo {
 	float t;
 	vec2 normal;
 	vec2 push;
+	inline explicit operator bool() const { return t != FLOAT_MAX; }
 };
+const CollisionInfo InvalidCollisionInfo = {FLOAT_MAX};
 struct PushPair {
 	float push;
 	vec2 normal;
 	friend bool operator<( const PushPair& a, const PushPair& b ) { return a.push < b.push; }
 };
-bool testAabVsAab( rectfarg a, vec2arg aPosition, vec2arg delta, rectfarg b, float maxT,
-                   CollisionInfo* info )
+CollisionInfo testAabVsAab( rectfarg a, vec2arg aPosition, vec2arg delta, rectfarg b, float maxT )
 {
-	rectf sum = {b.left - a.right + SafetyDistance, b.top - a.bottom + SafetyDistance,
+	CollisionInfo info = InvalidCollisionInfo;
+	rectf sum          = {b.left - a.right + SafetyDistance, b.top - a.bottom + SafetyDistance,
 	             b.right - a.left - SafetyDistance, b.bottom - a.top - SafetyDistance};
 
 	float intermediate;
-	bool collided = false;
 	if( isPointInside( sum, aPosition ) ) {
 		PushPair leftPush       = {aPosition.x - sum.left, -1, 0};
 		PushPair upPush         = {aPosition.y - sum.top, 0, -1};
 		PushPair rightPush      = {sum.right - aPosition.x, 1, 0};
 		PushPair downPush       = {sum.bottom - aPosition.y, 0, 1};
 		const PushPair& minPush = min( min( leftPush, upPush ), min( rightPush, downPush ) );
-		info->t                 = -1;
-		info->normal            = minPush.normal;
-		info->push              = minPush.push * minPush.normal;
-		collided                = true;
-		if( ( minPush.normal.x < 0 && delta.x < info->push.x )
-		    || ( minPush.normal.x > 0 && delta.x > info->push.x )
-		    || ( minPush.normal.y < 0 && delta.y < info->push.y )
-		    || ( minPush.normal.y > 0 && delta.y > info->push.y ) ) {
+		info.t                  = -1;
+		info.normal             = minPush.normal;
+		info.push               = minPush.push * minPush.normal;
+		if( ( minPush.normal.x < 0 && delta.x < info.push.x )
+		    || ( minPush.normal.x > 0 && delta.x > info.push.x )
+		    || ( minPush.normal.y < 0 && delta.y < info.push.y )
+		    || ( minPush.normal.y > 0 && delta.y > info.push.y ) ) {
 			// if we are moving away from collision faster than the push, ignore it
 			// the collision will be resolved by just letting the point move
-			collided = false;
+			info.t = InvalidCollisionInfo.t;
 		}
 	} else {
 		if( delta.x != 0 ) {
@@ -56,20 +56,18 @@ bool testAabVsAab( rectfarg a, vec2arg aPosition, vec2arg delta, rectfarg b, flo
 			                                       sum.left, sum.top, sum.bottom,
 			                                       &intermediate ) ) {
 				if( intermediate < maxT ) {
-					maxT         = intermediate;
-					info->t      = intermediate;
-					info->normal = {-1, 0};
-					collided     = true;
+					maxT        = intermediate;
+					info.t      = intermediate;
+					info.normal = {-1, 0};
 				}
 			}
 			if( testPointVsAxisAlignedLineSegment( aPosition.x, aPosition.y, delta.x, delta.y,
 			                                       sum.right, sum.top, sum.bottom,
 			                                       &intermediate ) ) {
 				if( intermediate < maxT ) {
-					maxT         = intermediate;
-					info->t      = intermediate;
-					info->normal = {1, 0};
-					collided     = true;
+					maxT        = intermediate;
+					info.t      = intermediate;
+					info.normal = {1, 0};
 				}
 			}
 		}
@@ -78,26 +76,24 @@ bool testAabVsAab( rectfarg a, vec2arg aPosition, vec2arg delta, rectfarg b, flo
 			if( testPointVsAxisAlignedLineSegment( aPosition.y, aPosition.x, delta.y, delta.x,
 			                                       sum.top, sum.left, sum.right, &intermediate ) ) {
 				if( intermediate < maxT ) {
-					maxT         = intermediate;
-					info->t      = intermediate;
-					info->normal = {0, -1};
-					collided     = true;
+					maxT        = intermediate;
+					info.t      = intermediate;
+					info.normal = {0, -1};
 				}
 			}
 			if( testPointVsAxisAlignedLineSegment( aPosition.y, aPosition.x, delta.y, delta.x,
 			                                       sum.bottom, sum.left, sum.right,
 			                                       &intermediate ) ) {
 				if( intermediate < maxT ) {
-					maxT         = intermediate;
-					info->t      = intermediate;
-					info->normal = {0, 1};
-					collided     = true;
+					maxT        = intermediate;
+					info.t      = intermediate;
+					info.normal = {0, 1};
 				}
 			}
 		}
 	}
 
-	return collided;
+	return info;
 }
 
 struct CollisionResult {
@@ -117,13 +113,11 @@ static CollisionResult detectCollisionVsTileGrid( rectfarg aab, vec2arg position
 			auto index = grid.index( x, y );
 			auto tile  = grid[index];
 			if( tile ) {
-				rectf tileBounds   = RectWH( x * TileWidth, y * TileHeight, TileWidth, TileHeight );
-				CollisionInfo info = {};
-				if( testAabVsAab( aab, position, velocity, tileBounds, result.info.t, &info ) ) {
-					if( info.t < result.info.t ) {
-						result.collision.setTile( index );
-						result.info = info;
-					}
+				rectf tileBounds = RectWH( x * TileWidth, y * TileHeight, TileWidth, TileHeight );
+				auto info = testAabVsAab( aab, position, velocity, tileBounds, result.info.t );
+				if( info && info.t < result.info.t ) {
+					result.collision.setTile( index );
+					result.info = info;
 				}
 			}
 		}
@@ -131,21 +125,18 @@ static CollisionResult detectCollisionVsTileGrid( rectfarg aab, vec2arg position
 	return result;
 }
 static CollisionResult detectCollisionVsDynamics( rectfarg aab, vec2arg position, vec2arg velocity,
-                                                  Array< Entity > dynamics,
-                                                  float maxT )
+                                                  Array< Entity > dynamics, float maxT )
 {
 	using namespace GameConstants;
 
 	CollisionResult result = {};
 	result.info.t          = maxT;
 	FOR( dynamic : dynamics ) {
-		CollisionInfo info = {};
-		if( testAabVsAab( aab, position, velocity, translate( dynamic.aab, dynamic.position ),
-		                  result.info.t, &info ) ) {
-			if( info.t < result.info.t ) {
-				result.collision.setDynamic( indexof( dynamics, dynamic ), dynamic.handle );
-				result.info = info;
-			}
+		auto info = testAabVsAab( aab, position, velocity,
+		                          translate( dynamic.aab, dynamic.position ), result.info.t );
+		if( info && info.t < result.info.t ) {
+			result.collision.setDynamic( indexof( dynamics, dynamic ), dynamic.handle );
+			result.info = info;
 		}
 	}
 	return result;
@@ -288,19 +279,18 @@ void processCollidables( Array< Entity > entries, TileGrid grid,
 					auto p = grid.coordinatesFromIndex( entry.grounded.index );
 					auto tileBounds =
 					    RectWH( p.x * TileWidth, p.y * TileHeight, TileWidth, TileHeight );
-					CollisionInfo info = {};
-					if( !testAabVsAab( entry.aab, entry.position, {0, 1}, tileBounds, 1, &info )
-					    || info.t > SafetyDistance + eps || info.t < 0 ) {
+					auto info = testAabVsAab( entry.aab, entry.position, {0, 1}, tileBounds, 1 );
+					if( !info || info.t > SafetyDistance + eps || info.t < 0 ) {
 						entry.grounded.clear();
 					}
 					break;
 				}
 				case CollidableRef::Dynamic: {
-					auto other         = getDynamicFromCollidableRef( dynamics, entry.grounded );
-					CollisionInfo info = {};
+					auto other = getDynamicFromCollidableRef( dynamics, entry.grounded );
+					CollisionInfo info;
 					if( !other
-					    || !testAabVsAab( entry.aab, entry.position, {0, 1},
-					                      translate( other->aab, other->position ), 1, &info )
+					    || !( info = testAabVsAab( entry.aab, entry.position, {0, 1},
+					                               translate( other->aab, other->position ), 1 ) )
 					    || info.t > SafetyDistance + eps || info.t < 0 ) {
 						entry.grounded.clear();
 					}
@@ -319,15 +309,14 @@ void processCollidables( Array< Entity > entries, TileGrid grid,
 							if( tile ) {
 								auto tileBounds =
 								    RectWH( x * TileWidth, y * TileHeight, TileWidth, TileHeight );
-								CollisionInfo info = {};
-								if( testAabVsAab( entry.aab, entry.position, {0, 1}, tileBounds, 1,
-								                  &info ) ) {
-									if( info.normal.y < 0 && info.t >= 0
-									    && info.t < SafetyDistance + eps ) {
-										entry.position.y += info.t - SafetyDistance;
-										entry.grounded.setTile( index );
-										return;
-									}
+								auto info = testAabVsAab( entry.aab, entry.position, {0, 1},
+								                          tileBounds, 1 );
+								if( info && info.normal.y < 0 && info.t >= 0
+								    && info.t < SafetyDistance + eps ) {
+
+									entry.position.y += info.t - SafetyDistance;
+									entry.grounded.setTile( index );
+									return;
 								}
 							}
 						}
@@ -342,16 +331,14 @@ void processCollidables( Array< Entity > entries, TileGrid grid,
 						if( &entry == &other ) {
 							continue;
 						}
-						CollisionInfo info = {};
-						if( testAabVsAab( entry.aab, entry.position, {0, 1},
-						                  translate( other.aab, other.position ), 1, &info ) ) {
-							if( info.normal.y < 0 && info.t >= 0
-							    && info.t < SafetyDistance + eps ) {
-								entry.position.y += info.t - SafetyDistance;
-								entry.grounded.setDynamic( indexof( dynamics, other ),
-								                           other.handle );
-								return;
-							}
+						auto info = testAabVsAab( entry.aab, entry.position, {0, 1},
+						                          translate( other.aab, other.position ), 1 );
+						if( info && info.normal.y < 0 && info.t >= 0
+						    && info.t < SafetyDistance + eps ) {
+
+							entry.position.y += info.t - SafetyDistance;
+							entry.grounded.setDynamic( indexof( dynamics, other ), other.handle );
+							return;
 						}
 					}
 				};

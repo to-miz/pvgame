@@ -33,7 +33,7 @@ struct SkeletonHitboxState {
 	int16 index;
 	int16 id;
 	bool8 active;
-	enum Type : int8 { Collision, Hitbox, Hurtbox } type;
+	enum Type : int8 { Collision, Hitbox, Hurtbox, Deflect, Count } type;
 };
 struct SkeletonKeyframesState {
 	int16 translation;
@@ -174,21 +174,20 @@ Array< int8 > makeIndicesArray( T& entry )
 	               "Cannot turn T into an array of int8" );
 	return makeArrayView( (int8*)&entry, sizeof( T ) / sizeof( int8 ) );
 };
-Array< int8 > makeIndicesArray( nullptr_t )
-{
-	return {};
-};
-#define GenerateMembers( animationIds, nodeIds, collisionIds, hitboxIds, hurtboxIds ) \
-	Array< int8 > getAnimationIds() { return makeIndicesArray( animationIds ); }      \
-	Array< int8 > getNodeIds() { return makeIndicesArray( nodeIds ); }                \
-	Array< int8 > getCollisionIds() { return makeIndicesArray( collisionIds ); }      \
-	Array< int8 > getHitboxIds() { return makeIndicesArray( hitboxIds ); }            \
-	Array< int8 > getHurtboxIds() { return makeIndicesArray( hurtboxIds ); }          \
-	static Array< const StringView > AnimationNames;                                  \
-	static Array< const StringView > NodeNames;                                       \
-	static Array< const StringView > CollisionNames;                                  \
-	static Array< const StringView > HitboxNames;                                     \
-	static Array< const StringView > HurtboxNames;
+Array< int8 > makeIndicesArray( nullptr_t ) { return {}; };
+#define GenerateMembers( animationIds, nodeIds, collisionIds, hitboxIds, hurtboxIds, deflectIds ) \
+	Array< int8 > getAnimationIds() { return makeIndicesArray( animationIds ); }                  \
+	Array< int8 > getNodeIds() { return makeIndicesArray( nodeIds ); }                            \
+	Array< int8 > getCollisionIds() { return makeIndicesArray( collisionIds ); }                  \
+	Array< int8 > getHitboxIds() { return makeIndicesArray( hitboxIds ); }                        \
+	Array< int8 > getHurtboxIds() { return makeIndicesArray( hurtboxIds ); }                      \
+	Array< int8 > getDeflectIds() { return makeIndicesArray( deflectIds ); }                      \
+	static Array< const StringView > AnimationNames;                                              \
+	static Array< const StringView > NodeNames;                                                   \
+	static Array< const StringView > CollisionNames;                                              \
+	static Array< const StringView > HitboxNames;                                                 \
+	static Array< const StringView > HurtboxNames;                                                \
+	static Array< const StringView > DeflectNames;
 
 struct HeroSkeletonDefinition {
 	SkeletonDefinition* definition; // if this is null, definition is not loaded
@@ -227,7 +226,7 @@ struct HeroSkeletonDefinition {
 		int8 hurtbox;
 	} hurtboxIds;
 
-	GenerateMembers( animationIds, nodeIds, collisionIds, nullptr, hurtboxIds );
+	GenerateMembers( animationIds, nodeIds, collisionIds, nullptr, hurtboxIds, nullptr );
 };
 GenerateNames( HeroSkeletonDefinition, AnimationNames, "Turn", "Landing", "Idle", "Walk",
                "JumpRising", "JumpFalling", "Wallslide", "IdleShoot", "WalkShoot",
@@ -236,6 +235,7 @@ GenerateNames( HeroSkeletonDefinition, NodeNames, "shoot_pos", "feet_pos" );
 GenerateNames( HeroSkeletonDefinition, CollisionNames, "collision" );
 GenerateEmpty( HeroSkeletonDefinition, HitboxNames );
 GenerateNames( HeroSkeletonDefinition, HurtboxNames, "hurtbox" );
+GenerateEmpty( HeroSkeletonDefinition, DeflectNames );
 
 struct WheelsSkeletonDefinition {
 	SkeletonDefinition* definition;
@@ -259,52 +259,70 @@ struct WheelsSkeletonDefinition {
 		int8 hurtbox;
 	} hurtboxIds;
 
-	GenerateMembers( animationIds, nodeIds, collisionIds, nullptr, hurtboxIds );
+	struct {
+		int8 deflect;
+	} deflectIds;
+
+	GenerateMembers( animationIds, nodeIds, collisionIds, nullptr, hurtboxIds, deflectIds );
 };
 GenerateNames( WheelsSkeletonDefinition, AnimationNames, "move", "attack", "hurt", "turn" );
 GenerateNames( WheelsSkeletonDefinition, NodeNames, "attack_origin" );
 GenerateNames( WheelsSkeletonDefinition, CollisionNames, "root" );
 GenerateEmpty( WheelsSkeletonDefinition, HitboxNames );
 GenerateNames( WheelsSkeletonDefinition, HurtboxNames, "hurtbox" );
-
-struct ProjectileSkeletonDefinition {
-	SkeletonDefinition* definition;
-	struct {
-		int8 collision;
-	} collisionIds;
-
-	struct {
-		int8 hitbox;
-	} hitboxIds;
-
-	GenerateMembers( nullptr, nullptr, collisionIds, hitboxIds, nullptr );
-};
-GenerateEmpty( ProjectileSkeletonDefinition, AnimationNames );
-GenerateEmpty( ProjectileSkeletonDefinition, NodeNames );
-GenerateNames( ProjectileSkeletonDefinition, CollisionNames, "collision" );
-GenerateNames( ProjectileSkeletonDefinition, HitboxNames, "hitbox" );
-GenerateEmpty( ProjectileSkeletonDefinition, HurtboxNames );
+GenerateNames( WheelsSkeletonDefinition, DeflectNames, "deflect" );
 
 struct EntitySkeletonTraits {
 	const SkeletonDefinition* definition;
 	int8 collisionIdsData[8];
 	int8 hitboxIdsData[8];
 	int8 hurtboxIdsData[8];
-	int8 hitboxesCounts[3];
+	int8 deflectIdsData[4];
+	int8 hitboxesCounts[SkeletonHitboxState::Count];
 
 	Array< const int8 > collisionIds() const
 	{
-		return makeArrayView( collisionIdsData, hitboxesCounts[0] );
+		return makeArrayView( collisionIdsData, hitboxesCounts[SkeletonHitboxState::Collision] );
 	};
 	Array< const int8 > hitboxIds() const
 	{
-		return makeArrayView( hitboxIdsData, hitboxesCounts[1] );
+		return makeArrayView( hitboxIdsData, hitboxesCounts[SkeletonHitboxState::Hitbox] );
 	};
 	Array< const int8 > hurtboxIds() const
 	{
-		return makeArrayView( hurtboxIdsData, hitboxesCounts[2] );
+		return makeArrayView( hurtboxIdsData, hitboxesCounts[SkeletonHitboxState::Hurtbox] );
 	};
+	Array< const int8 > deflectIds() const
+	{
+		return makeArrayView( deflectIdsData, hitboxesCounts[SkeletonHitboxState::Deflect] );
+	};
+
+	Array< const int8 > hitboxIdsByType( SkeletonHitboxState::Type type ) const
+	{
+		switch( type ) {
+			case SkeletonHitboxState::Collision: return collisionIds();
+			case SkeletonHitboxState::Hitbox: return hitboxIds();
+			case SkeletonHitboxState::Hurtbox: return hurtboxIds();
+			case SkeletonHitboxState::Deflect: return deflectIds();
+		}
+		return {};
+	}
 };
+
+StringView getEntitySkeletonDefinitionFilename( Entity::Type type )
+{
+	static const StringView EntitySkeletonDefinitionFilenames[] = {
+	    nullptr,  // type_none
+
+	    "Data/voxels/hero_animations.json",         // type_hero
+	    "Data/voxels/wheels_enemy_animations.json"  // type_wheels
+	};
+	static_assert( countof( EntitySkeletonDefinitionFilenames ) == Entity::type_count,
+	               "Invalid EntitySkeletonDefinitionFilenames" );
+
+	assert( type >= 0 && type < countof( EntitySkeletonDefinitionFilenames ) );
+	return EntitySkeletonDefinitionFilenames[type];
+}
 
 struct SkeletonSystem {
 	UArray< Skeleton* > skeletons;
@@ -313,7 +331,6 @@ struct SkeletonSystem {
 	EntitySkeletonTraits skeletonTraits[Entity::type_count];
 	HeroSkeletonDefinition hero;
 	WheelsSkeletonDefinition wheels;
-	ProjectileSkeletonDefinition projectile;
 };
 
 const EntitySkeletonTraits* const getSkeletonTraits( SkeletonSystem* system, Entity::Type type )

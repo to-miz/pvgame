@@ -1543,15 +1543,15 @@ bool imguiEditbox( StringView name, char* data, uint16* length, int32 size )
 	return false;
 }
 
-template< class T >
-bool imguiEditbox( ImGuiHandle handle, StringView name, T* value )
+template < class T >
+bool imguiEditbox( ImGuiHandle handle, StringView name, T* value, ImGuiSize size = {} )
 {
+	size = imguiMakeSize( size, ImGui->style.editboxWidth, ImGui->style.editboxHeight );
 	assert( value );
 	handle.type = ImGuiControlType::Editbox;
 	if( imguiHasFocus( handle ) ) {
 		if( imguiEditbox( handle, name, ImGui->editboxStatic, &ImGui->editboxStaticCount,
-		                  countof( ImGui->editboxStatic ), ImGui->style.editboxWidth,
-		                  ImGui->style.editboxHeight ) ) {
+		                  countof( ImGui->editboxStatic ), size.width, size.height ) ) {
 			StringView view = {ImGui->editboxStatic, ImGui->editboxStaticCount};
 			*value          = convert_to< T >( view );
 			return true;
@@ -1560,8 +1560,8 @@ bool imguiEditbox( ImGuiHandle handle, StringView name, T* value )
 	} else {
 		char buffer[100];
 		auto len = snprint( buffer, countof( buffer ), "{}", *value );
-		auto result = imguiEditbox( handle, name, buffer, &len, countof( buffer ),
-		                            ImGui->style.editboxWidth, ImGui->style.editboxHeight );
+		auto result =
+		    imguiEditbox( handle, name, buffer, &len, countof( buffer ), size.width, size.height );
 		if( imguiHasFocus( handle ) ) {
 			memcpy( ImGui->editboxStatic, buffer, len );
 			ImGui->editboxStaticCount = len;
@@ -1597,10 +1597,10 @@ bool imguiEditbox( ImGuiHandle handle, T* value,
 	}
 }
 template< class T >
-bool imguiEditbox( StringView name, T* value )
+bool imguiEditbox( StringView name, T* value, ImGuiSize size = {} )
 {
 	auto handle = imguiMakeHandle( value, ImGuiControlType::Editbox );
-	return imguiEditbox( handle, name, value );
+	return imguiEditbox( handle, name, value, size );
 }
 template < class T >
 bool imguiEditbox( T* value, const PrintFormat& initialFormatting = defaultPrintFormat() )

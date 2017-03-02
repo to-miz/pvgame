@@ -118,6 +118,8 @@ global_var string_logger* GlobalDebugLogger   = nullptr;
 #include "Core/FixedSizeAllocator.cpp"
 #include "tm_bezier_wrapper.cpp"
 
+#include "Core/MemoryWriter.cpp"
+
 #include "GameConstants.h"
 
 struct DebugValues;
@@ -328,6 +330,7 @@ SkeletonEventType convert_to< SkeletonEventType >( StringView str, SkeletonEvent
 	return result;
 }
 
+#include "Editor/Common/MessageBox.cpp"
 #include "Editor/TexturePack/TexturePack.h"
 #include "Editor/Animator/Animator.h"
 #include "Editor/Room/RoomEditor.h"
@@ -1441,104 +1444,149 @@ static void updateGame( AppData* app, GameInputs* inputs, bool focus, float dt )
 	{
 		auto hitboxSystem = &game->hitboxSystem;
 		auto pairs        = hitboxSystem->hitboxPairs();
-		auto testHit      = [&]( Entity* entity, EntityHandle attacker, rectfarg hitbox,
-		                    vec2arg position, vec2arg delta, rectf* hitBounds ) {
+
+		auto ignoreHit = []( UArray< HitboxSystem::HitboxPair > pairs, EntityHandle attacker,
+		                     EntityHandle defender ) {
+			return (bool)find_index_if( pairs, [=]( const auto& entry ) {
+				return entry.attacker == attacker && entry.defender == defender;
+			} );
+		};
+
+		auto hurtEntity = []( EntityHandle attacker, Entity* entity,
+		                      UArray< HitboxSystem::HitboxPair >* pairs, vec2 normal ) {
+			if( !entity->flags.deflects && !entity->flags.invincible ) {
+				entity->flags.hurt = true;
+				entity->hurtNormal = normal;
+				pairs->push_back( {attacker, entity->handle} );
+			}
+		};
+
+		auto testHit = [&]( Entity* entity, SkeletonHitboxState::Type type, EntityHandle attacker,
+		                    rectfarg hitbox, vec2arg position, vec2arg delta, rectf* hitBounds ) {
+			CollisionInfo result = InvalidCollisionInfo;
 			if( entity->skeleton ) {
-				auto defender     = entity->handle;
-				auto existingPair = find_index_if( pairs, [=]( const auto& entry ) {
-					return entry.attacker == attacker && entry.defender == defender;
-				} );
-				if( !existingPair ) {
+				auto defender = entity->handle;
+				if( !ignoreHit( pairs, attacker, defender ) ) {
 					auto otherSkeletonTraits =
 					    getSkeletonTraits( &game->skeletonSystem, entity->type );
 					auto combinedDelta = delta - entity->positionDelta;
-					FOR( hurtboxId : otherSkeletonTraits->hurtboxIds() ) {
-						auto otherHurtbox = getHitboxAbsolute( entity->skeleton, hurtboxId );
-						if( !otherHurtbox.second ) {
+					FOR( defendBoundsId : otherSkeletonTraits->hitboxIdsByType( type ) ) {
+						auto defendBounds = getHitboxAbsolute( entity->skeleton, defendBoundsId );
+						if( !defendBounds.second ) {
 							continue;
 						}
-						auto otherBounds = translate( otherHurtbox.first, -entity->positionDelta );
-						CollisionInfo info;
-						if( testAabVsAab( hitbox, position, combinedDelta, otherBounds, 1,
-						                  &info ) ) {
-							if( !entity->flags.deflects && !entity->flags.invincible ) {
-								entity->flags.hurt = true;
-								entity->hurtNormal = info.normal;
-								pairs.push_back( {attacker, defender} );
-							}
-
+						auto otherBounds = translate( defendBounds.first, -entity->positionDelta );
+						result = testAabVsAab( hitbox, position, combinedDelta, otherBounds, 1 );
+						if( result ) {
 							if( hitBounds ) {
 								*hitBounds = otherBounds;
 							}
-							return true;
+							break;
 						}
 					}
 				}
 			}
-			return false;
+			return result;
 		};
 		// clear hurt flags
 		auto staticEntries = game->entitySystem.staticEntries();
 		FOR( entity : staticEntries ) {
 			entity.flags.hurt = false;
 		}
-		for( auto i = 0, count = staticEntries.size(); i < count; ++i ) {
-			auto entity = &staticEntries[i];
-			if( entity->skeleton ) {
-				auto skeletonTraits = getSkeletonTraits( &game->skeletonSystem, entity->type );
-				auto delta          = entity->positionDelta;
-				auto prevPosition   = entity->position - entity->positionDelta;
+		FOR( entity : staticEntries ) {
+			if( entity.skeleton ) {
+				auto skeletonTraits = getSkeletonTraits( &game->skeletonSystem, entity.type );
+				auto delta          = entity.positionDelta;
+				auto prevPosition   = entity.position - entity.positionDelta;
 				FOR( hitboxId : skeletonTraits->hitboxIds() ) {
-					auto hitbox = getHitboxRelative( entity->skeleton, hitboxId );
+					auto hitbox = getHitboxRelative( entity.skeleton, hitboxId );
 					if( !hitbox.second ) {
 						continue;
 					}
 					FOR( other : staticEntries ) {
-						if( &other == entity || other.team == entity->team
+						if( &other == &entity || other.team == entity.team
 						    || other.flags.deathFlag ) {
 							continue;
 						}
-						testHit( &other, entity->handle, hitbox.first, prevPosition, delta,
-						         nullptr );
+						auto hit = testHit( &other, SkeletonHitboxState::Hurtbox, entity.handle,
+						                    hitbox.first, prevPosition, delta, nullptr );
+						if( hit ) {
+							hurtEntity( entity.handle, &other, &pairs, hit.normal );
+						}
 					}
 				}
 			}
 		}
 
 		FOR( entry : game->projectileSystem.entries ) {
-			if( entry.durability <= 0 ) {
+			if( entry.durability <= 0 || entry.deflected || !entry.aliveCountdown ) {
 				continue;
 			}
-			auto data = getProjectileData( &game->projectileSystem, entry.type );
+			auto data          = getProjectileData( &game->projectileSystem, entry.type );
 			const auto& hitbox = data->hitbox;
 			auto delta         = entry.positionDelta;
 			auto prevPosition  = entry.position - entry.positionDelta;
-			FOR( other : staticEntries ) {
-				if( other.team == entry.team || other.flags.deathFlag || other.flags.invincible ) {
-					continue;
+
+			while( entry.durability > 0 && entry.aliveCountdown && !entry.deflected ) {
+				auto deflect       = false;
+				rectf hitBounds    = {};
+				CollisionInfo info = InvalidCollisionInfo;
+				Entity* hitEntity  = nullptr;
+
+				FOR( other : staticEntries ) {
+					if( other.team == entry.team || other.flags.deathFlag
+					    || other.flags.invincible ) {
+						continue;
+					}
+					if( other.flags.hurt ) {
+						// FIXME: find a better solution for not hurting hurt entities multiple
+						// times. If an entity turns invincible after a hit, removing the continue
+						// means they might still get hit multiple times, if the hits all happen on
+						// the exact same frame because invincibility only starts after hit
+						// detection
+						continue;
+					}
+					// find a hit with minimal t value
+					{
+						rectf bounds = {};
+						auto hit     = testHit( &other, SkeletonHitboxState::Hurtbox, entry.handle,
+						                    hitbox, prevPosition, delta, &bounds );
+						if( hit && hit.t < info.t ) {
+							info      = hit;
+							deflect   = false;
+							hitBounds = bounds;
+							hitEntity = &other;
+						};
+					}
+					{
+						rectf bounds = {};
+						auto hit     = testHit( &other, SkeletonHitboxState::Deflect, entry.handle,
+						                    hitbox, prevPosition, delta, &bounds );
+						// if a hit and a deflect registered, prefer deflect
+						if( hit && hit.t <= info.t + Float::Epsilon ) {
+							info      = hit;
+							deflect   = true;
+							hitBounds = bounds;
+							hitEntity = &other;
+						};
+					}
 				}
-				if( other.flags.hurt ) {
-					// FIXME: find a better solution for not hurting hurt entities multiple
-					// times. If an entity turns invincible after a hit, removing the continue
-					// means they might still get hit multiple times, if the hits all happen on
-					// the exact same frame because invincibility only starts after hit
-					// detection
-					continue;
-				}
-				rectf hitBounds = {};
-				if( testHit( &other, entry.handle, hitbox, prevPosition, delta, &hitBounds ) ) {
-					if( other.flags.deflects ) {
+
+				if( hitEntity ) {
+					if( deflect ) {
 						entry.deflected = true;
 						entry.velocity  = safeNormalize( prevPosition - center( hitBounds ) )
 						                 * length( entry.velocity );
 					} else {
+						hurtEntity( entry.handle, hitEntity, &pairs, info.normal );
 						--entry.durability;
 						if( entry.durability <= 0 ) {
 							entry.aliveCountdown = {};
 						}
 					}
+				} else {
 					break;
-				};
+				}
 			}
 		}
 		hitboxSystem->setPairsCount( pairs.size() );

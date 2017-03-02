@@ -23,7 +23,7 @@
 	#define strnicmp _strnicmp
 #endif
 #define TMUT_OWN_TYPES
-#define TMUT_SAFE_COUNTOF_ALT
+#define TMUT_SAFE_COUNTOF
 typedef int32 tmut_size_t;
 typedef uintptr tmut_uintptr;
 

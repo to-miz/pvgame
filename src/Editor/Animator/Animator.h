@@ -22,6 +22,7 @@ struct AnimatorAsset {
 		type_collision,
 		type_hitbox,
 		type_hurtbox,
+		type_deflect,
 		type_emitter,
 	} type = type_none;
 
@@ -30,6 +31,7 @@ struct AnimatorAsset {
 		rectf collision;
 		rectf hitbox;
 		rectf hurtbox;
+		rectf deflect;
 		AnimatorParticleEmitter emitter;
 	};
 	int16 id = -1;
@@ -235,8 +237,9 @@ typedef std::unique_ptr< AnimatorAsset > UniqueAnimatorAsset;
 typedef std::vector< std::unique_ptr< AnimatorNode > > AnimatorNodes;
 typedef std::vector< AnimatorAnimation > AnimatorAnimations;
 
-struct AppData;
-typedef void AnimatorMessageBoxAction( AppData* );
+struct MessageBoxToDeleteData {
+	AnimatorAnimations::iterator toDelete;
+};
 
 struct AnimatorState {
 	ImmediateModeGui gui;
@@ -299,21 +302,8 @@ struct AnimatorState {
 
 	FilenameString filename;
 
-	struct MessageBox {
-		int32 container;
-		enum { OkCancel, YesNoCancel } type;
-		short_string< 100 > text;
-		short_string< 50 > title;
-
-		struct {
-			AnimatorMessageBoxAction* onYes;
-			AnimatorMessageBoxAction* onNo;
-
-			struct {
-				AnimatorAnimations::iterator toDelete;
-			} data;
-		} action;
-	} messageBox;
+	EditorCommon::MessageBox messageBox;
+	MessageBoxToDeleteData toDeleteData;
 };
 
 #endif  // _ANIMATOR_H_INCLUDED_

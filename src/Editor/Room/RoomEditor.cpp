@@ -3,6 +3,193 @@ namespace RoomEditor
 
 const float MinScale = 0;
 const float MaxScale = 1;
+const char* const Filter = "Room\0*.room\0All\0*.*\0";
+
+Room toRoom( TilesPool* pool, View* view )
+{
+	Room result    = {};
+	result.tileSet = view->tileSet;
+	auto data      = pool->data;
+
+	for( auto i = 0; i < RL_Count; ++i ) {
+		auto src  = &view->room.layers[i];
+		auto dest = &result.layers[i];
+
+		dest->grid = makeGridView( data, src->width, src->height );
+		for( auto y = 0; y < src->height; ++y ) {
+			copy( dest->grid.ptr + y * src->width, src->data + y * MaxWidth, src->width );
+		}
+		data += src->width * src->height;
+	}
+	return result;
+}
+Room makeRoom( TilesPool* pool, int32 width, int32 height )
+{
+	Room result = {};
+	auto data   = pool->data;
+	FOR( layer : result.layers ) {
+		layer.grid = makeGridView( data, width, height );
+		data += width * height;
+	}
+	return result;
+}
+void fromRoom( View* view, const Room& room )
+{
+	for( auto i = 0; i < RL_Count; ++i ) {
+		auto src  = &room.layers[i].grid;
+		auto dest = &view->room.layers[i];
+
+		dest->width  = src->width;
+		dest->height = src->height;
+		for( auto y = 0; y < src->height; ++y ) {
+			copy( dest->data + y * MaxWidth, src->data() + y * src->width, src->width );
+		}
+	}
+	view->room.background = room.background;
+}
+
+void clear( View* view )
+{
+	FOR( layer : view->room.layers ) {
+		zeroMemory( layer.data, countof( layer.data ) );
+		layer.width  = 16;
+		layer.height = 16;
+	}
+	view->room.background = {};
+	view->filename.clear();
+	view->flags &= ~View::UnsavedChanges;
+}
+void setUnsavedChanges( View* view )
+{
+	view->flags |= View::UnsavedChanges;
+}
+
+void save( State* editor, View* view, StringView filename )
+{
+	auto allocator = GlobalScrap;
+	TEMPORARY_MEMORY_BLOCK( allocator ) {
+		auto room = toRoom( &editor->tilePool, view );
+		if( !room.tileSet ) {
+			LOG( ERROR, "Can't save file {}: No tile set defined", filename );
+			return;
+		}
+		auto writer = makeMemoryWriter( allocator );
+
+		write( &writer, "ROOM" );
+		writePascalString( &writer, room.tileSet->voxels.filename );
+		write( &writer, &room.background, 1 );
+		write( &writer, room.layers[RL_Main].grid.width );
+		write( &writer, room.layers[RL_Main].grid.height );
+		FOR( layer : room.layers ) {
+			write( &writer, makeArrayView( layer.grid ) );
+		}
+
+		GlobalPlatformServices->writeBufferToFile( filename, writer.data(), writer.size() );
+		view->filename = filename;
+		view->flags &= ~View::UnsavedChanges;
+	}
+}
+void load( State* editor, View* view, StringView filename )
+{
+	auto allocator = GlobalScrap;
+	TEMPORARY_MEMORY_BLOCK( allocator ) {
+		auto data = readFile( allocator, filename );
+		if( data.size() ) {
+			auto reader = makeMemoryReader( data.data(), data.size() );
+
+			if( !read( &reader, "ROOM" ) ) {
+				LOG( ERROR, "{}: Invalid room file", filename );
+				return;
+			}
+			FilenameString voxelsFilename;
+			readPascalString( &reader, voxelsFilename );
+			auto background = read< RoomBackgroundType >( &reader );
+			auto width      = read< int32 >( &reader );
+			auto height     = read< int32 >( &reader );
+			if( !width || !height ) {
+				LOG( ERROR, "{}: Invalid room file", filename );
+				return;
+			}
+
+			auto room = makeRoom( &editor->tilePool, width, height );
+			FOR( layer : room.layers ) {
+				if( !read( &reader, makeArrayView( layer.grid ) ) ) {
+					LOG( ERROR, "{}: Invalid room file", filename );
+					return;
+				}
+			}
+
+			room.background = background;
+			fromRoom( view, room );
+
+			view->filename = filename;
+		}
+	}
+}
+
+FilenameString getSaveFilename()
+{
+	auto result = ::getSaveFilename( Filter, nullptr );
+	if( result.size() && !equalsIgnoreCase( getFilenameExtension( result ), ".room" ) ) {
+		result.append( ".room" );
+	}
+	return result;
+}
+bool menuSave( AppData* app )
+{
+	assert( app );
+	auto editor = &app->roomEditorState;
+	auto view   = &editor->view;
+
+	if( !view->filename.size() ) {
+		view->filename = getSaveFilename();
+	}
+	if( view->filename.size() ) {
+		save( editor, view, view->filename );
+	}
+	return view->filename.size() != 0;
+}
+bool menuSaveAs( AppData* app )
+{
+	assert( app );
+	auto editor = &app->roomEditorState;
+	auto view   = &editor->view;
+
+	auto filename = getSaveFilename();
+	if( filename.size() ) {
+		save( editor, view, filename );
+	}
+	return view->filename.size() != 0;
+}
+bool menuOpen( AppData* app )
+{
+	auto editor = &app->roomEditorState;
+	auto view   = &editor->view;
+
+	auto saveAndOpen = []( AppData* app ) {
+		if( menuSave( app ) ) {
+			menuOpen( app );
+		}
+	};
+
+	auto open = []( AppData* app ) {
+		auto view = &app->roomEditorState.view;
+		view->flags &= ~View::UnsavedChanges;
+		if( !menuOpen( app ) ) {
+			view->flags |= View::UnsavedChanges;
+		}
+	};
+
+	if( view->flags & View::UnsavedChanges ) {
+		showMessageBox( &editor->messageBox, "Save Changes?", "UnsavedChanges", saveAndOpen, open );
+	} else {
+		auto filename = getOpenFilename( Filter, nullptr, false );
+		if( filename.size() ) {
+			load( editor, view, filename );
+		}
+	}
+	return view->filename.size() != 0;
+}
 
 void clearIntermediateRoom( State* editor )
 {
@@ -31,6 +218,7 @@ void resizeRoom( State* editor, int32 width, int32 height )
 		editor->intermediateRoom.layers[i].width  = width;
 		editor->intermediateRoom.layers[i].height = height;
 	}
+	setUnsavedChanges( view );
 }
 
 void doSidebar( AppData* app, GameInputs* inputs, rectfarg rect )
@@ -105,12 +293,12 @@ void doSidebar( AppData* app, GameInputs* inputs, rectfarg rect )
 
 		imguiText( "Room Size" );
 		imguiSameLine( 2 );
-		if( imguiEditbox( "Width", &view->room.layers[RL_Main].width ) ) {
+		if( imguiEditbox( "Width", &view->room.layers[RL_Main].width, imguiRatio( 0.2f, 0 ) ) ) {
 			auto w = view->room.layers[RL_Main].width;
 			w = min( w, MaxWidth );
 			resizeRoom( editor, w, view->room.layers[RL_Main].height );
 		}
-		if( imguiEditbox( "Height", &view->room.layers[RL_Main].height ) ) {
+		if( imguiEditbox( "Height", &view->room.layers[RL_Main].height, imguiRatio( 0.2f, 0 ) ) ) {
 			auto h = view->room.layers[RL_Main].height;
 			h = min( h, MaxHeight );
 			resizeRoom( editor, view->room.layers[RL_Main].width, h );
@@ -118,31 +306,15 @@ void doSidebar( AppData* app, GameInputs* inputs, rectfarg rect )
 		imguiEndDropGroup();
 	}
 
-#ifdef GAME_DEBUG
 	if( imguiButton( "Play" ) ) {
 		// copy room data into game room and switch focus
-		auto gameRoom = &app->gameState.room;
-		auto pool     = &editor->playTilePool;
-		auto data     = pool->data;
-
-		for( auto i = 0; i < RL_Count; ++i ) {
-			auto src  = &view->room.layers[i];
-			auto dest = &gameRoom->layers[i];
-
-			dest->grid = makeGridView( data, src->width, src->height );
-			for( auto y = 0; y < src->height; ++y ) {
-				copy( dest->grid.ptr + y * src->width, src->data + y * MaxWidth, src->width );
-			}
-			data += src->width * src->height;
-		}
-
+		app->gameState.room                        = toRoom( &editor->tilePool, view );
 		app->gameState.player->grounded            = {};
 		app->gameState.player->wallslideCollidable = {};
 		app->gameState.player->lastCollision       = {};
 		setSpatialState( app->gameState.player, SpatialState::Airborne );
 		app->focus = AppFocus::Game;
 	}
-#endif
 }
 
 void doMapping( AppData* app, GameInputs* inputs, rectfarg rect )
@@ -282,6 +454,7 @@ void doMapping( AppData* app, GameInputs* inputs, rectfarg rect )
 			}
 
 			placeTiles( room, tile );
+			setUnsavedChanges( view );
 		};
 
 		processMouse( KC_RButton, InvalidGameTile, {} );
@@ -387,8 +560,10 @@ void doRoomEditor( AppData* app, GameInputs* inputs, bool focus, float dt )
 		*gui = defaultImmediateModeGui();
 		imguiLoadDefaultStyle( gui, &app->platform, font );
 
-		editor->fileMenu = imguiGenerateContainer( gui, {}, ImGuiVisibility::Hidden );
-		editor->viewMenu = imguiGenerateContainer( gui, {}, ImGuiVisibility::Hidden );
+		editor->fileMenu             = imguiGenerateContainer( gui, {}, ImGuiVisibility::Hidden );
+		editor->viewMenu             = imguiGenerateContainer( gui, {}, ImGuiVisibility::Hidden );
+		editor->messageBox.container =
+		    imguiGenerateContainer( gui, {0, 0, 300, 10}, ImGuiVisibility::Hidden );
 
 		{
 			StringPool pool = {beginVector( allocator, char )};
@@ -442,9 +617,37 @@ void doRoomEditor( AppData* app, GameInputs* inputs, bool focus, float dt )
 
 	imguiEndColumn( &layout );
 
+	if( isHotkeyPressed( inputs, KC_S, KC_Control ) ) {
+		menuSave( app );
+	}
+	if( isHotkeyPressed( inputs, KC_S, KC_Control, KC_Shift ) ) {
+		menuSaveAs( app );
+	}
+
 	if( imguiContextMenu( editor->fileMenu ) ) {
-		imguiContextMenuEntry( "New" );
-		imguiContextMenuEntry( "Open" );
+		if( imguiContextMenuEntry( "New" ) ) {
+			auto saveAndClear = []( AppData* app ) {
+				if( menuSave( app ) ) {
+					clear( &app->roomEditorState.view );
+				}
+			};
+			auto clear = []( AppData* app ) { RoomEditor::clear( &app->roomEditorState.view ); };
+			if( view->flags & View::UnsavedChanges ) {
+				showMessageBox( &editor->messageBox, "Save changes?", "Unsaved changes",
+				                saveAndClear, clear );
+			} else {
+				clear( app );
+			}
+		}
+		if( imguiContextMenuEntry( "Open" ) ) {
+			menuOpen( app );
+		}
+		if( imguiContextMenuEntry( "Save" ) ) {
+			menuSave( app );
+		}
+		if( imguiContextMenuEntry( "Save As" ) ) {
+			menuSaveAs( app );
+		}
 		imguiEndContainer();
 	}
 
@@ -455,6 +658,8 @@ void doRoomEditor( AppData* app, GameInputs* inputs, bool focus, float dt )
 		                   View::DrawSelectedLayersOnly );
 		imguiEndContainer();
 	}
+
+	handleMessageBox( app, inputs, editor->messageBox );
 
 	imguiUpdate( dt );
 	imguiFinalize();
