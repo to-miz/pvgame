@@ -1,8 +1,8 @@
 namespace RoomEditor
 {
 
-const float MinScale = 0;
-const float MaxScale = 1;
+const float MinScale     = 0;
+const float MaxScale     = 1;
 const char* const Filter = "Room\0*.room\0All\0*.*\0";
 
 Room toRoom( TilesPool* pool, View* view )
@@ -58,6 +58,10 @@ void clear( View* view )
 	view->room.background = {};
 	view->filename.clear();
 	view->flags &= ~View::UnsavedChanges;
+	FOR( entity : view->entities ) {
+		deleteSkeleton( entity.skeleton );
+	}
+	view->entities.clear();
 }
 void setUnsavedChanges( View* view )
 {
@@ -191,6 +195,13 @@ bool menuOpen( AppData* app )
 	return view->filename.size() != 0;
 }
 
+void updateIntermediateRoom( State* editor, View* view )
+{
+	for( int32 i : rangei{0, RL_Count} ) {
+		editor->intermediateRoom.layers[i].width  = view->room.layers[i].width;
+		editor->intermediateRoom.layers[i].height = view->room.layers[i].height;
+	}
+}
 void clearIntermediateRoom( State* editor )
 {
 	FOR( layer : editor->intermediateRoom.layers ) {
@@ -221,6 +232,36 @@ void resizeRoom( State* editor, int32 width, int32 height )
 	setUnsavedChanges( view );
 }
 
+vec2 gridPosToEntityPos( vec2i gridPos )
+{
+	using namespace GameConstants;
+	vec2 position = {gridPos.x * TileWidth + TileWidth * 0.5f, gridPos.y * TileHeight + TileHeight};
+	return position;
+}
+
+void playRoom( AppData* app, View* view )
+{
+	auto editor = &app->roomEditorState;
+	auto game   = &app->gameState;
+
+	restartGame( game );
+	// copy room data into game room and switch focus
+	game->room                        = toRoom( &editor->tilePool, view );
+	game->player->grounded            = {};
+	game->player->wallslideCollidable = {};
+	game->player->lastCollision       = {};
+	setSpatialState( game->player, SpatialState::Airborne );
+
+	FOR( entity : view->entities ) {
+		auto position = gridPosToEntityPos( entity.position );
+		auto handle   = addEntityHandle( &game->entityHandles );
+		assert( entity.type != Entity::type_none );
+		addEntity( &game->entitySystem, &game->skeletonSystem, handle, entity.type, position );
+	}
+
+	app->focus = AppFocus::Game;
+}
+
 void doSidebar( AppData* app, GameInputs* inputs, rectfarg rect )
 {
 	auto editor   = &app->roomEditorState;
@@ -235,15 +276,18 @@ void doSidebar( AppData* app, GameInputs* inputs, rectfarg rect )
 	if( imguiBeginDropGroup( "Tools", &editor->flags, State::ToolsExpanded ) ) {
 		imguiSameLine( 2 );
 		if( imguiPushButton( "Select", editor->mouseMode == MouseMode::Select, imguiRatio() ) ) {
-			editor->mouseMode = MouseMode::Place;
+			editor->mouseMode = MouseMode::Select;
 		}
 		if( imguiPushButton( "Place", editor->mouseMode == MouseMode::Place, imguiRatio() ) ) {
 			editor->mouseMode = MouseMode::Place;
 		}
-		imguiSameLine( 1 );
+		imguiSameLine( 2 );
 		if( imguiPushButton( "Place Rectangular", editor->mouseMode == MouseMode::PlaceRectangular,
-		                     imguiRatio( 0.5f, 0 ) ) ) {
+		                     imguiRatio() ) ) {
 			editor->mouseMode = MouseMode::PlaceRectangular;
+		}
+		if( imguiPushButton( "Entity", editor->mouseMode == MouseMode::Entity, imguiRatio() ) ) {
+			editor->mouseMode = MouseMode::Entity;
 		}
 
 		auto listboxSize = imguiSize( imgui::Ratio{1}, imgui::Absolute{50} );
@@ -252,25 +296,70 @@ void doSidebar( AppData* app, GameInputs* inputs, rectfarg rect )
 	}
 
 	if( imguiBeginDropGroup( "Tileset", &editor->flags, State::TilesetExpanded ) ) {
-		imguiText( "Tiles" );
-		auto listboxSize = imguiSize( imgui::Ratio{1}, imgui::Absolute{100} );
-		if( auto tileSet = view->tileSet ) {
-			ImGuiTextGetter< VoxelCollection::Animation > getter =
-			    []( const auto& entry ) -> StringView { return entry.name; };
-			auto listboxHandle = imguiMakeHandle( &editor->tilesScrollPos );
-			int32 index        = view->placingTile.frames.min;
-			auto listboxRect   = imguiAddItem( listboxSize.width, listboxSize.height );
-			if( imguiListboxSingleSelect( listboxHandle, &editor->tilesScrollPos,
-			                              tileSet->voxels.animations, &index, listboxRect, getter,
-			                              false ) ) {
-				view->placingTile.frames.min = auto_truncate( index );
-				view->placingTile.frames.max = view->placingTile.frames.min + 1;
+		if( editor->mouseMode != MouseMode::Entity ) {
+			imguiText( "Tiles" );
+			auto tilesRectSize = imguiSize( imgui::Ratio{1}, imgui::Absolute{400} );
+			auto scrollable    = imguiBeginScrollableRegion(
+			    &editor->tilesScollableRegion, tilesRectSize.width, tilesRectSize.height );
+
+			auto handle = imguiMakeHandle( &editor->tilesScollableRegion );
+			renderer->color = Color::White;
+			/*setTexture( renderer, 0, null );
+			addRenderCommandSingleQuad( renderer, scrollable.inner );*/
+
+			if( auto tileSet = view->tileSet ) {
+				setTexture( renderer, 0, tileSet->voxels.texture );
+				auto thumbRect = translate( rectf{0, 0, 32, 32}, scrollable.inner.leftTop );
+				MESH_STREAM_BLOCK( stream, renderer ) {
+					for( int32 i : rangei{0, tileSet->voxels.animations.size()} ) {
+						auto& animation = tileSet->voxels.animations[i];
+						if( animation.range ) {
+							auto range = Range< uint8 >( animation.range );
+							if( isKeyPressed( inputs, KC_LButton )
+							    && isPointInside( thumbRect, inputs->mouse.position )
+							    && imguiIsHover( handle ) ) {
+
+								imguiFocus( handle );
+								view->placingTile.frames = range;
+							}
+
+							stream->color = ( view->placingTile.frames == range )
+							                    ? ( 0xFF808080 )
+							                    : ( Color::White );
+
+							auto frame      = &tileSet->voxels.frameInfos[animation.range.min];
+							auto& texCoords = frame->textureMap.entries[VF_Front].texCoords;
+							pushQuad( stream, thumbRect, 0, texCoords );
+
+							thumbRect = translate( thumbRect, 32, 0 );
+							if( thumbRect.right >= scrollable.inner.right ) {
+								thumbRect = RectSetLeft( thumbRect, scrollable.inner.left );
+								thumbRect = translate( thumbRect, 0, 32 );
+							}
+						}
+					}
+				}
+			}
+
+			imguiEndScrollableRegion( &editor->tilesScollableRegion, &scrollable );
+		} else {
+			imguiText( "Entities" );
+			auto listboxSize = imguiSize( imgui::Ratio{1}, imgui::Absolute{100} );
+			if( auto tileSet = view->tileSet ) {
+				auto listboxHandle = imguiMakeHandle( &editor->entitiesScrollPos );
+				int32 index        = view->placingEntity;
+				auto listboxRect   = imguiAddItem( listboxSize.width, listboxSize.height );
+				if( imguiListboxSingleSelect( listboxHandle, &editor->entitiesScrollPos,
+				                              makeArrayView( EntityTypeNames ), &index, listboxRect,
+				                              false ) ) {
+					view->placingEntity = (EntityType)index;
+				}
 			}
 		}
 
-		listboxSize                             = imguiSize( imgui::Ratio{1}, imgui::Absolute{60} );
+		auto listboxSize                        = imguiSize( imgui::Ratio{1}, imgui::Absolute{60} );
 		static ImGuiListboxItem RotationNames[] = {{"0"}, {"90"}, {"180"}, {"270"}};
-		auto names                                  = makeArrayView( RotationNames );
+		auto names                              = makeArrayView( RotationNames );
 		FOR( entry : names ) {
 			entry.selected = false;
 		}
@@ -307,13 +396,7 @@ void doSidebar( AppData* app, GameInputs* inputs, rectfarg rect )
 	}
 
 	if( imguiButton( "Play" ) ) {
-		// copy room data into game room and switch focus
-		app->gameState.room                        = toRoom( &editor->tilePool, view );
-		app->gameState.player->grounded            = {};
-		app->gameState.player->wallslideCollidable = {};
-		app->gameState.player->lastCollision       = {};
-		setSpatialState( app->gameState.player, SpatialState::Airborne );
-		app->focus = AppFocus::Game;
+		playRoom( app, view );
 	}
 }
 
@@ -457,8 +540,54 @@ void doMapping( AppData* app, GameInputs* inputs, rectfarg rect )
 			setUnsavedChanges( view );
 		};
 
-		processMouse( KC_RButton, InvalidGameTile, {} );
-		processMouse( KC_LButton, view->placingTile, view->placingTile );
+		if( editor->mouseMode != MouseMode::Entity ) {
+			processMouse( KC_RButton, InvalidGameTile, {} );
+			processMouse( KC_LButton, view->placingTile, view->placingTile );
+		} else {
+			bool placeEntity  = false;
+			EntityType type = {};
+			if( isKeyDown( inputs, KC_LButton ) ) {
+				if( isKeyPressed( inputs, KC_LButton ) ) {
+					placeEntity = true;
+					type = view->placingEntity;
+				} else {
+					placeEntity = editor->selectionStart != gridPos;
+				}
+				editor->selectionStart = gridPos;
+			}
+			if( isKeyDown( inputs, KC_RButton ) ) {
+				if( isKeyPressed( inputs, KC_RButton ) ) {
+					placeEntity = true;
+				} else {
+					placeEntity = editor->selectionStart != gridPos;
+				}
+				editor->selectionStart = gridPos;
+			}
+
+			if( placeEntity ) {
+				if( auto index = find_index_if( view->entities, [gridPos]( const auto& entry ) {
+					    return entry.position == gridPos;
+					} ) ) {
+
+					auto entry = &view->entities[index.get()];
+					if( entry->type != type ) {
+						if( entry->skeleton ) {
+							deleteSkeleton( entry->skeleton );
+							entry->skeleton = nullptr;
+						}
+						if( type != Entity::type_none ) {
+							entry->type = type;
+							entry->skeleton = makeSkeleton( *editor->definitions[type] );
+						} else {
+							unordered_erase( view->entities, view->entities.begin() + index.get() );
+						}
+					}
+				} else if( type != Entity::type_none ) {
+					view->entities.push_back(
+					    {type, gridPos, makeSkeleton( *editor->definitions[type] )} );
+				}
+			}
+		}
 	}
 
 	// process mouse wheel
@@ -511,6 +640,14 @@ void doMapping( AppData* app, GameInputs* inputs, rectfarg rect )
 			}
 		}
 		popMatrix( matrixStack );
+
+		// render entities
+		FOR( entity : view->entities ) {
+			auto position = gameToScreen( gridPosToEntityPos( entity.position ) );
+			setTransform( entity.skeleton, matrixTranslation( Vec3( position, 0 ) ) );
+			update( entity.skeleton, nullptr, 0 );
+			render( renderer, entity.skeleton );
+		}
 
 		renderBackground( renderer, view->room.background );
 	}
@@ -565,6 +702,16 @@ void doRoomEditor( AppData* app, GameInputs* inputs, bool focus, float dt )
 		editor->messageBox.container =
 		    imguiGenerateContainer( gui, {0, 0, 300, 10}, ImGuiVisibility::Hidden );
 
+		// TODO: better way of getting to SkeletonSystem without digging through an unrelated
+		// subsystem
+		{
+			auto skeletonSystem = &app->gameState.skeletonSystem;
+			for( auto i = 0; i < Entity::type_count; ++i ) {
+				editor->definitions[i] =
+				    getSkeletonTraits( skeletonSystem, (EntityType)i )->definition;
+			}
+		}
+
 		{
 			StringPool pool = {beginVector( allocator, char )};
 
@@ -583,6 +730,8 @@ void doRoomEditor( AppData* app, GameInputs* inputs, bool focus, float dt )
 
 		editor->initialized = true;
 	}
+
+	updateIntermediateRoom( editor, view );
 
 	renderer->color      = Color::White;
 	renderer->clearColor = 0xFF1B2B34;

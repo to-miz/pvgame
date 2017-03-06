@@ -1,6 +1,7 @@
 namespace RoomEditor
 {
 using namespace EditorCommon;
+typedef ::Entity::Type EntityType;
 
 const int32 MaxWidth  = 64;
 const int32 MaxHeight = 64;
@@ -34,9 +35,8 @@ struct View {
 	} room;
 
 	struct Entity {
-		::Entity::Type type;
-		int32 x;
-		int32 y;
+		EntityType type;
+		vec2i position;
 		Skeleton* skeleton;
 	};
 	std::vector< Entity > entities;
@@ -53,8 +53,9 @@ struct View {
 	};
 	uint32 flags = DrawGrid;
 
-	TileSet* tileSet = nullptr;
-	GameTile placingTile = {};
+	TileSet* tileSet           = nullptr;
+	GameTile placingTile       = {};
+	EntityType placingEntity = {};
 
 	ImGuiListboxItem layers[RL_Count];
 	FilenameString filename;
@@ -70,7 +71,8 @@ struct State {
 	int32 viewMenu;
 	float layersScrollPos;
 	float rotationScrollPos;
-	float tilesScrollPos;
+	float entitiesScrollPos;
+	ImGuiScrollableRegion tilesScollableRegion;
 
 	View view;
 	TilesPool tilePool;
@@ -80,7 +82,7 @@ struct State {
 	vec2i selectionEnd;
 	View::Room intermediateRoom;
 
-	// SkeletonDefinition definitions[Entity::type_count];
+	const SkeletonDefinition* definitions[Entity::type_count];
 
 	enum FlagValues {
 		ToolsExpanded      = BITFIELD( 0 ),

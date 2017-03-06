@@ -332,11 +332,12 @@ SkeletonEventType convert_to< SkeletonEventType >( StringView str, SkeletonEvent
 
 #include "Editor/Common/MessageBox.cpp"
 #include "Editor/TexturePack/TexturePack.h"
-#include "Editor/Animator/Animator.h"
-#include "Editor/Room/RoomEditor.h"
 
+#include "Editor/Animator/Animator.h"
 #include "Skeleton.h"
 #include "Skeleton.cpp"
+
+#include "Editor/Room/RoomEditor.h"
 
 struct HitboxSystem {
 	struct HitboxPair {
@@ -355,6 +356,11 @@ struct HitboxSystem {
 	{
 		assert( size >= 0 && size <= countof( pairsData ) );
 		pairsCount = auto_truncate( size );
+	}
+
+	void clear()
+	{
+		setPairsCount( 0 );
 	}
 };
 
@@ -448,6 +454,53 @@ void processEntityRemovalQueue( GameState* game )
 		game->entityRemovalQueue.clear();
 	}
 }
+void clearEntities( GameState* game )
+{
+	FOR( entity : game->entitySystem.entries ) {
+		if( entity.skeleton ) {
+			deleteSkeleton( &game->skeletonSystem, entity.skeleton );
+		}
+	}
+	game->entitySystem.entries.clear();
+	game->entitySystem.entriesCount = 0;
+
+	game->controlSystem.entries.clear();
+
+	game->hitboxSystem.clear();
+
+	FOR( skeleton : game->skeletonSystem.skeletons ) {
+		deleteSkeleton( skeleton );
+	}
+	game->skeletonSystem.skeletons.clear();
+
+	game->projectileSystem.entries.clear();
+}
+void restartGame( GameState* game )
+{
+	clearEntities( game );
+	auto addHeroEntity = [&]( vec2arg pos ) {
+		auto handle = addEntityHandle( &game->entityHandles );
+		auto entity =
+		    addEntity( &game->entitySystem, &game->skeletonSystem, handle, Entity::type_hero, pos );
+		return entity;
+	};
+	game->player = addHeroEntity( {16 * 2, 0} );
+	addControlComponent( &game->controlSystem, game->player->handle );
+
+	/*auto addMovingPlatform = [&]( vec2arg pos ) {
+	    auto platform            = addHeroEntity( pos, true );
+	    platform->movement       = EntityMovement::Straight;
+	    platform->response       = CollisionResponse::Bounce;
+	    platform->bounceModifier = 2;
+	    platform->setForcedNormal( {1, 0} );
+	    platform->velocity                = {1.0f, 0};
+	    platform->gravityModifier         = 0;
+	    platform->airFrictionCoeffictient = 0;
+	};
+	addMovingPlatform( {16 * 3} );
+	addMovingPlatform( {16 * 8} );*/
+}
+
 void removeEntity( GameState* game, EntityHandle handle )
 {
 	append_unique( game->entityRemovalQueue, handle );
@@ -973,10 +1026,12 @@ static void processGameCamera( AppData* app, float dt )
 			auto dir          = normalize( lerp( t, camera->nextLook, camera->prevLook ) );
 			*camera           = cameraLookDirection( *camera, dir );
 			camera->turnTimer = processTimer( camera->turnTimer, dt * 0.05f );
+#if 0
 			debugPrintln( "camera prev look: {}", camera->prevLook );
 			debugPrintln( "camera next look: {}", camera->nextLook );
 			debugPrintln( "camera dir: {}", dir );
 			debugPrintln( "camera turn timer: {}", camera->turnTimer.value );
+#endif
 		}
 	} else {
 		*camera = cameraLookDirection( *camera, {0, 0, 1} );
@@ -1386,6 +1441,7 @@ static void updateGame( AppData* app, GameInputs* inputs, bool focus, float dt )
 	if( !focus ) {
 		return;
 	}
+
 	if( !game->useGameCamera ) {
 		float speed = dt * 0.25f;
 		if( isKeyDown( inputs, KC_Shift ) ) {
@@ -1653,29 +1709,9 @@ static void initializeGame( AppData* app, GameInputs* inputs )
 	game->controlSystem      = makeControlSystem( allocator, maxEntities );
 	game->entityRemovalQueue = makeUArray( allocator, EntityHandle, maxEntities );
 
-	auto addHeroEntity = [&]( vec2arg pos ) {
-		auto handle = addEntityHandle( &game->entityHandles );
-		auto entity =
-		    addEntity( &game->entitySystem, &game->skeletonSystem, handle, Entity::type_hero, pos );
-		return entity;
-	};
-	game->player = addHeroEntity( {16 * 2, 0} );
-	addControlComponent( &game->controlSystem, game->player->handle );
+	restartGame( game );
 
-	/*auto addMovingPlatform = [&]( vec2arg pos ) {
-	    auto platform            = addHeroEntity( pos, true );
-	    platform->movement       = EntityMovement::Straight;
-	    platform->response       = CollisionResponse::Bounce;
-	    platform->bounceModifier = 2;
-	    platform->setForcedNormal( {1, 0} );
-	    platform->velocity                = {1.0f, 0};
-	    platform->gravityModifier         = 0;
-	    platform->airFrictionCoeffictient = 0;
-	};
-	addMovingPlatform( {16 * 3} );
-	addMovingPlatform( {16 * 8} );*/
-
-	game->camera             = makeGameCamera( {0, -50, -200}, {0, 0, 1}, {0, 1, 0} );
+	game->camera             = makeGameCamera( {0, 0, 0}, {0, 0, 1}, {0, 1, 0} );
 	game->cameraFollowRegion = {-25, -50, 25, 50};
 	game->useGameCamera      = true;
 	game->lighting           = false;
@@ -1684,6 +1720,35 @@ static void initializeGame( AppData* app, GameInputs* inputs )
 	game->initialized = true;
 
 	updateGame( app, inputs, true, 1 );
+}
+
+Camera correctCamera( const Camera& camera, mat4arg viewProj, rectfarg bounds, float viewportWidth,
+                      float viewportHeight )
+{
+	Camera result = camera;
+	if( auto inv = inverse( viewProj ) ) {
+		auto getPush = []( mat4arg invViewProj, vec2arg pos, rectfarg bounds, float width,
+		                   float height ) {
+			auto ray       = pointToWorldSpaceRay( invViewProj, pos, width, height );
+			auto projected = intersectionRayVsPlane( ray, {}, {0, 0, 1} ).xy;
+			vec2 clamped;
+			clamped.x   = clamp( projected.x, bounds.left, bounds.right );
+			clamped.y   = clamp( projected.y, -bounds.bottom, -bounds.top );
+			auto result = clamped - projected;
+			return result;
+		};
+		vec2 push = getPush( inv.matrix, {0, 0}, bounds, viewportWidth, viewportHeight );
+		push += getPush( inv.matrix, {viewportWidth, 0}, bounds, viewportWidth, viewportHeight );
+		push += getPush( inv.matrix, {0, viewportHeight}, bounds, viewportWidth, viewportHeight );
+		push += getPush( inv.matrix, {viewportWidth, viewportHeight}, bounds, viewportWidth,
+		                 viewportHeight );
+		// push.y *= 0.035f * 0.25f;
+		push.x *= 0.5f;
+		push.y = push.y * 0.5f;
+		result.position.xy += push;
+	}
+
+	return result;
 }
 
 void renderGame( AppData* app, GameInputs* inputs, float blendFactor, bool focus, int32 stepCount )
@@ -1696,8 +1761,11 @@ void renderGame( AppData* app, GameInputs* inputs, float blendFactor, bool focus
 	auto game     = &app->gameState;
 
 	setRenderState( renderer, RenderStateType::Lighting, game->lighting );
+	auto aspect     = app->width / app->height;
+	auto projection = matrixPerspectiveFovProjection( degreesToRadians( 35 ), aspect, -1, 1 );
+	setProjectionMatrix( renderer, ProjectionType::Perspective, projection );
 	setProjection( renderer, ProjectionType::Perspective );
-	auto cameraTranslation = matrixTranslation( 0, -50, 0 );
+	auto cameraTranslation = matrixTranslation( 0, 0, 328 );
 	Camera camera          = app->voxelState.camera;
 	if( game->useGameCamera ) {
 		auto& prev      = game->prevCamera;
@@ -1706,6 +1774,13 @@ void renderGame( AppData* app, GameInputs* inputs, float blendFactor, bool focus
 		camera.look     = lerp( blendFactor, prev.look, next.look );
 		camera.right    = lerp( blendFactor, prev.right, next.right );
 		camera.up       = lerp( blendFactor, prev.up, next.up );
+
+		auto mainLayer   = getCollisionLayer( &app->gameState.room );
+		rectf roomBounds = {0, 0, mainLayer.width * GameConstants::TileWidth,
+		                    mainLayer.height * GameConstants::TileHeight};
+		camera = correctCamera( camera, cameraTranslation * getViewMatrix( &camera ) * projection,
+		                        roomBounds, app->width, app->height );
+		debugPrintln( "{}", camera.position );
 	}
 	renderer->view = cameraTranslation * getViewMatrix( &camera );
 

@@ -1475,15 +1475,20 @@ Skeleton* addSkeleton( SkeletonSystem* system, const SkeletonDefinition& definit
 	return nullptr;
 }
 
+void deleteSkeleton( Skeleton* skeleton )
+{
+	assert( GlobalPlatformServices );
+	assert( skeleton );
+	auto base = skeleton->base;
+	*skeleton = {};
+	GlobalPlatformServices->free( base );
+}
 void deleteSkeleton( SkeletonSystem* system, Skeleton* skeleton )
 {
 	assert( system );
 	assert( skeleton );
 
-	assert( GlobalPlatformServices );
-	auto base = skeleton->base;
-	*skeleton = {};
-	GlobalPlatformServices->free( base );
+	deleteSkeleton( skeleton );
 	unordered_remove( system->skeletons, skeleton );
 }
 

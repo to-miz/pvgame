@@ -24,11 +24,14 @@ union tvec2 {
 	};
 	T elements[2];
 
-	inline constexpr T operator[]( int32 index ) const
+	constexpr T operator[]( int32 index ) const
 	{
 		assert( index >= 0 && index < 2 );
 		return elements[index];
 	}
+
+	constexpr bool operator==( const tvec2& other ) const { return x == other.x && y == other.y; }
+	constexpr bool operator!=( const tvec2& other ) const { return x != other.x || y != other.y; }
 };
 
 // vec2

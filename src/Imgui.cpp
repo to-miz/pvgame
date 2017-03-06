@@ -2147,6 +2147,18 @@ bool imguiListboxSingleSelect( ImGuiHandle handle, float* scrollPos, Array< T > 
 		},
 	    hasNoneEntry );
 }
+bool imguiListboxSingleSelect( ImGuiHandle handle, float* scrollPos,
+                               Array< const StringView > items, int32* selectedIndex,
+                               rectfarg bounds, bool hasNoneEntry )
+{
+	return ::imguiListboxSingleSelect( handle, scrollPos, items.data(), sizeof( StringView ),
+	                                   items.size(), selectedIndex, bounds,
+	                                   []( const void* ptr ) -> StringView {
+		                                   assert_alignment( ptr, alignof( const StringView ) );
+		                                   return *(const StringView*)ptr;
+		                               },
+	                                   hasNoneEntry );
+}
 
 bool imguiCombo( ImGuiHandle handle, const void* items, int32 entrySize, int32 itemsCount,
                  int32* selectedIndex, rectfarg rect, ImGuiGetTextFunctionType* getText,

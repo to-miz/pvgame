@@ -82,6 +82,10 @@ struct EntityStats {
 
 struct Skeleton;
 
+static const StringView EntityTypeNames[] = {
+    "None", "Hero", "Wheels",
+};
+
 // this used to be CollidableComponent, but it had a lot of fields that didn't have anything to do
 // with collision detection, but with reporting back how/what happened. It behaved like a full
 // entity class, so now it is actually clear what this structure is: everything you need to know
@@ -165,6 +169,8 @@ struct Entity {
 	bool dynamic() const { return flags.dynamic; }
 	bool dead() const { return flags.deathFlag; }
 };
+static_assert( countof( EntityTypeNames ) == Entity::type_count, "Invalid EntityTypeNames" );
+
 void setSpatialState( Entity* collidable, SpatialState state )
 {
 	if( state != collidable->spatialState ) {

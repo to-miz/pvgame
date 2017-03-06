@@ -259,18 +259,14 @@ struct WheelsSkeletonDefinition {
 		int8 hurtbox;
 	} hurtboxIds;
 
-	struct {
-		int8 deflect;
-	} deflectIds;
-
-	GenerateMembers( animationIds, nodeIds, collisionIds, nullptr, hurtboxIds, deflectIds );
+	GenerateMembers( animationIds, nodeIds, collisionIds, nullptr, hurtboxIds, nullptr );
 };
 GenerateNames( WheelsSkeletonDefinition, AnimationNames, "move", "attack", "hurt", "turn" );
 GenerateNames( WheelsSkeletonDefinition, NodeNames, "attack_origin" );
 GenerateNames( WheelsSkeletonDefinition, CollisionNames, "root" );
 GenerateEmpty( WheelsSkeletonDefinition, HitboxNames );
 GenerateNames( WheelsSkeletonDefinition, HurtboxNames, "hurtbox" );
-GenerateNames( WheelsSkeletonDefinition, DeflectNames, "deflect" );
+GenerateEmpty( WheelsSkeletonDefinition, DeflectNames );
 
 struct EntitySkeletonTraits {
 	const SkeletonDefinition* definition;
